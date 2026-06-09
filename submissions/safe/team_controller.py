@@ -109,9 +109,14 @@ VISION_PROFILE = {
     "scan_count": 12,
     "row_band": 2,
     "road_lab_threshold": 34.0,
+    "road_gray_min": 35.0,
+    "road_gray_max": 105.0,
+    "road_sat_max": 80.0,
+    "dark_mask_min_fill": 0.04,
     "texture_gray_std_scale": 35.0,
     "min_segment_width": 24.0,
-    "max_segment_width_ratio": 0.92,
+    "max_segment_gap": 90.0,
+    "max_segment_width_ratio": 0.995,
     "max_center_jump_ratio": 0.35,
     "min_valid_scans": 4,
     "min_camera_confidence": 0.12,
@@ -156,7 +161,7 @@ ESTIMATOR_PROFILE = {
 }
 
 CONTROL = {
-    "base_speed": 0.82,
+    "base_speed": 0.94,
     "max_speed": 1.00,
     "min_speed": 0.16,
     "start_caution_seconds": 0.8,
@@ -165,10 +170,10 @@ CONTROL = {
     "recovery_confidence": 0.28,
     "lost_speed": 0.10,
     "recovery_speed": 0.24,
-    "hard_turn_speed": 0.48,
-    "correction_speed": 0.54,
-    "hard_turn_threshold": 0.50,
-    "correction_error": 0.42,
+    "hard_turn_speed": 0.36,
+    "correction_speed": 0.58,
+    "hard_turn_threshold": 0.25,
+    "correction_error": 0.25,
     "recovery_frames": 8,
     "risk_curve_weight": 0.42,
     "risk_offset_weight": 0.28,
@@ -178,26 +183,26 @@ CONTROL = {
     "near_weight_offset_boost": 0.55,
     "far_weight_base": 0.75,
     "far_weight_curve_boost": 0.45,
-    "gain_lateral": 1.10,
-    "gain_lookahead": 0.46,
-    "gain_heading": 0.42,
-    "gain_curve": 0.50,
+    "gain_lateral": 0.38,
+    "gain_lookahead": 0.90,
+    "gain_heading": 0.98,
+    "gain_curve": 0.10,
     "gain_lateral_nonlinear": 0.18,
-    "gain_curve_nonlinear": 0.14,
+    "gain_curve_nonlinear": 0.04,
     "steering_deadzone": 0.015,
-    "curve_slowdown": 0.50,
+    "curve_slowdown": 0.66,
     "curve_power": 1.35,
-    "offset_slowdown": 0.34,
+    "offset_slowdown": 0.38,
     "offset_power": 1.25,
     "min_confidence_factor": 0.58,
-    "steering_slowdown": 0.18,
+    "steering_slowdown": 0.28,
     "steering_power": 1.15,
-    "steering_smoothing_cruise": 0.22,
-    "steering_smoothing_turn": 0.30,
-    "steering_smoothing_correction": 0.26,
-    "steering_smoothing_recovery": 0.48,
-    "max_steering_delta": 0.26,
-    "max_speed_increase_per_sec": 0.95,
+    "steering_smoothing_cruise": 0.16,
+    "steering_smoothing_turn": 0.14,
+    "steering_smoothing_correction": 0.14,
+    "steering_smoothing_recovery": 0.28,
+    "max_steering_delta": 0.46,
+    "max_speed_increase_per_sec": 2.10,
     "max_speed_decrease_per_sec": 2.20,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
@@ -291,26 +296,40 @@ def _road_color_from_patch(lab_roi: np.ndarray) -> np.ndarray:
 def _build_masks(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
     """生成道路表面 mask 和边缘 fallback mask。
 
-    功能：用道路颜色距离生成主 mask，并单独保留 Canny 边缘作为兜底。
+    功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
     参数：`image` 是单张 BGR 图像。
     返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数和主 mask 命中率。
-    逻辑：边缘不混入主 mask，避免把背景强边缘误当成道路表面。
+    逻辑：暗灰 mask 可避免偏离赛道时把底部中心的草地当道路；边缘不混入主 mask，
+    避免把背景强边缘误当成道路表面。
     """
 
     height = image.shape[0]
     top = int(height * VISION_PROFILE["roi_top_ratio"])
     roi = image[top:, :, :]
 
+    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    dark_road_roi = (
+        (gray_roi >= VISION_PROFILE["road_gray_min"])
+        & (gray_roi <= VISION_PROFILE["road_gray_max"])
+        & (hsv_roi[:, :, 1] <= VISION_PROFILE["road_sat_max"])
+    ).astype(np.uint8) * 255
+
     lab_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
     road_lab = _road_color_from_patch(lab_roi)
     distance = np.sqrt(np.sum((lab_roi - road_lab) ** 2, axis=2))
-    road_roi = (distance <= VISION_PROFILE["road_lab_threshold"]).astype(np.uint8) * 255
+    color_roi = (distance <= VISION_PROFILE["road_lab_threshold"]).astype(np.uint8) * 255
+
+    dark_fill_ratio = float(np.count_nonzero(dark_road_roi)) / max(float(dark_road_roi.size), 1.0)
+    if dark_fill_ratio >= VISION_PROFILE["dark_mask_min_fill"]:
+        road_roi = dark_road_roi
+    else:
+        road_roi = color_roi
 
     kernel = np.ones((5, 5), dtype=np.uint8)
     road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_OPEN, kernel, iterations=1)
     road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray_roi, (5, 5), 0)
     edge_roi = cv2.Canny(blurred, 45, 120)
 
@@ -334,6 +353,22 @@ def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
     return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
 
 
+def _merge_close_segments(segments: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """合并被车道虚线或护栏细缝切开的相邻道路段。"""
+
+    if not segments:
+        return []
+    max_gap = int(VISION_PROFILE["max_segment_gap"])
+    merged = [segments[0]]
+    for left, right in segments[1:]:
+        prev_left, prev_right = merged[-1]
+        if left - prev_right - 1 <= max_gap:
+            merged[-1] = (prev_left, right)
+        else:
+            merged.append((left, right))
+    return merged
+
+
 def _road_segments(mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
     """从道路 mask 的水平横带中提取连续道路区间。"""
 
@@ -342,7 +377,7 @@ def _road_segments(mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, i
     band = mask[y0:y1, :]
     min_hits = max(1, int(np.ceil(band.shape[0] * 0.45)))
     active = np.count_nonzero(band, axis=0) >= min_hits
-    return _segments_from_active(active)
+    return _merge_close_segments(_segments_from_active(active))
 
 
 def _edge_fallback_segments(edge_mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:

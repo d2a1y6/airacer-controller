@@ -54,3 +54,17 @@ def test_extract_observation_handles_common_images():
         assert obs.left_edge_points.ndim == 2
         assert obs.right_edge_points.ndim == 2
         assert 0.0 <= obs.confidence <= 1.0
+
+
+def test_extract_observation_prefers_dark_road_over_bottom_grass():
+    from controller.perception import extract_observation
+
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    image[:, :] = (35, 120, 35)
+    image[180:, :260, :] = (72, 72, 72)
+
+    obs = extract_observation(image, image, 0.0)
+
+    assert len(obs.center_points) >= 4
+    assert obs.confidence > 0.20
+    assert float(np.median(obs.center_points[:, 0])) < 260.0

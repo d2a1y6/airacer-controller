@@ -74,26 +74,40 @@ def _road_color_from_patch(lab_roi: np.ndarray) -> np.ndarray:
 def _build_masks(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
     """生成道路表面 mask 和边缘 fallback mask。
 
-    功能：用道路颜色距离生成主 mask，并单独保留 Canny 边缘作为兜底。
+    功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
     参数：`image` 是单张 BGR 图像。
     返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数和主 mask 命中率。
-    逻辑：边缘不混入主 mask，避免把背景强边缘误当成道路表面。
+    逻辑：暗灰 mask 可避免偏离赛道时把底部中心的草地当道路；边缘不混入主 mask，
+    避免把背景强边缘误当成道路表面。
     """
 
     height = image.shape[0]
     top = int(height * VISION_PROFILE["roi_top_ratio"])
     roi = image[top:, :, :]
 
+    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    dark_road_roi = (
+        (gray_roi >= VISION_PROFILE["road_gray_min"])
+        & (gray_roi <= VISION_PROFILE["road_gray_max"])
+        & (hsv_roi[:, :, 1] <= VISION_PROFILE["road_sat_max"])
+    ).astype(np.uint8) * 255
+
     lab_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
     road_lab = _road_color_from_patch(lab_roi)
     distance = np.sqrt(np.sum((lab_roi - road_lab) ** 2, axis=2))
-    road_roi = (distance <= VISION_PROFILE["road_lab_threshold"]).astype(np.uint8) * 255
+    color_roi = (distance <= VISION_PROFILE["road_lab_threshold"]).astype(np.uint8) * 255
+
+    dark_fill_ratio = float(np.count_nonzero(dark_road_roi)) / max(float(dark_road_roi.size), 1.0)
+    if dark_fill_ratio >= VISION_PROFILE["dark_mask_min_fill"]:
+        road_roi = dark_road_roi
+    else:
+        road_roi = color_roi
 
     kernel = np.ones((5, 5), dtype=np.uint8)
     road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_OPEN, kernel, iterations=1)
     road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray_roi, (5, 5), 0)
     edge_roi = cv2.Canny(blurred, 45, 120)
 
@@ -117,6 +131,22 @@ def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
     return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
 
 
+def _merge_close_segments(segments: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """合并被车道虚线或护栏细缝切开的相邻道路段。"""
+
+    if not segments:
+        return []
+    max_gap = int(VISION_PROFILE["max_segment_gap"])
+    merged = [segments[0]]
+    for left, right in segments[1:]:
+        prev_left, prev_right = merged[-1]
+        if left - prev_right - 1 <= max_gap:
+            merged[-1] = (prev_left, right)
+        else:
+            merged.append((left, right))
+    return merged
+
+
 def _road_segments(mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
     """从道路 mask 的水平横带中提取连续道路区间。"""
 
@@ -125,7 +155,7 @@ def _road_segments(mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, i
     band = mask[y0:y1, :]
     min_hits = max(1, int(np.ceil(band.shape[0] * 0.45)))
     active = np.count_nonzero(band, axis=0) >= min_hits
-    return _segments_from_active(active)
+    return _merge_close_segments(_segments_from_active(active))
 
 
 def _edge_fallback_segments(edge_mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
