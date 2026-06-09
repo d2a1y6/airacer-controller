@@ -1,8 +1,8 @@
 """策略参数配置。
 
-功能概述：集中保存视觉、估计、转向和速度策略参数。
-输入输出：输入 profile 名称，输出对应参数字典。
-处理流程：先定义通用感知和估计参数，再定义 fastest/safe 两套控制 profile。
+功能概述：集中保存视觉、估计和控制策略参数。
+输入输出：输入任意 profile 名称，输出同一套控制参数。
+处理流程：先定义通用感知和估计参数，再定义唯一的 CONTROL 控制参数。
 """
 
 VISION_PROFILE = {
@@ -10,81 +10,111 @@ VISION_PROFILE = {
     "scan_top_ratio": 0.50,
     "scan_bottom_ratio": 0.92,
     "scan_count": 12,
-    "min_pixels_per_scan": 8,
-    "min_road_width": 18.0,
+    "row_band": 2,
+    "road_lab_threshold": 34.0,
+    "texture_gray_std_scale": 35.0,
+    "min_segment_width": 24.0,
+    "max_segment_width_ratio": 0.92,
+    "max_center_jump_ratio": 0.35,
+    "min_valid_scans": 4,
+    "min_camera_confidence": 0.12,
+    "fusion_max_offset_gap": 0.18,
+    "fusion_confidence_margin": 0.18,
+    "fusion_merge_gap": 0.12,
+    "fusion_merge_min_confidence": 0.35,
 }
 
 ESTIMATOR_PROFILE = {
+    "image_center_x": 320.0,
+    "x_scale": 320.0,
     "lost_confidence": 0.08,
+    "min_center_points": 3,
+    "min_good_points": 8,
+    "min_y_span": 60.0,
+    "min_y_span_good": 220.0,
+    "min_road_width_for_conf": 20.0,
+    "near_progress_max": 0.35,
+    "far_progress_min": 0.60,
+    "near_eval_progress": 0.15,
+    "far_eval_progress": 0.75,
+    "heading_eval_progress": 0.45,
+    "poly2_min_points": 5,
+    "heading_gain": 1.25,
+    "curvature_gain": 1.45,
+    "fallback_curvature_gain": 0.70,
+    "max_fit_error": 0.22,
     "smooth_alpha": 0.28,
+    "low_conf_extra_smoothing": 0.30,
+    "min_smooth_alpha": 0.18,
+    "max_smooth_alpha": 0.70,
+    "curve_smooth_alpha": 0.46,
+    "max_error_delta": 0.22,
+    "max_heading_delta": 0.20,
+    "max_curvature_delta": 0.18,
+    "lost_lateral_decay": 0.85,
+    "lost_heading_decay": 0.78,
+    "lost_curvature_decay": 0.76,
+    "lost_lookahead_decay": 0.82,
+    "timestamp_reset_gap": 2.0,
 }
 
-FAST_PROFILE = {
-    "base_speed": 0.86,
-    "max_speed": 1.0,
-    "min_speed": 0.20,
-    "lost_speed": 0.18,
-    "recovery_speed": 0.26,
-    "caution_speed": 0.58,
-    "curve_slowdown": 0.42,
-    "offset_slowdown": 0.20,
-    "steering_slowdown": 0.08,
-    "risk_slowdown": 0.24,
-    "lateral_gain": 1.05,
-    "heading_gain": 0.34,
-    "lookahead_gain": 0.28,
-    "curvature_gain": 0.38,
-    "steering_deadzone": 0.018,
-    "steering_smooth": 0.30,
-    "caution_steering_smooth": 0.42,
-    "max_steering_delta": 0.22,
-    "nominal_dt": 0.032,
-    "recovery_steering_scale": 0.72,
-    "caution_risk": 0.58,
-    "lost_risk": 0.92,
-    "recovery_confidence": 0.28,
-    "start_caution_seconds": 0.8,
-}
-
-SAFE_PROFILE = {
-    "base_speed": 0.66,
-    "max_speed": 0.82,
+CONTROL = {
+    "base_speed": 0.82,
+    "max_speed": 1.00,
     "min_speed": 0.16,
-    "lost_speed": 0.12,
-    "recovery_speed": 0.20,
-    "caution_speed": 0.44,
-    "curve_slowdown": 0.54,
-    "offset_slowdown": 0.30,
-    "steering_slowdown": 0.12,
-    "risk_slowdown": 0.34,
-    "lateral_gain": 0.98,
-    "heading_gain": 0.30,
-    "lookahead_gain": 0.24,
-    "curvature_gain": 0.42,
-    "steering_deadzone": 0.022,
-    "steering_smooth": 0.40,
-    "caution_steering_smooth": 0.56,
-    "max_steering_delta": 0.16,
+    "start_caution_seconds": 0.8,
+    "start_speed": 0.36,
+    "lost_confidence": 0.10,
+    "recovery_confidence": 0.28,
+    "lost_speed": 0.10,
+    "recovery_speed": 0.24,
+    "hard_turn_speed": 0.48,
+    "correction_speed": 0.54,
+    "hard_turn_threshold": 0.50,
+    "correction_error": 0.42,
+    "recovery_frames": 8,
+    "risk_curve_weight": 0.42,
+    "risk_offset_weight": 0.28,
+    "risk_confidence_weight": 0.22,
+    "risk_lost_weight": 0.80,
+    "near_weight_base": 0.90,
+    "near_weight_offset_boost": 0.55,
+    "far_weight_base": 0.75,
+    "far_weight_curve_boost": 0.45,
+    "gain_lateral": 1.10,
+    "gain_lookahead": 0.46,
+    "gain_heading": 0.42,
+    "gain_curve": 0.50,
+    "gain_lateral_nonlinear": 0.18,
+    "gain_curve_nonlinear": 0.14,
+    "steering_deadzone": 0.015,
+    "curve_slowdown": 0.50,
+    "curve_power": 1.35,
+    "offset_slowdown": 0.34,
+    "offset_power": 1.25,
+    "min_confidence_factor": 0.58,
+    "steering_slowdown": 0.18,
+    "steering_power": 1.15,
+    "steering_smoothing_cruise": 0.22,
+    "steering_smoothing_turn": 0.30,
+    "steering_smoothing_correction": 0.26,
+    "steering_smoothing_recovery": 0.48,
+    "max_steering_delta": 0.26,
+    "max_speed_increase_per_sec": 0.95,
+    "max_speed_decrease_per_sec": 2.20,
     "nominal_dt": 0.032,
-    "recovery_steering_scale": 0.62,
-    "caution_risk": 0.46,
-    "lost_risk": 0.96,
-    "recovery_confidence": 0.36,
-    "start_caution_seconds": 1.2,
+    "timestamp_reset_gap": 2.0,
 }
 
 
 def get_profile(name: str) -> dict:
-    """按名称读取控制 profile。
+    """读取控制 profile。
 
-    功能：为顶层控制器提供 fastest 或 safe 参数。
-    参数：`name` 只能是 `fastest` 或 `safe`。
-    返回：对应参数字典的浅拷贝。
-    逻辑：浅拷贝可避免调用方误改全局参数；未知名称直接回退到 safe。
+    功能：为顶层控制器提供当前唯一维护的控制参数。
+    参数：`name` 保留兼容构建脚本和提交文件中的 fastest/safe 标记。
+    返回：`CONTROL` 参数字典的浅拷贝。
+    逻辑：所有模式都返回同一套参数，便于先集中优化一个目标。
     """
 
-    if name == "fastest":
-        return dict(FAST_PROFILE)
-    if name == "safe":
-        return dict(SAFE_PROFILE)
-    return dict(SAFE_PROFILE)
+    del name
+    return dict(CONTROL)

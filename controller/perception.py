@@ -1,9 +1,11 @@
 """视觉感知模块。
 
-功能概述：从左右摄像头图像中提取赛道边界、中心点和感知置信度。
-输入输出：输入 BGR 图像，输出 `PerceptionObs`。
-处理流程：裁剪中下部 ROI，生成轻量二值掩膜，按扫描线提取左右边界并估计中心点。
+功能概述：从左右摄像头图像中分割道路表面，并沿扫描线跟踪可行驶走廊。
+输入输出：输入 BGR 图像和可选时间戳，输出 `PerceptionObs`。
+处理流程：估计道路颜色，生成道路 mask，逐行选择连续走廊，再融合左右摄像头结果。
 """
+
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -12,55 +14,257 @@ from controller.common import PerceptionObs, clamp
 from controller.params import VISION_PROFILE
 
 
-def _empty_obs() -> PerceptionObs:
-    points = np.empty((0, 2), dtype=np.float32)
-    return PerceptionObs(points, points, points, 0.0, 0.0, debug_flags=1)
+@dataclass
+class _CameraScan:
+    """单侧摄像头扫描结果。
+
+    功能：保存单张图像的中心点、边界点、道路宽度、置信度和调试标记。
+    参数：字段由 `_scan_image()` 生成。
+    返回：内部 dataclass。
+    逻辑：融合阶段只读取这些稳定字段，不依赖扫描过程的中间变量。
+    """
+
+    center_points: np.ndarray
+    left_edge_points: np.ndarray
+    right_edge_points: np.ndarray
+    road_width_est: float
+    confidence: float
+    debug_flags: int = 0
+
+
+def _empty_points() -> np.ndarray:
+    return np.empty((0, 2), dtype=np.float32)
+
+
+def _empty_scan(debug_flags: int = 1) -> _CameraScan:
+    points = _empty_points()
+    return _CameraScan(points, points, points, 0.0, 0.0, debug_flags=debug_flags)
+
+
+def _empty_obs(debug_flags: int = 1) -> PerceptionObs:
+    points = _empty_points()
+    return PerceptionObs(points, points, points, 0.0, 0.0, debug_flags=debug_flags)
 
 
 def _valid_image(image) -> bool:
+    """检查输入是否是三通道 BGR 图像。"""
+
     return image is not None and hasattr(image, "shape") and len(image.shape) == 3 and image.shape[2] == 3
 
 
-def _make_mask(image: np.ndarray) -> np.ndarray:
-    """生成赛道线索掩膜。
+def _road_color_from_patch(lab_roi: np.ndarray) -> np.ndarray:
+    """估计道路表面 Lab 颜色。
 
-    功能：把亮色区域、灰度高对比区域和边缘线索合并成二值图。
-    参数：`image` 是单个摄像头 BGR 图像。
-    返回：uint8 掩膜，非零像素表示可能的赛道边界或可行驶区域。
-    逻辑：多线索融合比单一颜色阈值更抗赛道材质变化。
+    功能：从 ROI 底部中心 patch 估计道路颜色。
+    参数：`lab_roi` 是中下部 ROI 的 Lab 图像。
+    返回：三通道 Lab 中位数颜色。
+    逻辑：中位数能降低车道线、阴影和零星高光对颜色估计的影响。
+    """
+
+    height, width = lab_roi.shape[:2]
+    y0 = int(height * 0.72)
+    y1 = max(y0 + 1, int(height * 0.96))
+    x_margin = int(width * 0.18)
+    x0 = max(width // 2 - x_margin, 0)
+    x1 = min(width // 2 + x_margin, width)
+    patch = lab_roi[y0:y1, x0:x1]
+    return np.median(patch.reshape(-1, 3).astype(np.float32), axis=0)
+
+
+def _build_masks(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """生成道路表面 mask 和边缘 fallback mask。
+
+    功能：用道路颜色距离生成主 mask，并单独保留 Canny 边缘作为兜底。
+    参数：`image` 是单张 BGR 图像。
+    返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数和主 mask 命中率。
+    逻辑：边缘不混入主 mask，避免把背景强边缘误当成道路表面。
     """
 
     height = image.shape[0]
     top = int(height * VISION_PROFILE["roi_top_ratio"])
     roi = image[top:, :, :]
 
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    lab_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
+    road_lab = _road_color_from_patch(lab_roi)
+    distance = np.sqrt(np.sum((lab_roi - road_lab) ** 2, axis=2))
+    road_roi = (distance <= VISION_PROFILE["road_lab_threshold"]).astype(np.uint8) * 255
 
-    bright = cv2.inRange(hsv, np.array([0, 0, 125]), np.array([180, 100, 255]))
-    _, adaptive = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 120)
-
-    mask = cv2.bitwise_or(cv2.bitwise_or(bright, adaptive), edges)
     kernel = np.ones((5, 5), dtype=np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_OPEN, kernel, iterations=1)
+    road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    padded = np.zeros(image.shape[:2], dtype=np.uint8)
-    padded[top:, :] = mask
-    return padded
+    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray_roi, (5, 5), 0)
+    edge_roi = cv2.Canny(blurred, 45, 120)
+
+    road_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    edge_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    road_mask[top:, :] = road_roi
+    edge_mask[top:, :] = edge_roi
+
+    texture_score = clamp(float(np.std(gray_roi)) / VISION_PROFILE["texture_gray_std_scale"], 0.0, 1.0)
+    mask_fill_ratio = float(np.count_nonzero(road_roi)) / max(float(road_roi.size), 1.0)
+    return road_mask, edge_mask, texture_score, mask_fill_ratio
 
 
-def _scan_image(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
-    """按扫描线提取单张图中的边界和中心点。
+def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
+    """把一维布尔扫描结果转成连续区间。"""
 
-    功能：在若干水平扫描线上寻找左右边界，并估计赛道中心。
-    参数：`image` 是单个摄像头图像。
-    返回：中心点、左边界点、右边界点、道路宽度、置信度。
-    逻辑：从近处到远处扫描，点数和道路宽度稳定性共同决定置信度。
+    if active.size == 0:
+        return []
+    padded = np.concatenate(([False], active.astype(bool), [False]))
+    changes = np.flatnonzero(padded[1:] != padded[:-1])
+    return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
+
+
+def _road_segments(mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
+    """从道路 mask 的水平横带中提取连续道路区间。"""
+
+    y0 = max(int(y) - row_band, 0)
+    y1 = min(int(y) + row_band + 1, mask.shape[0])
+    band = mask[y0:y1, :]
+    min_hits = max(1, int(np.ceil(band.shape[0] * 0.45)))
+    active = np.count_nonzero(band, axis=0) >= min_hits
+    return _segments_from_active(active)
+
+
+def _edge_fallback_segments(edge_mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
+    """从边缘横带中推断候选走廊。
+
+    功能：在道路 mask 没有可用区间时，用相邻边缘之间的区域做兜底。
+    参数：`edge_mask` 是 Canny 结果，`y` 是扫描线，`row_band` 是横带半宽。
+    返回：候选 `(left, right)` 区间。
+    逻辑：只取相邻边缘，避免随机纹理生成大量跨越式组合。
     """
 
-    mask = _make_mask(image)
-    height, width = mask.shape
+    y0 = max(int(y) - row_band, 0)
+    y1 = min(int(y) + row_band + 1, edge_mask.shape[0])
+    band = edge_mask[y0:y1, :]
+    active = np.count_nonzero(band, axis=0) > 0
+    edge_segments = _segments_from_active(active)
+    if len(edge_segments) < 2:
+        return []
+
+    edge_centers = [int((left + right) * 0.5) for left, right in edge_segments]
+    return [(edge_centers[index], edge_centers[index + 1]) for index in range(len(edge_centers) - 1)]
+
+
+def _filter_segments(segments: list[tuple[int, int]], width: int) -> list[tuple[int, int]]:
+    """按道路宽度约束过滤候选区间。"""
+
+    min_width = float(VISION_PROFILE["min_segment_width"])
+    max_width = float(width) * VISION_PROFILE["max_segment_width_ratio"]
+    filtered = []
+    for left, right in segments:
+        segment_width = float(right - left + 1)
+        if min_width <= segment_width <= max_width:
+            filtered.append((left, right))
+    return filtered
+
+
+def _pick_segment(
+    road_mask: np.ndarray,
+    edge_mask: np.ndarray,
+    y: int,
+    previous_center: float,
+    has_previous: bool,
+) -> tuple[tuple[int, int] | None, bool]:
+    """选择当前扫描线的最佳走廊 segment。
+
+    功能：优先从道路表面 mask 选连续区间，失败时再用边缘区间兜底。
+    参数：`road_mask` 和 `edge_mask` 是完整尺寸 mask，`previous_center` 是上一条有效扫描线中心。
+    返回：选中的 `(left, right)` 和是否使用边缘 fallback。
+    逻辑：候选区间必须满足宽度约束，并尽量靠近上一条有效扫描线。
+    """
+
+    width = road_mask.shape[1]
+    row_band = int(VISION_PROFILE["row_band"])
+    candidates = _filter_segments(_road_segments(road_mask, y, row_band), width)
+    used_fallback = False
+    if not candidates:
+        candidates = _filter_segments(_edge_fallback_segments(edge_mask, y, row_band), width)
+        used_fallback = bool(candidates)
+    if not candidates:
+        return None, used_fallback
+
+    best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+    center = (best[0] + best[1]) * 0.5
+    max_jump = float(width) * VISION_PROFILE["max_center_jump_ratio"]
+    if has_previous and abs(center - previous_center) > max_jump:
+        return None, used_fallback
+    return best, used_fallback
+
+
+def _score_scan(
+    centers: list[tuple[float, float]],
+    widths: list[float],
+    texture_score: float,
+    mask_fill_ratio: float,
+    fallback_count: int,
+) -> tuple[float, int]:
+    """计算单侧摄像头置信度。
+
+    功能：综合有效扫描线、宽度稳定性、中心稳定性和纹理分数。
+    参数：扫描点、宽度序列、纹理分数、mask 命中率和 fallback 次数。
+    返回：置信度和调试标记。
+    逻辑：有效线太少、整图近似全命中或全不命中时显著降权。
+    """
+
+    debug_flags = 0
+    scan_count = float(VISION_PROFILE["scan_count"])
+    valid_count = len(centers)
+    valid_ratio = valid_count / max(scan_count, 1.0)
+
+    width_arr = np.array(widths, dtype=np.float32)
+    width_median = max(float(np.median(width_arr)), 1.0)
+    width_stability = clamp(1.0 - float(np.std(width_arr)) / width_median, 0.0, 1.0)
+
+    center_arr = np.array([point[0] for point in centers], dtype=np.float32)
+    if center_arr.size >= 2:
+        center_jump = np.abs(np.diff(center_arr))
+        center_stability = clamp(
+            1.0 - float(np.mean(center_jump)) / (640.0 * VISION_PROFILE["max_center_jump_ratio"]),
+            0.0,
+            1.0,
+        )
+    else:
+        center_stability = 0.0
+
+    confidence = (
+        valid_ratio * 0.38
+        + width_stability * 0.22
+        + center_stability * 0.22
+        + texture_score * 0.18
+    )
+
+    min_valid = int(VISION_PROFILE["min_valid_scans"])
+    if valid_count < min_valid:
+        confidence *= valid_count / max(float(min_valid), 1.0)
+        debug_flags |= 1
+    if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92:
+        confidence *= 0.25
+        debug_flags |= 4
+    if fallback_count:
+        confidence *= max(0.55, 1.0 - 0.06 * fallback_count)
+        debug_flags |= 2
+
+    return clamp(confidence, 0.0, 1.0), debug_flags
+
+
+def _scan_image(image: np.ndarray) -> _CameraScan:
+    """按扫描线跟踪单张图像的道路走廊。
+
+    功能：输出中心点、左右边界点、道路宽度和置信度。
+    参数：`image` 是单个摄像头 BGR 图像。
+    返回：`_CameraScan`。
+    逻辑：从近处向远处扫描，每条线选择离上一条有效中心最近的连续道路 segment。
+    """
+
+    if not _valid_image(image):
+        return _empty_scan()
+
+    road_mask, edge_mask, texture_score, mask_fill_ratio = _build_masks(image)
+    height, width = road_mask.shape
     rows = np.linspace(
         int(height * VISION_PROFILE["scan_bottom_ratio"]),
         int(height * VISION_PROFILE["scan_top_ratio"]),
@@ -72,66 +276,132 @@ def _scan_image(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, 
     left_edges = []
     right_edges = []
     widths = []
+    previous_center = width * 0.5
+    has_previous = False
+    fallback_count = 0
 
     for y in rows:
-        xs = np.flatnonzero(mask[y])
-        if xs.size < VISION_PROFILE["min_pixels_per_scan"]:
+        segment, used_fallback = _pick_segment(road_mask, edge_mask, int(y), previous_center, has_previous)
+        if segment is None:
             continue
-        left = float(xs[0])
-        right = float(xs[-1])
-        road_width = right - left
-        if road_width < VISION_PROFILE["min_road_width"]:
-            continue
+        left, right = segment
         center = (left + right) * 0.5
+        road_width = float(right - left + 1)
         centers.append((center, float(y)))
-        left_edges.append((left, float(y)))
-        right_edges.append((right, float(y)))
+        left_edges.append((float(left), float(y)))
+        right_edges.append((float(right), float(y)))
         widths.append(road_width)
+        previous_center = center
+        has_previous = True
+        if used_fallback:
+            fallback_count += 1
 
     if not centers:
-        empty = np.empty((0, 2), dtype=np.float32)
-        return empty, empty, empty, 0.0, 0.0
+        debug_flags = 4 if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92 else 1
+        return _empty_scan(debug_flags=debug_flags)
 
-    center_arr = np.array(centers, dtype=np.float32)
-    left_arr = np.array(left_edges, dtype=np.float32)
-    right_arr = np.array(right_edges, dtype=np.float32)
-    width_est = float(np.median(np.array(widths, dtype=np.float32)))
-    confidence = clamp(len(centers) / float(VISION_PROFILE["scan_count"]), 0.0, 1.0)
-    return center_arr, left_arr, right_arr, width_est, confidence
+    confidence, debug_flags = _score_scan(centers, widths, texture_score, mask_fill_ratio, fallback_count)
+    return _CameraScan(
+        np.array(centers, dtype=np.float32),
+        np.array(left_edges, dtype=np.float32),
+        np.array(right_edges, dtype=np.float32),
+        float(np.median(np.array(widths, dtype=np.float32))),
+        confidence,
+        debug_flags=debug_flags,
+    )
 
 
-def extract_observation(left_img, right_img) -> PerceptionObs:
+def _usable(scan: _CameraScan) -> bool:
+    """判断单侧扫描结果是否足以参与融合。"""
+
+    return scan.center_points.size > 0 and scan.confidence >= VISION_PROFILE["min_camera_confidence"]
+
+
+def _near_center(scan: _CameraScan) -> float:
+    """读取最靠近车辆的扫描中心。"""
+
+    if scan.center_points.size == 0:
+        return 320.0
+    return float(scan.center_points[0, 0])
+
+
+def _to_obs(scan: _CameraScan, debug_flags: int | None = None) -> PerceptionObs:
+    """把单侧扫描结果转换为公开观测结构。"""
+
+    flags = scan.debug_flags if debug_flags is None else debug_flags
+    return PerceptionObs(
+        scan.center_points,
+        scan.left_edge_points,
+        scan.right_edge_points,
+        scan.road_width_est,
+        clamp(scan.confidence, 0.0, 1.0),
+        debug_flags=flags,
+    )
+
+
+def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionObs:
+    """融合左右摄像头扫描结果。
+
+    功能：根据单侧可用性、近处中心一致性和置信度选择或合并观测。
+    参数：`left_scan` 和 `right_scan` 是两侧扫描结果。
+    返回：融合后的 `PerceptionObs`。
+    逻辑：单侧有效时直接使用；双侧冲突时选高置信度；一致时合并点集并平均置信度。
+    """
+
+    left_ok = _usable(left_scan)
+    right_ok = _usable(right_scan)
+    if left_ok and not right_ok:
+        return _to_obs(left_scan)
+    if right_ok and not left_ok:
+        return _to_obs(right_scan)
+    if not left_ok and not right_ok:
+        return _empty_obs(debug_flags=left_scan.debug_flags | right_scan.debug_flags | 1)
+
+    center_gap = abs(_near_center(left_scan) - _near_center(right_scan))
+    merge_gap = 640.0 * VISION_PROFILE["fusion_merge_gap"]
+    merge_confidence = VISION_PROFILE["fusion_merge_min_confidence"]
+    confidence_gap = abs(left_scan.confidence - right_scan.confidence)
+    if (
+        center_gap >= merge_gap
+        or left_scan.confidence < merge_confidence
+        or right_scan.confidence < merge_confidence
+    ):
+        chosen = left_scan if left_scan.confidence >= right_scan.confidence else right_scan
+        flags = chosen.debug_flags
+        if center_gap > 640.0 * VISION_PROFILE["fusion_max_offset_gap"]:
+            flags |= 8
+        if confidence_gap < VISION_PROFILE["fusion_confidence_margin"]:
+            flags |= 16
+        return _to_obs(chosen, debug_flags=flags)
+
+    center_points = np.concatenate([left_scan.center_points, right_scan.center_points], axis=0)
+    left_edge_points = np.concatenate([left_scan.left_edge_points, right_scan.left_edge_points], axis=0)
+    right_edge_points = np.concatenate([left_scan.right_edge_points, right_scan.right_edge_points], axis=0)
+    weights = np.array([len(left_scan.center_points), len(right_scan.center_points)], dtype=np.float32)
+    confidences = np.array([left_scan.confidence, right_scan.confidence], dtype=np.float32)
+    width_values = np.array([left_scan.road_width_est, right_scan.road_width_est], dtype=np.float32)
+    confidence = float(np.average(confidences, weights=weights))
+    road_width_est = float(np.average(width_values, weights=weights))
+    return PerceptionObs(
+        center_points,
+        left_edge_points,
+        right_edge_points,
+        road_width_est,
+        clamp(confidence, 0.0, 1.0),
+        debug_flags=left_scan.debug_flags | right_scan.debug_flags,
+    )
+
+
+def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
     """提取左右摄像头的赛道观测。
 
     功能：输出中心点、边界点、道路宽度估计和感知置信度。
-    参数：`left_img` 与 `right_img` 是平台传入的 BGR 图像。
+    参数：`left_img` 与 `right_img` 是平台传入的 BGR 图像，`timestamp` 预留给后续时间上下文。
     返回：`PerceptionObs`。
-    逻辑：分别扫描有效图像，合并结果；全部失败时返回低置信度空观测。
+    逻辑：分别扫描左右图像；单侧有效则使用单侧，双侧一致则合并，双侧冲突则选择高置信度结果。
     """
 
-    chunks = []
-    widths = []
-    confidences = []
-
-    for image in (left_img, right_img):
-        if not _valid_image(image):
-            continue
-        centers, left_edges, right_edges, width_est, confidence = _scan_image(image)
-        chunks.append((centers, left_edges, right_edges))
-        if width_est > 0:
-            widths.append(width_est)
-        confidences.append(confidence)
-
-    if not chunks:
-        return _empty_obs()
-
-    center_points = np.concatenate([item[0] for item in chunks], axis=0)
-    left_edge_points = np.concatenate([item[1] for item in chunks], axis=0)
-    right_edge_points = np.concatenate([item[2] for item in chunks], axis=0)
-
-    if center_points.size == 0:
-        return _empty_obs()
-
-    confidence = clamp(float(np.mean(confidences)), 0.0, 1.0)
-    road_width_est = float(np.median(np.array(widths, dtype=np.float32))) if widths else 0.0
-    return PerceptionObs(center_points, left_edge_points, right_edge_points, road_width_est, confidence)
+    del timestamp
+    left_scan = _scan_image(left_img) if _valid_image(left_img) else _empty_scan()
+    right_scan = _scan_image(right_img) if _valid_image(right_img) else _empty_scan()
+    return _fuse_scans(left_scan, right_scan)

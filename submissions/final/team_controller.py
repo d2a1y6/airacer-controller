@@ -10,9 +10,9 @@ import numpy as np
 
 """公共数据结构和基础工具。
 
-功能概述：定义模块间共享的数据契约和数值限幅函数。
-输入输出：输入各模块产生的原始数值，输出带字段约束的 dataclass 或裁剪后的数值。
-处理流程：先声明感知、估计、模式、转向、速度五类结构，再提供统一的 `clamp()`。
+功能概述：定义控制流水线共享的数据契约和数值限幅函数。
+输入输出：输入各模块产生的原始数值，输出 dataclass 或平台可用的控制二元组。
+处理流程：声明感知结果、赛道状态和控制命令，再提供统一的裁剪工具。
 """
 
 
@@ -55,57 +55,41 @@ class TrackState:
 
 
 @dataclass
-class ControlMode:
-    """驾驶模式。
+class ControlCmd:
+    """控制命令。
 
-    功能：表达当前处于 normal、caution、lost 或 recovery 模式。
-    参数：`name` 是模式名，`risk` 是 0 到 1 的风险值。
+    功能：保存平台需要的转向和速度比例。
+    参数：`steering` 是方向盘比例，`speed` 是速度比例。
     返回：dataclass 实例。
-    逻辑：策略模块根据几何状态判断风险，其他模块只消费结果。
+    逻辑：`policy.decide_control()` 产生命令，入口层用 `clamp_cmd()` 做最终限幅。
     """
 
-    name: str
-    risk: float
+    steering: float
+    speed: float
 
 
-@dataclass
-class SteeringCmd:
-    """转向命令。
-
-    功能：保存转向值和转向决策置信度。
-    参数：`value` 是方向盘比例，`confidence` 是 0 到 1 的可信度。
-    返回：dataclass 实例。
-    逻辑：转向模块负责限幅，顶层入口仍会做最终兜底限幅。
-    """
-
-    value: float
-    confidence: float
-
-
-@dataclass
-class SpeedCmd:
-    """速度命令。
-
-    功能：保存速度值和速度决策置信度。
-    参数：`value` 是速度比例，`confidence` 是 0 到 1 的可信度。
-    返回：dataclass 实例。
-    逻辑：策略模块负责降速规则，顶层入口负责最终限幅。
-    """
-
-    value: float
-    confidence: float
-
-
-def clamp(x: float, lo: float, hi: float) -> float:
+def clamp(value: float, low: float, high: float) -> float:
     """把数值限制在指定区间。
 
     功能：防止控制量、风险值和置信度越界。
-    参数：`x` 是待裁剪数值，`lo` 和 `hi` 是上下界。
-    返回：落在 `[lo, hi]` 内的浮点数。
+    参数：`value` 是待裁剪数值，`low` 和 `high` 是上下界。
+    返回：落在 `[low, high]` 内的浮点数。
     逻辑：先转成 float，再依次应用上下界。
     """
 
-    return max(lo, min(hi, float(x)))
+    return max(low, min(high, float(value)))
+
+
+def clamp_cmd(cmd: ControlCmd) -> tuple[float, float]:
+    """裁剪平台控制二元组。
+
+    功能：把控制命令转换成平台要求的 `(steering, speed)`。
+    参数：`cmd` 是策略层输出的控制命令。
+    返回：转向位于 `[-1.0, 1.0]`、速度位于 `[0.0, 1.0]` 的二元组。
+    逻辑：入口层统一调用，避免各模块重复写最终范围保护。
+    """
+
+    return clamp(cmd.steering, -1.0, 1.0), clamp(cmd.speed, 0.0, 1.0)
 
 
 
@@ -113,9 +97,9 @@ def clamp(x: float, lo: float, hi: float) -> float:
 
 """策略参数配置。
 
-功能概述：集中保存视觉、估计、转向和速度策略参数。
-输入输出：输入 profile 名称，输出对应参数字典。
-处理流程：先定义通用感知和估计参数，再定义 fastest/safe 两套控制 profile。
+功能概述：集中保存视觉、估计和控制策略参数。
+输入输出：输入任意 profile 名称，输出同一套控制参数。
+处理流程：先定义通用感知和估计参数，再定义唯一的 CONTROL 控制参数。
 """
 
 VISION_PROFILE = {
@@ -123,84 +107,114 @@ VISION_PROFILE = {
     "scan_top_ratio": 0.50,
     "scan_bottom_ratio": 0.92,
     "scan_count": 12,
-    "min_pixels_per_scan": 8,
-    "min_road_width": 18.0,
+    "row_band": 2,
+    "road_lab_threshold": 34.0,
+    "texture_gray_std_scale": 35.0,
+    "min_segment_width": 24.0,
+    "max_segment_width_ratio": 0.92,
+    "max_center_jump_ratio": 0.35,
+    "min_valid_scans": 4,
+    "min_camera_confidence": 0.12,
+    "fusion_max_offset_gap": 0.18,
+    "fusion_confidence_margin": 0.18,
+    "fusion_merge_gap": 0.12,
+    "fusion_merge_min_confidence": 0.35,
 }
 
 ESTIMATOR_PROFILE = {
+    "image_center_x": 320.0,
+    "x_scale": 320.0,
     "lost_confidence": 0.08,
+    "min_center_points": 3,
+    "min_good_points": 8,
+    "min_y_span": 60.0,
+    "min_y_span_good": 220.0,
+    "min_road_width_for_conf": 20.0,
+    "near_progress_max": 0.35,
+    "far_progress_min": 0.60,
+    "near_eval_progress": 0.15,
+    "far_eval_progress": 0.75,
+    "heading_eval_progress": 0.45,
+    "poly2_min_points": 5,
+    "heading_gain": 1.25,
+    "curvature_gain": 1.45,
+    "fallback_curvature_gain": 0.70,
+    "max_fit_error": 0.22,
     "smooth_alpha": 0.28,
+    "low_conf_extra_smoothing": 0.30,
+    "min_smooth_alpha": 0.18,
+    "max_smooth_alpha": 0.70,
+    "curve_smooth_alpha": 0.46,
+    "max_error_delta": 0.22,
+    "max_heading_delta": 0.20,
+    "max_curvature_delta": 0.18,
+    "lost_lateral_decay": 0.85,
+    "lost_heading_decay": 0.78,
+    "lost_curvature_decay": 0.76,
+    "lost_lookahead_decay": 0.82,
+    "timestamp_reset_gap": 2.0,
 }
 
-FAST_PROFILE = {
-    "base_speed": 0.86,
-    "max_speed": 1.0,
-    "min_speed": 0.20,
-    "lost_speed": 0.18,
-    "recovery_speed": 0.26,
-    "caution_speed": 0.58,
-    "curve_slowdown": 0.42,
-    "offset_slowdown": 0.20,
-    "steering_slowdown": 0.08,
-    "risk_slowdown": 0.24,
-    "lateral_gain": 1.05,
-    "heading_gain": 0.34,
-    "lookahead_gain": 0.28,
-    "curvature_gain": 0.38,
-    "steering_deadzone": 0.018,
-    "steering_smooth": 0.30,
-    "caution_steering_smooth": 0.42,
-    "max_steering_delta": 0.22,
-    "nominal_dt": 0.032,
-    "recovery_steering_scale": 0.72,
-    "caution_risk": 0.58,
-    "lost_risk": 0.92,
-    "recovery_confidence": 0.28,
-    "start_caution_seconds": 0.8,
-}
-
-SAFE_PROFILE = {
-    "base_speed": 0.66,
-    "max_speed": 0.82,
+CONTROL = {
+    "base_speed": 0.82,
+    "max_speed": 1.00,
     "min_speed": 0.16,
-    "lost_speed": 0.12,
-    "recovery_speed": 0.20,
-    "caution_speed": 0.44,
-    "curve_slowdown": 0.54,
-    "offset_slowdown": 0.30,
-    "steering_slowdown": 0.12,
-    "risk_slowdown": 0.34,
-    "lateral_gain": 0.98,
-    "heading_gain": 0.30,
-    "lookahead_gain": 0.24,
-    "curvature_gain": 0.42,
-    "steering_deadzone": 0.022,
-    "steering_smooth": 0.40,
-    "caution_steering_smooth": 0.56,
-    "max_steering_delta": 0.16,
+    "start_caution_seconds": 0.8,
+    "start_speed": 0.36,
+    "lost_confidence": 0.10,
+    "recovery_confidence": 0.28,
+    "lost_speed": 0.10,
+    "recovery_speed": 0.24,
+    "hard_turn_speed": 0.48,
+    "correction_speed": 0.54,
+    "hard_turn_threshold": 0.50,
+    "correction_error": 0.42,
+    "recovery_frames": 8,
+    "risk_curve_weight": 0.42,
+    "risk_offset_weight": 0.28,
+    "risk_confidence_weight": 0.22,
+    "risk_lost_weight": 0.80,
+    "near_weight_base": 0.90,
+    "near_weight_offset_boost": 0.55,
+    "far_weight_base": 0.75,
+    "far_weight_curve_boost": 0.45,
+    "gain_lateral": 1.10,
+    "gain_lookahead": 0.46,
+    "gain_heading": 0.42,
+    "gain_curve": 0.50,
+    "gain_lateral_nonlinear": 0.18,
+    "gain_curve_nonlinear": 0.14,
+    "steering_deadzone": 0.015,
+    "curve_slowdown": 0.50,
+    "curve_power": 1.35,
+    "offset_slowdown": 0.34,
+    "offset_power": 1.25,
+    "min_confidence_factor": 0.58,
+    "steering_slowdown": 0.18,
+    "steering_power": 1.15,
+    "steering_smoothing_cruise": 0.22,
+    "steering_smoothing_turn": 0.30,
+    "steering_smoothing_correction": 0.26,
+    "steering_smoothing_recovery": 0.48,
+    "max_steering_delta": 0.26,
+    "max_speed_increase_per_sec": 0.95,
+    "max_speed_decrease_per_sec": 2.20,
     "nominal_dt": 0.032,
-    "recovery_steering_scale": 0.62,
-    "caution_risk": 0.46,
-    "lost_risk": 0.96,
-    "recovery_confidence": 0.36,
-    "start_caution_seconds": 1.2,
+    "timestamp_reset_gap": 2.0,
 }
 
 
 def get_profile(name: str) -> dict:
-    """按名称读取控制 profile。
+    """读取控制 profile。
 
-    功能：为顶层控制器提供 fastest 或 safe 参数。
-    参数：`name` 只能是 `fastest` 或 `safe`。
-    返回：对应参数字典的浅拷贝。
-    逻辑：浅拷贝可避免调用方误改全局参数；未知名称直接回退到 safe。
+    功能：为顶层控制器提供当前唯一维护的控制参数。
+    参数：`name` 保留兼容构建脚本和提交文件中的 fastest/safe 标记。
+    返回：`CONTROL` 参数字典的浅拷贝。
+    逻辑：所有模式都返回同一套参数，便于先集中优化一个目标。
     """
 
-    if name == "fastest":
-        return dict(FAST_PROFILE)
-    if name == "safe":
-        return dict(SAFE_PROFILE)
-    return dict(SAFE_PROFILE)
+    del name
+    return dict(CONTROL)
 
 
 
@@ -208,63 +222,266 @@ def get_profile(name: str) -> dict:
 
 """视觉感知模块。
 
-功能概述：从左右摄像头图像中提取赛道边界、中心点和感知置信度。
-输入输出：输入 BGR 图像，输出 `PerceptionObs`。
-处理流程：裁剪中下部 ROI，生成轻量二值掩膜，按扫描线提取左右边界并估计中心点。
+功能概述：从左右摄像头图像中分割道路表面，并沿扫描线跟踪可行驶走廊。
+输入输出：输入 BGR 图像和可选时间戳，输出 `PerceptionObs`。
+处理流程：估计道路颜色，生成道路 mask，逐行选择连续走廊，再融合左右摄像头结果。
 """
 
 
 
 
-def _empty_obs() -> PerceptionObs:
-    points = np.empty((0, 2), dtype=np.float32)
-    return PerceptionObs(points, points, points, 0.0, 0.0, debug_flags=1)
+
+@dataclass
+class _CameraScan:
+    """单侧摄像头扫描结果。
+
+    功能：保存单张图像的中心点、边界点、道路宽度、置信度和调试标记。
+    参数：字段由 `_scan_image()` 生成。
+    返回：内部 dataclass。
+    逻辑：融合阶段只读取这些稳定字段，不依赖扫描过程的中间变量。
+    """
+
+    center_points: np.ndarray
+    left_edge_points: np.ndarray
+    right_edge_points: np.ndarray
+    road_width_est: float
+    confidence: float
+    debug_flags: int = 0
+
+
+def _empty_points() -> np.ndarray:
+    return np.empty((0, 2), dtype=np.float32)
+
+
+def _empty_scan(debug_flags: int = 1) -> _CameraScan:
+    points = _empty_points()
+    return _CameraScan(points, points, points, 0.0, 0.0, debug_flags=debug_flags)
+
+
+def _empty_obs(debug_flags: int = 1) -> PerceptionObs:
+    points = _empty_points()
+    return PerceptionObs(points, points, points, 0.0, 0.0, debug_flags=debug_flags)
 
 
 def _valid_image(image) -> bool:
+    """检查输入是否是三通道 BGR 图像。"""
+
     return image is not None and hasattr(image, "shape") and len(image.shape) == 3 and image.shape[2] == 3
 
 
-def _make_mask(image: np.ndarray) -> np.ndarray:
-    """生成赛道线索掩膜。
+def _road_color_from_patch(lab_roi: np.ndarray) -> np.ndarray:
+    """估计道路表面 Lab 颜色。
 
-    功能：把亮色区域、灰度高对比区域和边缘线索合并成二值图。
-    参数：`image` 是单个摄像头 BGR 图像。
-    返回：uint8 掩膜，非零像素表示可能的赛道边界或可行驶区域。
-    逻辑：多线索融合比单一颜色阈值更抗赛道材质变化。
+    功能：从 ROI 底部中心 patch 估计道路颜色。
+    参数：`lab_roi` 是中下部 ROI 的 Lab 图像。
+    返回：三通道 Lab 中位数颜色。
+    逻辑：中位数能降低车道线、阴影和零星高光对颜色估计的影响。
+    """
+
+    height, width = lab_roi.shape[:2]
+    y0 = int(height * 0.72)
+    y1 = max(y0 + 1, int(height * 0.96))
+    x_margin = int(width * 0.18)
+    x0 = max(width // 2 - x_margin, 0)
+    x1 = min(width // 2 + x_margin, width)
+    patch = lab_roi[y0:y1, x0:x1]
+    return np.median(patch.reshape(-1, 3).astype(np.float32), axis=0)
+
+
+def _build_masks(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """生成道路表面 mask 和边缘 fallback mask。
+
+    功能：用道路颜色距离生成主 mask，并单独保留 Canny 边缘作为兜底。
+    参数：`image` 是单张 BGR 图像。
+    返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数和主 mask 命中率。
+    逻辑：边缘不混入主 mask，避免把背景强边缘误当成道路表面。
     """
 
     height = image.shape[0]
     top = int(height * VISION_PROFILE["roi_top_ratio"])
     roi = image[top:, :, :]
 
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    lab_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
+    road_lab = _road_color_from_patch(lab_roi)
+    distance = np.sqrt(np.sum((lab_roi - road_lab) ** 2, axis=2))
+    road_roi = (distance <= VISION_PROFILE["road_lab_threshold"]).astype(np.uint8) * 255
 
-    bright = cv2.inRange(hsv, np.array([0, 0, 125]), np.array([180, 100, 255]))
-    _, adaptive = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 120)
-
-    mask = cv2.bitwise_or(cv2.bitwise_or(bright, adaptive), edges)
     kernel = np.ones((5, 5), dtype=np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_OPEN, kernel, iterations=1)
+    road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    padded = np.zeros(image.shape[:2], dtype=np.uint8)
-    padded[top:, :] = mask
-    return padded
+    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray_roi, (5, 5), 0)
+    edge_roi = cv2.Canny(blurred, 45, 120)
+
+    road_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    edge_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    road_mask[top:, :] = road_roi
+    edge_mask[top:, :] = edge_roi
+
+    texture_score = clamp(float(np.std(gray_roi)) / VISION_PROFILE["texture_gray_std_scale"], 0.0, 1.0)
+    mask_fill_ratio = float(np.count_nonzero(road_roi)) / max(float(road_roi.size), 1.0)
+    return road_mask, edge_mask, texture_score, mask_fill_ratio
 
 
-def _scan_image(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
-    """按扫描线提取单张图中的边界和中心点。
+def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
+    """把一维布尔扫描结果转成连续区间。"""
 
-    功能：在若干水平扫描线上寻找左右边界，并估计赛道中心。
-    参数：`image` 是单个摄像头图像。
-    返回：中心点、左边界点、右边界点、道路宽度、置信度。
-    逻辑：从近处到远处扫描，点数和道路宽度稳定性共同决定置信度。
+    if active.size == 0:
+        return []
+    padded = np.concatenate(([False], active.astype(bool), [False]))
+    changes = np.flatnonzero(padded[1:] != padded[:-1])
+    return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
+
+
+def _road_segments(mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
+    """从道路 mask 的水平横带中提取连续道路区间。"""
+
+    y0 = max(int(y) - row_band, 0)
+    y1 = min(int(y) + row_band + 1, mask.shape[0])
+    band = mask[y0:y1, :]
+    min_hits = max(1, int(np.ceil(band.shape[0] * 0.45)))
+    active = np.count_nonzero(band, axis=0) >= min_hits
+    return _segments_from_active(active)
+
+
+def _edge_fallback_segments(edge_mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
+    """从边缘横带中推断候选走廊。
+
+    功能：在道路 mask 没有可用区间时，用相邻边缘之间的区域做兜底。
+    参数：`edge_mask` 是 Canny 结果，`y` 是扫描线，`row_band` 是横带半宽。
+    返回：候选 `(left, right)` 区间。
+    逻辑：只取相邻边缘，避免随机纹理生成大量跨越式组合。
     """
 
-    mask = _make_mask(image)
-    height, width = mask.shape
+    y0 = max(int(y) - row_band, 0)
+    y1 = min(int(y) + row_band + 1, edge_mask.shape[0])
+    band = edge_mask[y0:y1, :]
+    active = np.count_nonzero(band, axis=0) > 0
+    edge_segments = _segments_from_active(active)
+    if len(edge_segments) < 2:
+        return []
+
+    edge_centers = [int((left + right) * 0.5) for left, right in edge_segments]
+    return [(edge_centers[index], edge_centers[index + 1]) for index in range(len(edge_centers) - 1)]
+
+
+def _filter_segments(segments: list[tuple[int, int]], width: int) -> list[tuple[int, int]]:
+    """按道路宽度约束过滤候选区间。"""
+
+    min_width = float(VISION_PROFILE["min_segment_width"])
+    max_width = float(width) * VISION_PROFILE["max_segment_width_ratio"]
+    filtered = []
+    for left, right in segments:
+        segment_width = float(right - left + 1)
+        if min_width <= segment_width <= max_width:
+            filtered.append((left, right))
+    return filtered
+
+
+def _pick_segment(
+    road_mask: np.ndarray,
+    edge_mask: np.ndarray,
+    y: int,
+    previous_center: float,
+    has_previous: bool,
+) -> tuple[tuple[int, int] | None, bool]:
+    """选择当前扫描线的最佳走廊 segment。
+
+    功能：优先从道路表面 mask 选连续区间，失败时再用边缘区间兜底。
+    参数：`road_mask` 和 `edge_mask` 是完整尺寸 mask，`previous_center` 是上一条有效扫描线中心。
+    返回：选中的 `(left, right)` 和是否使用边缘 fallback。
+    逻辑：候选区间必须满足宽度约束，并尽量靠近上一条有效扫描线。
+    """
+
+    width = road_mask.shape[1]
+    row_band = int(VISION_PROFILE["row_band"])
+    candidates = _filter_segments(_road_segments(road_mask, y, row_band), width)
+    used_fallback = False
+    if not candidates:
+        candidates = _filter_segments(_edge_fallback_segments(edge_mask, y, row_band), width)
+        used_fallback = bool(candidates)
+    if not candidates:
+        return None, used_fallback
+
+    best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+    center = (best[0] + best[1]) * 0.5
+    max_jump = float(width) * VISION_PROFILE["max_center_jump_ratio"]
+    if has_previous and abs(center - previous_center) > max_jump:
+        return None, used_fallback
+    return best, used_fallback
+
+
+def _score_scan(
+    centers: list[tuple[float, float]],
+    widths: list[float],
+    texture_score: float,
+    mask_fill_ratio: float,
+    fallback_count: int,
+) -> tuple[float, int]:
+    """计算单侧摄像头置信度。
+
+    功能：综合有效扫描线、宽度稳定性、中心稳定性和纹理分数。
+    参数：扫描点、宽度序列、纹理分数、mask 命中率和 fallback 次数。
+    返回：置信度和调试标记。
+    逻辑：有效线太少、整图近似全命中或全不命中时显著降权。
+    """
+
+    debug_flags = 0
+    scan_count = float(VISION_PROFILE["scan_count"])
+    valid_count = len(centers)
+    valid_ratio = valid_count / max(scan_count, 1.0)
+
+    width_arr = np.array(widths, dtype=np.float32)
+    width_median = max(float(np.median(width_arr)), 1.0)
+    width_stability = clamp(1.0 - float(np.std(width_arr)) / width_median, 0.0, 1.0)
+
+    center_arr = np.array([point[0] for point in centers], dtype=np.float32)
+    if center_arr.size >= 2:
+        center_jump = np.abs(np.diff(center_arr))
+        center_stability = clamp(
+            1.0 - float(np.mean(center_jump)) / (640.0 * VISION_PROFILE["max_center_jump_ratio"]),
+            0.0,
+            1.0,
+        )
+    else:
+        center_stability = 0.0
+
+    confidence = (
+        valid_ratio * 0.38
+        + width_stability * 0.22
+        + center_stability * 0.22
+        + texture_score * 0.18
+    )
+
+    min_valid = int(VISION_PROFILE["min_valid_scans"])
+    if valid_count < min_valid:
+        confidence *= valid_count / max(float(min_valid), 1.0)
+        debug_flags |= 1
+    if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92:
+        confidence *= 0.25
+        debug_flags |= 4
+    if fallback_count:
+        confidence *= max(0.55, 1.0 - 0.06 * fallback_count)
+        debug_flags |= 2
+
+    return clamp(confidence, 0.0, 1.0), debug_flags
+
+
+def _scan_image(image: np.ndarray) -> _CameraScan:
+    """按扫描线跟踪单张图像的道路走廊。
+
+    功能：输出中心点、左右边界点、道路宽度和置信度。
+    参数：`image` 是单个摄像头 BGR 图像。
+    返回：`_CameraScan`。
+    逻辑：从近处向远处扫描，每条线选择离上一条有效中心最近的连续道路 segment。
+    """
+
+    if not _valid_image(image):
+        return _empty_scan()
+
+    road_mask, edge_mask, texture_score, mask_fill_ratio = _build_masks(image)
+    height, width = road_mask.shape
     rows = np.linspace(
         int(height * VISION_PROFILE["scan_bottom_ratio"]),
         int(height * VISION_PROFILE["scan_top_ratio"]),
@@ -276,69 +493,135 @@ def _scan_image(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, 
     left_edges = []
     right_edges = []
     widths = []
+    previous_center = width * 0.5
+    has_previous = False
+    fallback_count = 0
 
     for y in rows:
-        xs = np.flatnonzero(mask[y])
-        if xs.size < VISION_PROFILE["min_pixels_per_scan"]:
+        segment, used_fallback = _pick_segment(road_mask, edge_mask, int(y), previous_center, has_previous)
+        if segment is None:
             continue
-        left = float(xs[0])
-        right = float(xs[-1])
-        road_width = right - left
-        if road_width < VISION_PROFILE["min_road_width"]:
-            continue
+        left, right = segment
         center = (left + right) * 0.5
+        road_width = float(right - left + 1)
         centers.append((center, float(y)))
-        left_edges.append((left, float(y)))
-        right_edges.append((right, float(y)))
+        left_edges.append((float(left), float(y)))
+        right_edges.append((float(right), float(y)))
         widths.append(road_width)
+        previous_center = center
+        has_previous = True
+        if used_fallback:
+            fallback_count += 1
 
     if not centers:
-        empty = np.empty((0, 2), dtype=np.float32)
-        return empty, empty, empty, 0.0, 0.0
+        debug_flags = 4 if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92 else 1
+        return _empty_scan(debug_flags=debug_flags)
 
-    center_arr = np.array(centers, dtype=np.float32)
-    left_arr = np.array(left_edges, dtype=np.float32)
-    right_arr = np.array(right_edges, dtype=np.float32)
-    width_est = float(np.median(np.array(widths, dtype=np.float32)))
-    confidence = clamp(len(centers) / float(VISION_PROFILE["scan_count"]), 0.0, 1.0)
-    return center_arr, left_arr, right_arr, width_est, confidence
+    confidence, debug_flags = _score_scan(centers, widths, texture_score, mask_fill_ratio, fallback_count)
+    return _CameraScan(
+        np.array(centers, dtype=np.float32),
+        np.array(left_edges, dtype=np.float32),
+        np.array(right_edges, dtype=np.float32),
+        float(np.median(np.array(widths, dtype=np.float32))),
+        confidence,
+        debug_flags=debug_flags,
+    )
 
 
-def extract_observation(left_img, right_img) -> PerceptionObs:
+def _usable(scan: _CameraScan) -> bool:
+    """判断单侧扫描结果是否足以参与融合。"""
+
+    return scan.center_points.size > 0 and scan.confidence >= VISION_PROFILE["min_camera_confidence"]
+
+
+def _near_center(scan: _CameraScan) -> float:
+    """读取最靠近车辆的扫描中心。"""
+
+    if scan.center_points.size == 0:
+        return 320.0
+    return float(scan.center_points[0, 0])
+
+
+def _to_obs(scan: _CameraScan, debug_flags: int | None = None) -> PerceptionObs:
+    """把单侧扫描结果转换为公开观测结构。"""
+
+    flags = scan.debug_flags if debug_flags is None else debug_flags
+    return PerceptionObs(
+        scan.center_points,
+        scan.left_edge_points,
+        scan.right_edge_points,
+        scan.road_width_est,
+        clamp(scan.confidence, 0.0, 1.0),
+        debug_flags=flags,
+    )
+
+
+def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionObs:
+    """融合左右摄像头扫描结果。
+
+    功能：根据单侧可用性、近处中心一致性和置信度选择或合并观测。
+    参数：`left_scan` 和 `right_scan` 是两侧扫描结果。
+    返回：融合后的 `PerceptionObs`。
+    逻辑：单侧有效时直接使用；双侧冲突时选高置信度；一致时合并点集并平均置信度。
+    """
+
+    left_ok = _usable(left_scan)
+    right_ok = _usable(right_scan)
+    if left_ok and not right_ok:
+        return _to_obs(left_scan)
+    if right_ok and not left_ok:
+        return _to_obs(right_scan)
+    if not left_ok and not right_ok:
+        return _empty_obs(debug_flags=left_scan.debug_flags | right_scan.debug_flags | 1)
+
+    center_gap = abs(_near_center(left_scan) - _near_center(right_scan))
+    merge_gap = 640.0 * VISION_PROFILE["fusion_merge_gap"]
+    merge_confidence = VISION_PROFILE["fusion_merge_min_confidence"]
+    confidence_gap = abs(left_scan.confidence - right_scan.confidence)
+    if (
+        center_gap >= merge_gap
+        or left_scan.confidence < merge_confidence
+        or right_scan.confidence < merge_confidence
+    ):
+        chosen = left_scan if left_scan.confidence >= right_scan.confidence else right_scan
+        flags = chosen.debug_flags
+        if center_gap > 640.0 * VISION_PROFILE["fusion_max_offset_gap"]:
+            flags |= 8
+        if confidence_gap < VISION_PROFILE["fusion_confidence_margin"]:
+            flags |= 16
+        return _to_obs(chosen, debug_flags=flags)
+
+    center_points = np.concatenate([left_scan.center_points, right_scan.center_points], axis=0)
+    left_edge_points = np.concatenate([left_scan.left_edge_points, right_scan.left_edge_points], axis=0)
+    right_edge_points = np.concatenate([left_scan.right_edge_points, right_scan.right_edge_points], axis=0)
+    weights = np.array([len(left_scan.center_points), len(right_scan.center_points)], dtype=np.float32)
+    confidences = np.array([left_scan.confidence, right_scan.confidence], dtype=np.float32)
+    width_values = np.array([left_scan.road_width_est, right_scan.road_width_est], dtype=np.float32)
+    confidence = float(np.average(confidences, weights=weights))
+    road_width_est = float(np.average(width_values, weights=weights))
+    return PerceptionObs(
+        center_points,
+        left_edge_points,
+        right_edge_points,
+        road_width_est,
+        clamp(confidence, 0.0, 1.0),
+        debug_flags=left_scan.debug_flags | right_scan.debug_flags,
+    )
+
+
+def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
     """提取左右摄像头的赛道观测。
 
     功能：输出中心点、边界点、道路宽度估计和感知置信度。
-    参数：`left_img` 与 `right_img` 是平台传入的 BGR 图像。
+    参数：`left_img` 与 `right_img` 是平台传入的 BGR 图像，`timestamp` 预留给后续时间上下文。
     返回：`PerceptionObs`。
-    逻辑：分别扫描有效图像，合并结果；全部失败时返回低置信度空观测。
+    逻辑：分别扫描左右图像；单侧有效则使用单侧，双侧一致则合并，双侧冲突则选择高置信度结果。
     """
 
-    chunks = []
-    widths = []
-    confidences = []
-
-    for image in (left_img, right_img):
-        if not _valid_image(image):
-            continue
-        centers, left_edges, right_edges, width_est, confidence = _scan_image(image)
-        chunks.append((centers, left_edges, right_edges))
-        if width_est > 0:
-            widths.append(width_est)
-        confidences.append(confidence)
-
-    if not chunks:
-        return _empty_obs()
-
-    center_points = np.concatenate([item[0] for item in chunks], axis=0)
-    left_edge_points = np.concatenate([item[1] for item in chunks], axis=0)
-    right_edge_points = np.concatenate([item[2] for item in chunks], axis=0)
-
-    if center_points.size == 0:
-        return _empty_obs()
-
-    confidence = clamp(float(np.mean(confidences)), 0.0, 1.0)
-    road_width_est = float(np.median(np.array(widths, dtype=np.float32))) if widths else 0.0
-    return PerceptionObs(center_points, left_edge_points, right_edge_points, road_width_est, confidence)
+    del timestamp
+    left_scan = _scan_image(left_img) if _valid_image(left_img) else _empty_scan()
+    right_scan = _scan_image(right_img) if _valid_image(right_img) else _empty_scan()
+    return _fuse_scans(left_scan, right_scan)
 
 
 
@@ -346,36 +629,185 @@ def extract_observation(left_img, right_img) -> PerceptionObs:
 
 """赛道几何估计模块。
 
-功能概述：把感知点转换成横向偏移、方向误差、曲率和前瞻误差。
+功能概述：把感知中心点转换成稳定的赛道状态。
 输入输出：输入 `PerceptionObs` 和时间戳，输出 `TrackState`。
-处理流程：按近远扫描点分组，计算近处偏移、远处偏移和中心线斜率，再做轻量平滑。
+处理流程：清洗中心点，按 progress 拟合中心线，估计偏移、朝向和曲率，再按置信度平滑。
 """
 
 
 
 _LAST_TRACK = TrackState(0.0, 0.0, 0.0, 0.0, 0.0, True)
+_LAST_TIMESTAMP = None
 
 
-def _image_center(points: np.ndarray) -> float:
-    if points.size == 0:
-        return 320.0
-    max_x = float(np.max(points[:, 0]))
-    min_x = float(np.min(points[:, 0]))
-    width_guess = max(640.0, max_x - min_x)
-    return width_guess * 0.5
+def _lost_track(confidence: float) -> TrackState:
+    """生成丢线状态。
+
+    功能：保留上一帧估计的衰减值，避免控制量突然归零。
+    参数：`confidence` 是当前可用的低置信度。
+    返回：`lost=True` 的 `TrackState`。
+    逻辑：各几何量使用独立衰减参数，置信度裁剪到合法范围。
+    """
+
+    return TrackState(
+        _LAST_TRACK.lateral_error * ESTIMATOR_PROFILE["lost_lateral_decay"],
+        _LAST_TRACK.heading_error * ESTIMATOR_PROFILE["lost_heading_decay"],
+        _LAST_TRACK.curvature * ESTIMATOR_PROFILE["lost_curvature_decay"],
+        _LAST_TRACK.lookahead_error * ESTIMATOR_PROFILE["lost_lookahead_decay"],
+        clamp(confidence, 0.0, ESTIMATOR_PROFILE["lost_confidence"]),
+        True,
+    )
 
 
-def _weighted_x(points: np.ndarray, near: bool) -> float:
-    y = points[:, 1]
-    if near:
-        weights = 0.35 + y / max(float(np.max(y)), 1.0)
+def _clean_points(points) -> np.ndarray:
+    """清洗感知中心点。
+
+    功能：把输入转为 `float32` 的 `N x 2` 数组，并过滤 NaN / inf。
+    参数：`points` 是 `PerceptionObs.center_points`。
+    返回：只含有限坐标的二维数组。
+    逻辑：异常形状直接返回空数组，由上层进入 lost。
+    """
+
+    try:
+        array = np.asarray(points, dtype=np.float32)
+    except (TypeError, ValueError):
+        return np.empty((0, 2), dtype=np.float32)
+    if array.ndim != 2 or array.shape[1] != 2:
+        return np.empty((0, 2), dtype=np.float32)
+    return array[np.isfinite(array).all(axis=1)]
+
+
+def _normalize_points(points: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    """把图像坐标转换成横向误差和前后进度。
+
+    功能：固定图像中心为 320，把 x 归一化到 `[-1, 1]`，把 y 转成 progress。
+    参数：`points` 是清洗后的中心点。
+    返回：`x_norm`、`progress` 和 y 跨度。
+    逻辑：progress=0 表示近处，progress=1 表示远处。
+    """
+
+    y = points[:, 1].astype(np.float32)
+    y_min = float(np.min(y))
+    y_max = float(np.max(y))
+    y_span = max(y_max - y_min, 0.0)
+    progress = (y_max - y) / max(y_span, 1.0)
+
+    x = points[:, 0].astype(np.float32)
+    x_norm = (x - ESTIMATOR_PROFILE["image_center_x"]) / ESTIMATOR_PROFILE["x_scale"]
+    x_norm = np.clip(x_norm, -1.0, 1.0)
+    return x_norm.astype(np.float32), progress.astype(np.float32), y_span
+
+
+def _fit_centerline(progress: np.ndarray, x_norm: np.ndarray) -> tuple[np.ndarray, int]:
+    """拟合归一化中心线。
+
+    功能：用 progress 作为自变量拟合 `x_norm`。
+    参数：`progress` 是前后进度，`x_norm` 是横向归一化中心。
+    返回：`np.polyval()` 可用的系数和拟合阶数。
+    逻辑：点数足够时用二次曲线，点数不足时用直线。
+    """
+
+    degree = 2 if len(progress) >= ESTIMATOR_PROFILE["poly2_min_points"] else 1
+    coeffs = np.polyfit(progress, x_norm, deg=degree)
+    return coeffs.astype(np.float32), degree
+
+
+def _value_from_band(
+    progress: np.ndarray,
+    x_norm: np.ndarray,
+    coeffs: np.ndarray,
+    mask: np.ndarray,
+    fallback_progress: float,
+) -> float:
+    """从指定 progress 区间估计横向误差。"""
+
+    if np.any(mask):
+        return float(np.median(x_norm[mask]))
+    return float(np.polyval(coeffs, fallback_progress))
+
+
+def _heading_from_fit(coeffs: np.ndarray, degree: int) -> float:
+    """由中心线导数估计朝向误差。"""
+
+    eval_progress = ESTIMATOR_PROFILE["heading_eval_progress"]
+    if degree == 2:
+        derivative = float(2.0 * coeffs[0] * eval_progress + coeffs[1])
     else:
-        weights = 1.35 - y / max(float(np.max(y)), 1.0)
-    return float(np.average(points[:, 0], weights=weights))
+        derivative = float(coeffs[0])
+    return clamp(derivative * ESTIMATOR_PROFILE["heading_gain"], -1.0, 1.0)
 
 
-def _smooth_value(previous: float, current: float, alpha: float) -> float:
-    return previous * alpha + current * (1.0 - alpha)
+def _curvature_from_fit(
+    coeffs: np.ndarray,
+    degree: int,
+    lateral_error: float,
+    lookahead_error: float,
+) -> float:
+    """估计中心线曲率。
+
+    功能：二次拟合时用二次项，其他情况用远近误差差值兜底。
+    参数：拟合系数、阶数、近处误差和远处误差。
+    返回：右弯为正、左弯为负的曲率值。
+    逻辑：所有结果裁剪到 `[-1, 1]`，保持 policy 输入稳定。
+    """
+
+    if degree == 2:
+        value = float(coeffs[0]) * ESTIMATOR_PROFILE["curvature_gain"]
+    else:
+        value = (lookahead_error - lateral_error) * ESTIMATOR_PROFILE["fallback_curvature_gain"]
+    return clamp(value, -1.0, 1.0)
+
+
+def _fit_error_score(progress: np.ndarray, x_norm: np.ndarray, coeffs: np.ndarray) -> float:
+    """把中心线拟合误差转换成置信度分数。"""
+
+    fitted = np.polyval(coeffs, progress)
+    rmse = float(np.sqrt(np.mean((x_norm - fitted) ** 2)))
+    return clamp(1.0 - rmse / ESTIMATOR_PROFILE["max_fit_error"], 0.0, 1.0)
+
+
+def _geometry_confidence(obs: PerceptionObs, points: np.ndarray, y_span: float, fit_score: float) -> float:
+    """计算几何置信度。
+
+    功能：综合感知置信度、点数、y 覆盖范围、拟合误差和道路宽度。
+    参数：`obs` 是感知结果，`points` 是清洗点，`y_span` 是纵向覆盖，`fit_score` 是拟合质量。
+    返回：`[0, 1]` 内的几何置信度。
+    逻辑：几何质量差时不会直接照抄感知置信度。
+    """
+
+    obs_score = clamp(obs.confidence, 0.0, 1.0)
+    point_score = clamp(len(points) / float(ESTIMATOR_PROFILE["min_good_points"]), 0.0, 1.0)
+    span_score = clamp(y_span / ESTIMATOR_PROFILE["min_y_span_good"], 0.0, 1.0)
+    width_score = clamp(obs.road_width_est / ESTIMATOR_PROFILE["min_road_width_for_conf"], 0.0, 1.0)
+    quality = (
+        0.30
+        + point_score * 0.20
+        + span_score * 0.20
+        + fit_score * 0.25
+        + width_score * 0.05
+    )
+    confidence = obs_score * quality
+    return clamp(min(confidence, obs_score + 0.20), 0.0, 1.0)
+
+
+def _smooth_alpha(confidence: float) -> float:
+    """按置信度选择普通误差平滑强度。"""
+
+    low_conf = 1.0 - clamp(confidence, 0.0, 1.0)
+    alpha = (
+        ESTIMATOR_PROFILE["min_smooth_alpha"]
+        + (ESTIMATOR_PROFILE["max_smooth_alpha"] - ESTIMATOR_PROFILE["min_smooth_alpha"]) * low_conf
+        + ESTIMATOR_PROFILE["low_conf_extra_smoothing"] * low_conf
+    )
+    return clamp(alpha, ESTIMATOR_PROFILE["min_smooth_alpha"], ESTIMATOR_PROFILE["max_smooth_alpha"])
+
+
+def _smooth_limited(previous: float, current: float, alpha: float, max_delta: float) -> float:
+    """平滑单个值并限制单帧变化。"""
+
+    smoothed = previous * alpha + current * (1.0 - alpha)
+    delta = clamp(smoothed - previous, -max_delta, max_delta)
+    return clamp(previous + delta, -1.0, 1.0)
 
 
 def reset_estimator_state() -> None:
@@ -384,218 +816,390 @@ def reset_estimator_state() -> None:
     功能：让测试或新一轮仿真从干净状态开始。
     参数：无。
     返回：无。
-    逻辑：把上一帧状态写回低置信度丢线状态。
+    逻辑：清空上一帧几何状态和时间戳。
     """
 
-    global _LAST_TRACK
+    global _LAST_TRACK, _LAST_TIMESTAMP
     _LAST_TRACK = TrackState(0.0, 0.0, 0.0, 0.0, 0.0, True)
+    _LAST_TIMESTAMP = None
+
+
+def _maybe_reset_estimator_by_timestamp(timestamp: float) -> None:
+    """根据时间戳判断是否重置跨帧状态。"""
+
+    if _LAST_TIMESTAMP is None:
+        return
+    elapsed = float(timestamp) - float(_LAST_TIMESTAMP)
+    if elapsed < 0.0 or elapsed > ESTIMATOR_PROFILE["timestamp_reset_gap"]:
+        reset_estimator_state()
 
 
 def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     """估计赛道几何状态。
 
-    功能：根据中心点估计控制模块需要的几何量。
+    功能：把感知中心点转换成 policy 可直接使用的赛道状态。
     参数：`obs` 是感知结果，`timestamp` 是平台时间戳。
     返回：`TrackState`。
-    逻辑：点数不足时进入丢线状态；点数足够时计算近处、远处和整体趋势并平滑输出。
+    逻辑：点集无效时返回衰减 lost 状态；有效时按 progress 拟合中心线并做自适应平滑。
     """
 
-    del timestamp
-    global _LAST_TRACK
+    global _LAST_TRACK, _LAST_TIMESTAMP
 
-    points = obs.center_points
-    if points.size == 0 or obs.confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        recovered = TrackState(
-            _LAST_TRACK.lateral_error * 0.85,
-            _LAST_TRACK.heading_error * 0.80,
-            _LAST_TRACK.curvature * 0.80,
-            _LAST_TRACK.lookahead_error * 0.85,
-            max(obs.confidence, 0.0),
-            True,
-        )
-        _LAST_TRACK = recovered
-        return recovered
+    timestamp = float(timestamp)
+    _maybe_reset_estimator_by_timestamp(timestamp)
 
-    points = points[np.argsort(points[:, 1])]
-    center_x = _image_center(points)
-    scale = max(center_x, 1.0)
+    points = _clean_points(obs.center_points)
+    if len(points) < ESTIMATOR_PROFILE["min_center_points"] or obs.confidence < ESTIMATOR_PROFILE["lost_confidence"]:
+        track = _lost_track(obs.confidence)
+        _LAST_TRACK = track
+        _LAST_TIMESTAMP = timestamp
+        return track
 
-    near_x = _weighted_x(points, near=True)
-    far_x = _weighted_x(points, near=False)
-    lateral_error = clamp((near_x - center_x) / scale, -1.0, 1.0)
-    lookahead_error = clamp((far_x - center_x) / scale, -1.0, 1.0)
+    x_norm, progress, y_span = _normalize_points(points)
+    if y_span < ESTIMATOR_PROFILE["min_y_span"]:
+        track = _lost_track(obs.confidence)
+        _LAST_TRACK = track
+        _LAST_TIMESTAMP = timestamp
+        return track
 
-    if len(points) >= 2:
-        fit = np.polyfit(points[:, 1], points[:, 0], deg=1)
-        heading_error = clamp(float(fit[0]) * 1.6, -1.0, 1.0)
-    else:
-        heading_error = 0.0
+    coeffs, degree = _fit_centerline(progress, x_norm)
+    lateral_error = clamp(
+        _value_from_band(
+            progress,
+            x_norm,
+            coeffs,
+            progress <= ESTIMATOR_PROFILE["near_progress_max"],
+            ESTIMATOR_PROFILE["near_eval_progress"],
+        ),
+        -1.0,
+        1.0,
+    )
+    lookahead_error = clamp(
+        _value_from_band(
+            progress,
+            x_norm,
+            coeffs,
+            progress >= ESTIMATOR_PROFILE["far_progress_min"],
+            ESTIMATOR_PROFILE["far_eval_progress"],
+        ),
+        -1.0,
+        1.0,
+    )
+    heading_error = _heading_from_fit(coeffs, degree)
+    curvature = _curvature_from_fit(coeffs, degree, lateral_error, lookahead_error)
 
-    curvature = clamp(lookahead_error - lateral_error, -1.0, 1.0)
-    alpha = ESTIMATOR_PROFILE["smooth_alpha"]
+    confidence = _geometry_confidence(obs, points, y_span, _fit_error_score(progress, x_norm, coeffs))
+    if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
+        track = _lost_track(confidence)
+        _LAST_TRACK = track
+        _LAST_TIMESTAMP = timestamp
+        return track
+
+    alpha = _smooth_alpha(confidence)
+    curve_alpha = clamp(
+        ESTIMATOR_PROFILE["curve_smooth_alpha"]
+        + ESTIMATOR_PROFILE["low_conf_extra_smoothing"] * (1.0 - confidence),
+        ESTIMATOR_PROFILE["min_smooth_alpha"],
+        ESTIMATOR_PROFILE["max_smooth_alpha"],
+    )
     track = TrackState(
-        _smooth_value(_LAST_TRACK.lateral_error, lateral_error, alpha),
-        _smooth_value(_LAST_TRACK.heading_error, heading_error, alpha),
-        _smooth_value(_LAST_TRACK.curvature, curvature, alpha),
-        _smooth_value(_LAST_TRACK.lookahead_error, lookahead_error, alpha),
-        clamp(obs.confidence, 0.0, 1.0),
+        _smooth_limited(_LAST_TRACK.lateral_error, lateral_error, alpha, ESTIMATOR_PROFILE["max_error_delta"]),
+        _smooth_limited(_LAST_TRACK.heading_error, heading_error, alpha, ESTIMATOR_PROFILE["max_heading_delta"]),
+        _smooth_limited(_LAST_TRACK.curvature, curvature, curve_alpha, ESTIMATOR_PROFILE["max_curvature_delta"]),
+        _smooth_limited(_LAST_TRACK.lookahead_error, lookahead_error, alpha, ESTIMATOR_PROFILE["max_error_delta"]),
+        confidence,
         False,
     )
     _LAST_TRACK = track
+    _LAST_TIMESTAMP = timestamp
     return track
 
 
 
-# ---- strategy.py ----
+# ---- policy.py ----
 
-"""速度策略和模式切换模块。
+"""控制策略模块。
 
-功能概述：根据赛道状态、转向命令和 profile 选择驾驶模式并计算速度。
-输入输出：输入 `TrackState`、`SteeringCmd` 和参数字典，输出 `ControlMode` 或 `SpeedCmd`。
-处理流程：先按丢线、置信度和风险切模式，再按风险项削减基础速度。
+功能概述：根据赛道状态统一规划转向和速度。
+输入输出：输入 `TrackState`、时间戳和 fastest/safe 模式，输出 `ControlCmd`。
+处理流程：计算风险分量，选择驾驶状态，生成目标转向和速度，再做平滑与变化率限制。
 """
 
-
-
-
-def _risk_from_track(track: TrackState) -> float:
-    curve_risk = abs(track.curvature) * 0.45
-    offset_risk = abs(track.lateral_error) * 0.35
-    heading_risk = abs(track.heading_error) * 0.20
-    confidence_risk = 1.0 - track.confidence
-    return clamp(curve_risk + offset_risk + heading_risk + confidence_risk * 0.45, 0.0, 1.0)
-
-
-def select_mode(track: TrackState, timestamp: float, profile: dict) -> ControlMode:
-    """选择驾驶模式。
-
-    功能：把连续风险值转换为 normal、caution、lost 或 recovery。
-    参数：`track` 是几何状态，`timestamp` 是平台时间，`profile` 是策略参数。
-    返回：`ControlMode`。
-    逻辑：丢线优先，其次看置信度和综合风险；启动阶段可更保守。
-    """
-
-    risk = _risk_from_track(track)
-    if track.lost:
-        return ControlMode("lost", max(risk, profile["lost_risk"]))
-    if track.confidence < profile["recovery_confidence"]:
-        return ControlMode("recovery", max(risk, 0.72))
-    if timestamp < profile["start_caution_seconds"] or risk > profile["caution_risk"]:
-        return ControlMode("caution", risk)
-    return ControlMode("normal", risk)
-
-
-def compute_speed(
-    track: TrackState,
-    steering: SteeringCmd,
-    mode: ControlMode,
-    timestamp: float,
-    profile: dict,
-) -> SpeedCmd:
-    """计算速度命令。
-
-    功能：在稳定直道提速，在急弯、低置信度、丢线和大转向时降速。
-    参数：`track` 是赛道状态，`steering` 是转向命令，`mode` 是驾驶模式，`profile` 是策略参数。
-    返回：`SpeedCmd`。
-    逻辑：从基础速度出发，按曲率、偏移、转向和模式风险逐项扣减。
-    """
-
-    del timestamp
-
-    if mode.name == "lost":
-        return SpeedCmd(profile["lost_speed"], track.confidence)
-    if mode.name == "recovery":
-        return SpeedCmd(profile["recovery_speed"], track.confidence)
-
-    curve_penalty = abs(track.curvature) * profile["curve_slowdown"]
-    offset_penalty = abs(track.lateral_error) * profile["offset_slowdown"]
-    steering_penalty = math.sqrt(abs(steering.value)) * profile["steering_slowdown"]
-    risk_penalty = mode.risk * profile["risk_slowdown"]
-
-    speed = profile["base_speed"] - curve_penalty - offset_penalty - steering_penalty - risk_penalty
-    if mode.name == "caution":
-        speed = min(speed, profile["caution_speed"])
-
-    value = clamp(speed, profile["min_speed"], profile["max_speed"])
-    confidence = clamp(min(track.confidence, steering.confidence), 0.0, 1.0)
-    return SpeedCmd(value, confidence)
-
-
-
-# ---- steering.py ----
-
-"""转向控制模块。
-
-功能概述：根据赛道几何状态和驾驶模式计算方向盘比例。
-输入输出：输入 `TrackState`、`ControlMode`、时间戳和 profile，输出 `SteeringCmd`。
-处理流程：组合横向偏移、朝向误差、前瞻误差和曲率，再做死区、平滑和变化率限制。
-"""
 
 
 _LAST_STEERING = 0.0
+_LAST_SPEED = 0.0
 _LAST_TIMESTAMP = None
+_LOST_FRAMES = 0
+_RECOVERY_FRAMES = 0
+_LAST_GOOD_BIAS = 0.0
+_LAST_MODE = "start"
 
 
-def reset_steering_state() -> None:
-    """重置转向跨帧状态。
+def reset_policy_state() -> None:
+    """重置策略跨帧状态。
 
-    功能：清空上一帧转向和时间戳。
+    功能：清空上一帧转向、速度、时间戳和恢复计数。
     参数：无。
     返回：无。
     逻辑：测试或新仿真开始前调用，避免继承旧平滑状态。
     """
 
-    global _LAST_STEERING, _LAST_TIMESTAMP
+    global _LAST_STEERING, _LAST_SPEED, _LAST_TIMESTAMP
+    global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
     _LAST_STEERING = 0.0
+    _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
+    _LOST_FRAMES = 0
+    _RECOVERY_FRAMES = 0
+    _LAST_GOOD_BIAS = 0.0
+    _LAST_MODE = "start"
 
 
-def compute_steering(
-    track: TrackState,
-    mode: ControlMode,
-    timestamp: float,
-    profile: dict,
-) -> SteeringCmd:
-    """计算转向命令。
+def _maybe_reset_policy_by_timestamp(timestamp: float, profile: dict) -> None:
+    """根据时间戳判断是否重置策略状态。"""
 
-    功能：输出范围稳定的方向盘比例。
-    参数：`track` 是赛道状态，`mode` 是驾驶模式，`timestamp` 是平台时间，`profile` 是策略参数。
-    返回：`SteeringCmd`。
-    逻辑：正常模式响应更快，风险模式加大平滑并限制单帧变化。
+    if _LAST_TIMESTAMP is None:
+        return
+    elapsed = float(timestamp) - float(_LAST_TIMESTAMP)
+    if elapsed < 0.0 or elapsed > profile["timestamp_reset_gap"]:
+        reset_policy_state()
+
+
+def _dt(timestamp: float, profile: dict) -> float:
+    """计算本帧控制间隔，首帧使用 nominal_dt。"""
+
+    if _LAST_TIMESTAMP is None:
+        return profile["nominal_dt"]
+    return max(float(timestamp) - float(_LAST_TIMESTAMP), profile["nominal_dt"])
+
+
+def _signed_power(value: float, power: float) -> float:
+    """保留符号的幂函数。"""
+
+    return math.copysign(abs(value) ** power, value)
+
+
+def _control_signals(track: TrackState, profile: dict) -> dict:
+    """计算策略使用的风险分量。
+
+    功能：拆分弯道、偏移、置信度和丢线风险。
+    参数：`track` 是赛道状态，`profile` 是控制参数。
+    返回：包含各类风险和综合风险的字典。
+    逻辑：速度和模式选择共享这些风险，避免重复估算。
     """
 
-    global _LAST_STEERING, _LAST_TIMESTAMP
-
-    raw = (
-        track.lateral_error * profile["lateral_gain"]
-        + track.heading_error * profile["heading_gain"]
-        + track.lookahead_error * profile["lookahead_gain"]
-        + track.curvature * profile["curvature_gain"]
+    curve_risk = clamp(max(abs(track.curvature), abs(track.heading_error), abs(track.lookahead_error)), 0.0, 1.0)
+    offset_risk = clamp(abs(track.lateral_error), 0.0, 1.0)
+    confidence_risk = clamp(1.0 - track.confidence, 0.0, 1.0)
+    lost_risk = 1.0 if track.lost else 0.0
+    turn_demand = clamp(curve_risk * 0.55 + offset_risk * 0.45, 0.0, 1.0)
+    risk = clamp(
+        curve_risk * profile["risk_curve_weight"]
+        + offset_risk * profile["risk_offset_weight"]
+        + confidence_risk * profile["risk_confidence_weight"]
+        + lost_risk * profile["risk_lost_weight"],
+        0.0,
+        1.0,
     )
+    return {
+        "curve_risk": curve_risk,
+        "offset_risk": offset_risk,
+        "confidence_risk": confidence_risk,
+        "lost_risk": lost_risk,
+        "turn_demand": turn_demand,
+        "risk": risk,
+    }
+
+
+def _select_mode(track: TrackState, signals: dict, timestamp: float, profile: dict) -> str:
+    """选择内部驾驶状态。
+
+    功能：在 lost、recovering、hard_turn、correcting、cruise 之间切换。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`timestamp` 是平台时间。
+    返回：内部状态名。
+    逻辑：丢线优先，其次恢复缓冲、急弯、回中和巡航。
+    """
+
+    del timestamp
+    if track.lost or track.confidence < profile["lost_confidence"]:
+        return "lost"
+    if _RECOVERY_FRAMES > 0 or track.confidence < profile["recovery_confidence"]:
+        return "recovering"
+    if signals["turn_demand"] > profile["hard_turn_threshold"]:
+        return "hard_turn"
+    if abs(track.lateral_error) > profile["correction_error"]:
+        return "correcting"
+    return "cruise"
+
+
+def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict) -> float:
+    """计算目标转向。
+
+    功能：把回中项和前瞻项分开组合，并按状态修正。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部驾驶状态。
+    返回：裁剪到 `[-1, 1]` 的目标转向。
+    逻辑：偏移大时更看近处，弯道明显时更看前方；丢线时使用历史偏置恢复。
+    """
+
+    center_term = track.lateral_error * profile["gain_lateral"]
+    lookahead_term = (
+        track.lookahead_error * profile["gain_lookahead"]
+        + track.heading_error * profile["gain_heading"]
+        + track.curvature * profile["gain_curve"]
+    )
+    near_weight = profile["near_weight_base"] + signals["offset_risk"] * profile["near_weight_offset_boost"]
+    far_weight = profile["far_weight_base"] + signals["curve_risk"] * profile["far_weight_curve_boost"]
+
+    raw = near_weight * center_term + far_weight * lookahead_term
+    raw += profile["gain_lateral_nonlinear"] * _signed_power(track.lateral_error, 1.7)
+    raw += profile["gain_curve_nonlinear"] * _signed_power(track.curvature, 1.5)
+
+    if mode == "lost":
+        raw = 0.75 * _LAST_STEERING + 0.25 * _LAST_GOOD_BIAS
+    elif mode == "recovering":
+        raw *= 0.70
+    elif mode == "correcting":
+        raw += track.lateral_error * 0.25
+    elif mode == "hard_turn":
+        raw *= 1.05
 
     if abs(raw) < profile["steering_deadzone"]:
         raw = 0.0
+    return clamp(raw, -1.0, 1.0)
 
-    if mode.name in {"lost", "recovery"}:
-        raw *= profile["recovery_steering_scale"]
 
-    raw = clamp(raw, -1.0, 1.0)
-    alpha = profile["caution_steering_smooth"] if mode.name != "normal" else profile["steering_smooth"]
-    smoothed = _LAST_STEERING * alpha + raw * (1.0 - alpha)
+def _steering_smoothing_for_mode(mode: str, profile: dict) -> float:
+    """读取当前驾驶状态对应的转向平滑系数。"""
 
-    if _LAST_TIMESTAMP is None:
-        max_delta = profile["max_steering_delta"]
-    else:
-        elapsed = max(float(timestamp) - float(_LAST_TIMESTAMP), 0.0)
-        max_delta = profile["max_steering_delta"] * max(1.0, elapsed / profile["nominal_dt"])
+    if mode == "cruise":
+        return profile["steering_smoothing_cruise"]
+    if mode == "hard_turn":
+        return profile["steering_smoothing_turn"]
+    if mode == "correcting":
+        return profile["steering_smoothing_correction"]
+    return profile["steering_smoothing_recovery"]
 
+
+def _smooth_steering(target: float, mode: str, timestamp: float, profile: dict) -> float:
+    """平滑转向并限制变化率。
+
+    功能：按驾驶状态和速度限制方向盘跳变。
+    参数：`target` 是目标转向，`mode` 是内部状态，`timestamp` 是平台时间。
+    返回：平滑后的转向值。
+    逻辑：高速时限制更强，恢复状态更平滑。
+    """
+
+    alpha = _steering_smoothing_for_mode(mode, profile)
+    smoothed = _LAST_STEERING * alpha + target * (1.0 - alpha)
+    dt_factor = max(1.0, _dt(timestamp, profile) / profile["nominal_dt"])
+    speed_factor = 1.0 - 0.35 * clamp(_LAST_SPEED / max(profile["max_speed"], 1e-6), 0.0, 1.0)
+    max_delta = profile["max_steering_delta"] * dt_factor * speed_factor
     delta = clamp(smoothed - _LAST_STEERING, -max_delta, max_delta)
-    value = clamp(_LAST_STEERING + delta, -1.0, 1.0)
-    _LAST_STEERING = value
-    _LAST_TIMESTAMP = timestamp
+    return clamp(_LAST_STEERING + delta, -1.0, 1.0)
 
-    confidence = clamp(track.confidence * (1.0 - mode.risk * 0.35), 0.0, 1.0)
-    return SteeringCmd(value, confidence)
+
+def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, timestamp: float, profile: dict) -> float:
+    """计算目标速度。
+
+    功能：用乘法降速组合弯道、偏移、置信度和转向风险。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部状态，`steering` 是当前转向。
+    返回：目标速度比例。
+    逻辑：模式只限制速度上限，正常速度由风险因子相乘得到。
+    """
+
+    if mode == "lost":
+        return profile["lost_speed"]
+
+    curve_factor = 1.0 - profile["curve_slowdown"] * (signals["curve_risk"] ** profile["curve_power"])
+    offset_factor = 1.0 - profile["offset_slowdown"] * (signals["offset_risk"] ** profile["offset_power"])
+    confidence_factor = profile["min_confidence_factor"] + (1.0 - profile["min_confidence_factor"]) * track.confidence
+    steering_factor = 1.0 - profile["steering_slowdown"] * (abs(steering) ** profile["steering_power"])
+    target = profile["base_speed"] * curve_factor * offset_factor * confidence_factor * steering_factor
+
+    if mode == "recovering":
+        target = min(target, profile["recovery_speed"])
+    elif mode == "hard_turn":
+        target = min(target, profile["hard_turn_speed"])
+    elif mode == "correcting":
+        target = min(target, profile["correction_speed"])
+    if timestamp < profile["start_caution_seconds"]:
+        target = min(target, profile["start_speed"])
+    return clamp(target, profile["min_speed"], profile["max_speed"])
+
+
+def _smooth_speed(target: float, timestamp: float, profile: dict) -> float:
+    """平滑速度并限制加减速。
+
+    功能：让加速慢、减速快，减少速度跳变。
+    参数：`target` 是目标速度，`timestamp` 是平台时间，`profile` 是控制参数。
+    返回：平滑后的速度比例。
+    逻辑：上升和下降使用不同变化率，入弯能更快降速。
+    """
+
+    dt = _dt(timestamp, profile)
+    delta = target - _LAST_SPEED
+    if delta >= 0.0:
+        delta = min(delta, profile["max_speed_increase_per_sec"] * dt)
+    else:
+        delta = max(delta, -profile["max_speed_decrease_per_sec"] * dt)
+    return clamp(_LAST_SPEED + delta, min(profile["min_speed"], target), profile["max_speed"])
+
+
+def _update_policy_state(track: TrackState, steering: float, speed: float, mode: str, timestamp: float, profile: dict) -> None:
+    """写回策略跨帧状态。
+
+    功能：维护丢线计数、恢复缓冲、最近可信方向和上一帧控制量。
+    参数：`track` 是赛道状态，`steering` 和 `speed` 是本帧输出。
+    返回：无。
+    逻辑：刚从丢线恢复时保守若干帧；高置信时更新恢复方向偏置。
+    """
+
+    global _LAST_STEERING, _LAST_SPEED, _LAST_TIMESTAMP
+    global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
+
+    if track.lost:
+        _LOST_FRAMES += 1
+    else:
+        if _LOST_FRAMES > 0:
+            _RECOVERY_FRAMES = int(profile["recovery_frames"])
+        _LOST_FRAMES = 0
+    if _RECOVERY_FRAMES > 0 and not track.lost:
+        _RECOVERY_FRAMES -= 1
+
+    if not track.lost and track.confidence >= profile["recovery_confidence"]:
+        _LAST_GOOD_BIAS = clamp(
+            track.lateral_error * 0.55 + track.lookahead_error * 0.25 + track.curvature * 0.20,
+            -1.0,
+            1.0,
+        )
+
+    _LAST_STEERING = steering
+    _LAST_SPEED = speed
+    _LAST_TIMESTAMP = timestamp
+    _LAST_MODE = mode
+
+
+def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -> ControlCmd:
+    """计算最终控制命令。
+
+    功能：按 fastest 或 safe 参数统一生成转向和速度。
+    参数：`track` 是赛道状态，`timestamp` 是平台时间，`mode` 是参数模式。
+    返回：`ControlCmd`，包含 `steering` 和 `speed`。
+    逻辑：非法模式回退 fastest；内部用状态机协同转向、速度和恢复策略。
+    """
+
+    profile = get_profile(mode if mode in {"fastest", "safe"} else "fastest")
+    timestamp = float(timestamp)
+    _maybe_reset_policy_by_timestamp(timestamp, profile)
+    signals = _control_signals(track, profile)
+    drive_mode = _select_mode(track, signals, timestamp, profile)
+    target_steering = _target_steering(track, signals, drive_mode, profile)
+    steering = _smooth_steering(target_steering, drive_mode, timestamp, profile)
+    target_speed = _target_speed(track, signals, drive_mode, steering, timestamp, profile)
+    speed = _smooth_speed(target_speed, timestamp, profile)
+    _update_policy_state(track, steering, speed, drive_mode, timestamp, profile)
+    return ControlCmd(steering, speed)
 
 
 
@@ -603,9 +1207,9 @@ def compute_steering(
 
 """本地控制器入口。
 
-功能概述：按固定流水线串接感知、估计、模式、转向和速度模块。
+功能概述：按固定流水线串接感知、估计和控制策略模块。
 输入输出：输入平台同形态的左右图像和时间戳，输出 `(steering, speed)`。
-处理流程：读取 profile，提取观测，估计赛道，选择模式，计算转向和速度，最后限幅返回。
+处理流程：提取观测，估计赛道，按 profile 决策控制量，最后限幅返回。
 """
 
 
@@ -622,12 +1226,9 @@ def control(left_img, right_img, timestamp):
     """
 
     try:
-        profile = get_profile(PROFILE)
-        obs = extract_observation(left_img, right_img)
+        obs = extract_observation(left_img, right_img, timestamp)
         track = estimate_track(obs, timestamp)
-        mode = select_mode(track, timestamp, profile)
-        steering_cmd = compute_steering(track, mode, timestamp, profile)
-        speed_cmd = compute_speed(track, steering_cmd, mode, timestamp, profile)
-        return clamp(steering_cmd.value, -1.0, 1.0), clamp(speed_cmd.value, 0.0, 1.0)
+        cmd = decide_control(track, timestamp, mode=PROFILE)
+        return clamp_cmd(cmd)
     except Exception:
         return 0.0, 0.0

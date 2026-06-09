@@ -6,32 +6,32 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from controller.common import ControlMode, PerceptionObs, SpeedCmd, SteeringCmd, TrackState
+from controller.common import ControlCmd, PerceptionObs, TrackState, clamp_cmd
 from controller.estimator import estimate_track, reset_estimator_state
-from controller.params import get_profile
+from controller.policy import decide_control, reset_policy_state
 from controller.perception import extract_observation
-from controller.steering import compute_steering, reset_steering_state
-from controller.strategy import compute_speed, select_mode
 
 
 def make_lane_image(offset=0):
     image = np.zeros((480, 640, 3), dtype=np.uint8)
+    image[:, :] = (35, 110, 35)
     center = 320 + offset
-    image[240:, max(center - 95, 0) : max(center - 70, 0), :] = 255
-    image[240:, min(center + 70, 639) : min(center + 95, 640), :] = 255
+    image[220:, max(center - 125, 0) : min(center + 125, 640), :] = (95, 95, 95)
+    image[220:, max(center - 125, 0) : max(center - 118, 0), :] = 255
+    image[220:, min(center + 118, 639) : min(center + 125, 640), :] = 255
     return image
 
 
 def test_module_contracts_on_mock_lane():
     reset_estimator_state()
-    reset_steering_state()
+    reset_policy_state()
     image = make_lane_image()
-    profile = get_profile("fastest")
 
-    obs = extract_observation(image, image)
+    obs = extract_observation(image, image, 0.0)
     assert isinstance(obs, PerceptionObs)
     assert obs.center_points.ndim == 2
     assert obs.center_points.shape[1] == 2
+    assert len(obs.center_points) >= 4
     assert 0.0 <= obs.confidence <= 1.0
 
     track = estimate_track(obs, 0.0)
@@ -39,20 +39,11 @@ def test_module_contracts_on_mock_lane():
     assert -1.0 <= track.lateral_error <= 1.0
     assert 0.0 <= track.confidence <= 1.0
 
-    mode = select_mode(track, 0.0, profile)
-    assert isinstance(mode, ControlMode)
-    assert mode.name in {"normal", "caution", "lost", "recovery"}
-    assert 0.0 <= mode.risk <= 1.0
-
-    steering = compute_steering(track, mode, 0.0, profile)
-    assert isinstance(steering, SteeringCmd)
-    assert -1.0 <= steering.value <= 1.0
-    assert 0.0 <= steering.confidence <= 1.0
-
-    speed = compute_speed(track, steering, mode, 0.0, profile)
-    assert isinstance(speed, SpeedCmd)
-    assert 0.0 <= speed.value <= 1.0
-    assert 0.0 <= speed.confidence <= 1.0
+    cmd = decide_control(track, 0.0, mode="fastest")
+    assert isinstance(cmd, ControlCmd)
+    steering, speed = clamp_cmd(cmd)
+    assert -1.0 <= steering <= 1.0
+    assert 0.0 <= speed <= 1.0
 
 
 def test_estimator_lost_contract_on_empty_observation():
@@ -62,3 +53,19 @@ def test_estimator_lost_contract_on_empty_observation():
     track = estimate_track(obs, 1.0)
     assert track.lost is True
     assert 0.0 <= track.confidence <= 1.0
+
+
+def test_estimator_lost_contract_on_too_few_points():
+    reset_estimator_state()
+    points = np.array([[320.0, 440.0], [321.0, 420.0]], dtype=np.float32)
+    obs = PerceptionObs(points, points, points, 240.0, 0.9)
+    track = estimate_track(obs, 1.0)
+    assert track.lost is True
+
+
+def test_policy_invalid_mode_uses_fastest_defaults():
+    reset_policy_state()
+    track = TrackState(0.0, 0.0, 0.0, 0.0, 1.0, False)
+    cmd = decide_control(track, 2.0, mode="unknown")
+    assert isinstance(cmd, ControlCmd)
+    assert 0.0 <= cmd.speed <= 1.0

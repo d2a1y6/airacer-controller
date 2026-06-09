@@ -51,6 +51,9 @@ def test_generated_submission_static_contract():
     source = path.read_text(encoding="utf-8")
     assert "from controller" not in source
     assert "from ." not in source
+    assert "# ---- steering.py ----" not in source
+    assert "# ---- strategy.py ----" not in source
+    assert "# ---- policy.py ----" in source
 
     tree = ast.parse(source)
     for node in ast.walk(tree):

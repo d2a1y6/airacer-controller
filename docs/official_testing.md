@@ -103,6 +103,18 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/check_env.py
 
 如果 `which webots` 找不到，且 `/Applications/Webots.app` 不存在，就说明还没安装或 SDK 找不到 Webots。
 
+macOS 如果提示 “Apple could not verify `webots-R2025a.dmg` is free of malware”，通常是下载文件带有 quarantine 标记。确认安装包来自 Webots 官方来源后，可以只对这个安装包移除标记再打开：
+
+```bash
+xattr -d com.apple.quarantine ~/Downloads/webots-R2025a.dmg
+```
+
+如果复制到 `/Applications` 后第一次启动仍被拦截，可以再对应用包移除一次：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Webots.app
+```
+
 如果 Webots 不在默认路径，设置 `WEBOTS_HOME`，或后续运行时显式传 `--webots`。
 
 macOS 常见路径示例：

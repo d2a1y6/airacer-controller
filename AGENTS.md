@@ -41,9 +41,8 @@ controller/
   common.py                 公共 dataclass 和 clamp
   perception.py             图像感知，输出 PerceptionObs
   estimator.py              赛道几何估计，输出 TrackState
-  strategy.py               模式选择和速度策略
-  steering.py               转向控制
-  params.py                 fastest / safe 参数
+  policy.py                 转向和速度策略，输出 ControlCmd
+  params.py                 当前唯一维护的 CONTROL 参数
   team_controller_local.py  本地 control() 入口
 scripts/
   build_submission.py       生成单文件提交版本
@@ -65,9 +64,7 @@ docs/official_testing.md    官方 SDK / Webots 测试接入说明
 left_img, right_img
 -> extract_observation()
 -> estimate_track()
--> select_mode()
--> compute_steering()
--> compute_speed()
+-> decide_control()
 -> steering, speed
 ```
 
@@ -79,8 +76,7 @@ left_img, right_img
 
 - `perception.py` 只处理图像，不计算最终转向和速度。
 - `estimator.py` 只从感知结果估计几何状态，不接触原图，不计算最终控制量。
-- `steering.py` 只计算转向，不计算速度。
-- `strategy.py` 负责驾驶模式和速度，不处理图像，不改转向公式。
+- `policy.py` 负责转向和速度策略，不处理原图。
 - `params.py` 集中放参数，不把调参值散落到各模块。
 - `team_controller_local.py` 只做接线、异常兜底和最终限幅。
 
@@ -107,7 +103,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 
-如果最终选择 `safe` 作为上传版本，把上面的 `--mode fastest` 改为 `--mode safe`。
+`fastest` 和 `safe` 生成入口当前都读取同一套 `CONTROL` 参数；保留两个 mode 只是兼容脚本和目录结构。
 
 官方仓库位于 `/Users/day/Desktop/Github/pkudsa.airacer`。不要把官方平台源码复制进本仓库；只通过相邻目录调用 `sdk/validate_controller.py`、`sdk/run_local.py` 和 Webots 资产。官方 validator 不需要 Webots；真正打开赛道可视化实跑时，macOS 必须先手动安装 Webots.app，并确保 SDK 能找到它。
 

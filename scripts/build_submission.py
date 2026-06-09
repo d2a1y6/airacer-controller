@@ -21,8 +21,7 @@ MODULE_ORDER = [
     "params.py",
     "perception.py",
     "estimator.py",
-    "strategy.py",
-    "steering.py",
+    "policy.py",
     "team_controller_local.py",
 ]
 

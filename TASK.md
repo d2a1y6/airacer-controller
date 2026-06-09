@@ -405,18 +405,14 @@ backup：备用版本
 ```text
 controller/perception.py  : 图像 -> PerceptionObs
 controller/estimator.py   : PerceptionObs -> TrackState
-controller/strategy.py    : TrackState -> ControlMode
-controller/steering.py    : TrackState + ControlMode -> SteeringCmd
-controller/strategy.py    : TrackState + SteeringCmd + ControlMode -> SpeedCmd
+controller/policy.py      : TrackState -> ControlCmd
 ```
 
 公共数据结构放在 `controller/common.py`：
 
 - `PerceptionObs`：中心点、左右边界、道路宽度和感知置信度。
 - `TrackState`：横向偏移、方向误差、曲率、前瞻误差、置信度和丢线状态。
-- `ControlMode`：驾驶模式和风险值。
-- `SteeringCmd`：转向命令和置信度。
-- `SpeedCmd`：速度命令和置信度。
+- `ControlCmd`：转向和速度命令。
 
 生成策略版本：
 

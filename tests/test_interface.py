@@ -25,3 +25,12 @@ def test_generated_submission_has_callable_control():
     steering, speed = module.control(image, image, 0.0)
     assert isinstance(float(steering), float)
     assert isinstance(float(speed), float)
+
+
+def test_local_control_has_callable_interface():
+    from controller.team_controller_local import control
+
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    steering, speed = control(image, image, 0.0)
+    assert isinstance(float(steering), float)
+    assert isinstance(float(speed), float)

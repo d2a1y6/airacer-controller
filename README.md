@@ -1,18 +1,15 @@
 # AI Racer Controller
 
-本仓库用于协作开发 AI Racer 控制器。最终交付物是一个可上传到平台的单文件 `team_controller.py`，文件中必须提供：
+本仓库用于开发 AI Racer 控制器。最终交付物是一个可上传到平台的单文件 `team_controller.py`，文件中必须提供：
 
 ```python
 def control(left_img, right_img, timestamp):
     return steering, speed
 ```
 
-运行时，平台只向我们提供左右摄像头图像和当前仿真时间；我们的代码每帧返回转向比例 `steering` 和速度比例 `speed`。仓库不复制平台源码，不依赖平台内部实现，只围绕控制器算法、构建、校验和测试组织工作。
+运行时，平台提供左右摄像头图像和当前仿真时间；控制器每帧返回转向比例 `steering` 和速度比例 `speed`。仓库不复制平台源码，不依赖平台内部实现，只围绕控制器算法、构建、校验和测试组织工作。
 
-当前保留两套策略：
-
-- `fastest`：单车最快完赛，优先追求速度和单圈时间。
-- `safe`：多车或碰撞稳健，优先降低失控、停滞和严重碰撞风险。
+当前只维护一套 `CONTROL` 参数。`fastest` / `safe` 生成目录和 `--mode` 参数保留为脚本兼容入口，实际都会读取同一套控制参数，方便先集中优化。
 
 `submissions/final/team_controller.py` 是当前准备上传平台的版本，由脚本生成，不手工修改。
 
@@ -29,8 +26,7 @@ airacer-controller/
 │   ├── common.py
 │   ├── perception.py
 │   ├── estimator.py
-│   ├── steering.py
-│   ├── strategy.py
+│   ├── policy.py
 │   └── params.py
 ├── scripts/
 │   ├── build_submission.py
@@ -61,9 +57,7 @@ airacer-controller/
 left_img, right_img
 → perception.extract_observation()
 → estimator.estimate_track()
-→ strategy.select_mode()
-→ steering.compute_steering()
-→ strategy.compute_speed()
+→ policy.decide_control()
 → steering, speed
 ```
 
@@ -89,19 +83,9 @@ class TrackState:
     lost: bool
 
 @dataclass
-class ControlMode:
-    name: str
-    risk: float
-
-@dataclass
-class SteeringCmd:
-    value: float
-    confidence: float
-
-@dataclass
-class SpeedCmd:
-    value: float
-    confidence: float
+class ControlCmd:
+    steering: float
+    speed: float
 ```
 
 接口一旦确定，各模块内部可以独立迭代；确需改字段时，必须同步修改所有调用方、测试和构建脚本。
@@ -112,9 +96,10 @@ class SpeedCmd:
 |---|---|---|---|
 | `perception.py` | 左右摄像头图像 | `PerceptionObs` | 识别赛道边界、可行驶区域、中心点和感知置信度 |
 | `estimator.py` | `PerceptionObs`, `timestamp` | `TrackState` | 拟合中心线，估计偏移、朝向误差、曲率、前瞻误差，处理丢线和平滑 |
-| `steering.py` | `TrackState`, `ControlMode` | `SteeringCmd` | 根据偏移、朝向和弯道趋势计算转向，限制抖动和转向变化率 |
-| `strategy.py` | `TrackState`, `SteeringCmd` | `ControlMode`, `SpeedCmd` | 选择驾驶模式，按 `fastest` / `safe` 参数计算速度 |
-| `team_controller_local.py`、`scripts/`、`tests/`、`experiments/` | 全部模块 | 提交文件与测试结果 | 接线、构建、校验、实验记录、最终版本管理 |
+| `policy.py` | `TrackState`, `timestamp`, profile | `ControlCmd` | 统一计算转向和速度，处理丢线、低置信度和急弯降速 |
+| `params.py` | profile 名称 | 参数字典 | 集中保存当前唯一维护的 `CONTROL` 参数 |
+| `team_controller_local.py` | 左右摄像头图像、时间戳 | `(steering, speed)` | 本地 `control()` 入口，只做接线、异常兜底和最终限幅 |
+| `scripts/`、`tests/`、`experiments/` | 控制器源码 | 提交文件与测试结果 | 构建、校验、实验记录、最终版本管理 |
 
 ## 快速开始
 
@@ -124,7 +109,7 @@ class SpeedCmd:
 pip install -r requirements.txt
 ```
 
-生成两个策略的提交文件：
+生成兼容目录下的提交文件：
 
 ```bash
 python scripts/build_submission.py --mode fastest
@@ -154,13 +139,13 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
 
 官方校验只需要 Python 环境。要用官方赛道做可视化实跑，macOS 上还需要先手动安装 Webots 桌面 app；SDK 会启动 Webots 图形界面。启动前先看 [docs/official_testing.md](docs/official_testing.md)。
 
-如果实际考核只要求单车完赛，优先使用 `fastest`。如果需要按多车/碰撞规则运行，优先使用 `safe` 或以 `safe` 为基线调参。
+当前 `fastest` 和 `safe` 使用同一套参数。平台测试和调参时优先看 `submissions/final/team_controller.py`。
 
 ## 开发流程
 
 1. 在 `controller/` 内修改模块化代码。
 2. 保持模块接口不变，尤其是 `common.py` 中的数据结构字段。
-3. 用脚本生成 `submissions/fastest/team_controller.py` 和 `submissions/safe/team_controller.py`。
+3. 用脚本生成 `submissions/fastest/team_controller.py` 和 `submissions/safe/team_controller.py`，两者当前使用同一套 `CONTROL` 参数。
 4. 运行本地校验和测试。
 5. 平台测试后，将结果写入 `experiments/runs.csv` 和 `experiments/notes.md`。
 6. 确认最终策略后，生成 `submissions/final/team_controller.py`。

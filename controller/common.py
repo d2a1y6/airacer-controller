@@ -1,8 +1,8 @@
 """公共数据结构和基础工具。
 
-功能概述：定义模块间共享的数据契约和数值限幅函数。
-输入输出：输入各模块产生的原始数值，输出带字段约束的 dataclass 或裁剪后的数值。
-处理流程：先声明感知、估计、模式、转向、速度五类结构，再提供统一的 `clamp()`。
+功能概述：定义控制流水线共享的数据契约和数值限幅函数。
+输入输出：输入各模块产生的原始数值，输出 dataclass 或平台可用的控制二元组。
+处理流程：声明感知结果、赛道状态和控制命令，再提供统一的裁剪工具。
 """
 
 from dataclasses import dataclass
@@ -47,54 +47,38 @@ class TrackState:
 
 
 @dataclass
-class ControlMode:
-    """驾驶模式。
+class ControlCmd:
+    """控制命令。
 
-    功能：表达当前处于 normal、caution、lost 或 recovery 模式。
-    参数：`name` 是模式名，`risk` 是 0 到 1 的风险值。
+    功能：保存平台需要的转向和速度比例。
+    参数：`steering` 是方向盘比例，`speed` 是速度比例。
     返回：dataclass 实例。
-    逻辑：策略模块根据几何状态判断风险，其他模块只消费结果。
+    逻辑：`policy.decide_control()` 产生命令，入口层用 `clamp_cmd()` 做最终限幅。
     """
 
-    name: str
-    risk: float
+    steering: float
+    speed: float
 
 
-@dataclass
-class SteeringCmd:
-    """转向命令。
-
-    功能：保存转向值和转向决策置信度。
-    参数：`value` 是方向盘比例，`confidence` 是 0 到 1 的可信度。
-    返回：dataclass 实例。
-    逻辑：转向模块负责限幅，顶层入口仍会做最终兜底限幅。
-    """
-
-    value: float
-    confidence: float
-
-
-@dataclass
-class SpeedCmd:
-    """速度命令。
-
-    功能：保存速度值和速度决策置信度。
-    参数：`value` 是速度比例，`confidence` 是 0 到 1 的可信度。
-    返回：dataclass 实例。
-    逻辑：策略模块负责降速规则，顶层入口负责最终限幅。
-    """
-
-    value: float
-    confidence: float
-
-
-def clamp(x: float, lo: float, hi: float) -> float:
+def clamp(value: float, low: float, high: float) -> float:
     """把数值限制在指定区间。
 
     功能：防止控制量、风险值和置信度越界。
-    参数：`x` 是待裁剪数值，`lo` 和 `hi` 是上下界。
-    返回：落在 `[lo, hi]` 内的浮点数。
+    参数：`value` 是待裁剪数值，`low` 和 `high` 是上下界。
+    返回：落在 `[low, high]` 内的浮点数。
     逻辑：先转成 float，再依次应用上下界。
     """
 
-    return max(lo, min(hi, float(x)))
+    return max(low, min(high, float(value)))
+
+
+def clamp_cmd(cmd: ControlCmd) -> tuple[float, float]:
+    """裁剪平台控制二元组。
+
+    功能：把控制命令转换成平台要求的 `(steering, speed)`。
+    参数：`cmd` 是策略层输出的控制命令。
+    返回：转向位于 `[-1.0, 1.0]`、速度位于 `[0.0, 1.0]` 的二元组。
+    逻辑：入口层统一调用，避免各模块重复写最终范围保护。
+    """
+
+    return clamp(cmd.steering, -1.0, 1.0), clamp(cmd.speed, 0.0, 1.0)
