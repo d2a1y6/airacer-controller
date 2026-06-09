@@ -1,0 +1,39 @@
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# AI agent scratch
+.tmp/
+
+# Python cache / environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+config/local/
+
+# Large local artifacts
+*.mp4
+*.mov
+*.avi
+*.webm
+*.log
+
+# Generated outputs
+results/**
+!results/
+!results/.gitkeep
