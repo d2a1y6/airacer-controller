@@ -152,7 +152,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 
-启动 Webots 前先看 [docs/official_testing.md](docs/official_testing.md)。
+官方校验只需要 Python 环境。要用官方赛道做可视化实跑，macOS 上还需要先手动安装 Webots 桌面 app；SDK 会启动 Webots 图形界面。启动前先看 [docs/official_testing.md](docs/official_testing.md)。
 
 如果实际考核只要求单车完赛，优先使用 `fastest`。如果需要按多车/碰撞规则运行，优先使用 `safe` 或以 `safe` 为基线调参。
 

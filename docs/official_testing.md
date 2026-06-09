@@ -93,11 +93,15 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
 
 ## 5. 检查 Webots 本地环境
 
-官方 SDK 要求 Python 3.10+，并需要 `numpy`、`pyyaml`。如果控制器使用 OpenCV，还需要 `opencv-python` 或 `opencv-python-headless`。启动真实仿真需要安装 Webots。
+官方 SDK 要求 Python 3.10+，并需要 `numpy`、`pyyaml`。如果控制器使用 OpenCV，还需要 `opencv-python` 或 `opencv-python-headless`。
+
+只跑 `validate_controller.py` 或 `run_local.py --validate-only` 不需要 Webots。要用官方赛道做真实可视化仿真，macOS 上必须先手动安装 Webots 桌面 app。安装后，SDK 会启动 Webots 图形界面并打开官方 `.wbt` 赛道。
 
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/check_env.py
 ```
+
+如果 `which webots` 找不到，且 `/Applications/Webots.app` 不存在，就说明还没安装或 SDK 找不到 Webots。
 
 如果 Webots 不在默认路径，设置 `WEBOTS_HOME`，或后续运行时显式传 `--webots`。
 

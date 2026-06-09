@@ -109,7 +109,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
 
 如果最终选择 `safe` 作为上传版本，把上面的 `--mode fastest` 改为 `--mode safe`。
 
-官方仓库位于 `/Users/day/Desktop/Github/pkudsa.airacer`。不要把官方平台源码复制进本仓库；只通过相邻目录调用 `sdk/validate_controller.py`、`sdk/run_local.py` 和 Webots 资产。
+官方仓库位于 `/Users/day/Desktop/Github/pkudsa.airacer`。不要把官方平台源码复制进本仓库；只通过相邻目录调用 `sdk/validate_controller.py`、`sdk/run_local.py` 和 Webots 资产。官方 validator 不需要 Webots；真正打开赛道可视化实跑时，macOS 必须先手动安装 Webots.app，并确保 SDK 能找到它。
 
 ## 代码和文档习惯
 
