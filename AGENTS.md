@@ -52,6 +52,7 @@ submissions/
   fastest/ safe/ final/     生成后的 team_controller.py
 tests/                      接口、契约、范围和静态检查
 experiments/                测试记录和观察
+docs/official_testing.md    官方 SDK / Webots 测试接入说明
 ```
 
 保持结构浅层。没有明确需要时，不新增 `src/`、`data/`、`config/`、深层实验目录或重型框架。
@@ -101,9 +102,14 @@ pytest
 python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
 python scripts/validate_submission.py submissions/final/team_controller.py
 pytest
+python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
+  --code-path submissions/final/team_controller.py \
+  --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 
 如果最终选择 `safe` 作为上传版本，把上面的 `--mode fastest` 改为 `--mode safe`。
+
+官方仓库位于 `/Users/day/Desktop/Github/pkudsa.airacer`。不要把官方平台源码复制进本仓库；只通过相邻目录调用 `sdk/validate_controller.py`、`sdk/run_local.py` 和 Webots 资产。
 
 ## 代码和文档习惯
 

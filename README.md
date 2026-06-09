@@ -47,6 +47,8 @@ airacer-controller/
 ├── experiments/
 │   ├── runs.csv
 │   └── notes.md
+└── docs/
+    └── official_testing.md
 ```
 
 结构保持浅层。核心算法只放在 `controller/`；自动化脚本只放在 `scripts/`；生成后的提交文件只放在 `submissions/`。
@@ -142,6 +144,16 @@ python scripts/validate_submission.py submissions/final/team_controller.py
 pytest
 ```
 
+接入官方 SDK 校验：
+
+```bash
+python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
+  --code-path submissions/final/team_controller.py \
+  --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
+```
+
+启动 Webots 前先看 [docs/official_testing.md](docs/official_testing.md)。
+
 如果实际考核只要求单车完赛，优先使用 `fastest`。如果需要按多车/碰撞规则运行，优先使用 `safe` 或以 `safe` 为基线调参。
 
 ## 开发流程
@@ -189,3 +201,4 @@ date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finis
 
 - `TASK.md`：参赛任务、平台接口规则、算法目标和提交限制。
 - `AGENTS.md`：给 Codex / AI agent 的执行规则。
+- `docs/official_testing.md`：官方 SDK、validator 和 Webots 本地测试接入方式。
