@@ -35,6 +35,11 @@ airacer-controller/
 │   ├── fastest/team_controller.py
 │   ├── safe/team_controller.py
 │   └── final/team_controller.py
+├── baselines/
+│   └── webots_basic_physical_finish_2026-06-10/
+│       ├── README.md
+│       ├── params.json
+│       └── team_controller.py
 ├── tests/
 │   ├── test_interface.py
 │   ├── test_contracts.py
@@ -47,7 +52,7 @@ airacer-controller/
     └── official_testing.md
 ```
 
-结构保持浅层。核心算法只放在 `controller/`；自动化脚本只放在 `scripts/`；生成后的提交文件只放在 `submissions/`。
+结构保持浅层。核心算法只放在 `controller/`；自动化脚本只放在 `scripts/`；生成后的提交文件只放在 `submissions/`。`baselines/` 只保存已经实跑确认过的策略快照，便于以后对照、回放或回退。
 
 ## 控制流水线
 
@@ -100,6 +105,7 @@ class ControlCmd:
 | `params.py` | profile 名称 | 参数字典 | 集中保存当前唯一维护的 `CONTROL` 参数 |
 | `team_controller_local.py` | 左右摄像头图像、时间戳 | `(steering, speed)` | 本地 `control()` 入口，只做接线、异常兜底和最终限幅 |
 | `scripts/`、`tests/`、`experiments/` | 控制器源码 | 提交文件与测试结果 | 构建、校验、实验记录、最终版本管理 |
+| `baselines/` | 已确认提交文件、参数摘要 | 可回放策略快照 | 保存跑通版本的单文件策略、参数和证据说明 |
 
 ## 快速开始
 
@@ -171,6 +177,15 @@ pytest
 - 返回值始终是两个数字，范围分别为 `[-1, 1]` 和 `[0, 1]`。
 
 正常情况下不要手工修改 `submissions/`。需要修改控制逻辑时，先改 `controller/`，再运行 `scripts/build_submission.py`。
+
+## Baseline 快照
+
+跑通后的策略可以保存，但要分清两层：
+
+- git commit 保存完整源码、测试、实验记录和生成脚本，是以后继续开发和回退的主依据。
+- `baselines/` 保存可直接回放的策略快照，包括生成后的 `team_controller.py`、当时的参数摘要和实跑证据。
+
+当前 baseline 位于 `baselines/webots_basic_physical_finish_2026-06-10/`。里面的 `team_controller.py` 来自同一时刻的 `submissions/final/team_controller.py`，不是手工改出的分支版本。
 
 ## 实验记录
 

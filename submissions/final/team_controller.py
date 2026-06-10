@@ -132,7 +132,7 @@ ESTIMATOR_PROFILE = {
     "lost_confidence": 0.08,
     "min_center_points": 3,
     "min_good_points": 8,
-    "min_y_span": 60.0,
+    "min_y_span": 30.0,
     "min_y_span_good": 220.0,
     "min_road_width_for_conf": 20.0,
     "near_progress_max": 0.35,
@@ -161,20 +161,21 @@ ESTIMATOR_PROFILE = {
 }
 
 CONTROL = {
-    "base_speed": 0.94,
+    "base_speed": 0.96,
     "max_speed": 1.00,
     "min_speed": 0.16,
     "start_caution_seconds": 0.8,
     "start_speed": 0.36,
     "lost_confidence": 0.10,
     "recovery_confidence": 0.28,
-    "lost_speed": 0.10,
-    "recovery_speed": 0.24,
-    "hard_turn_speed": 0.36,
-    "correction_speed": 0.58,
-    "hard_turn_threshold": 0.25,
+    "lost_speed": 0.24,
+    "recovery_speed": 0.38,
+    "hard_turn_speed": 0.30,
+    "hard_turn_center_speed_bonus": 0.30,
+    "correction_speed": 0.50,
+    "hard_turn_threshold": 0.20,
     "correction_error": 0.25,
-    "recovery_frames": 8,
+    "recovery_frames": 4,
     "risk_curve_weight": 0.42,
     "risk_offset_weight": 0.28,
     "risk_confidence_weight": 0.22,
@@ -183,10 +184,12 @@ CONTROL = {
     "near_weight_offset_boost": 0.55,
     "far_weight_base": 0.75,
     "far_weight_curve_boost": 0.45,
-    "gain_lateral": 0.38,
+    "far_conflict_offset_scale": 3.20,
+    "far_conflict_min_scale": 0.05,
+    "gain_lateral": 0.65,
     "gain_lookahead": 0.90,
     "gain_heading": 0.98,
-    "gain_curve": 0.10,
+    "gain_curve": 0.25,
     "gain_lateral_nonlinear": 0.18,
     "gain_curve_nonlinear": 0.04,
     "steering_deadzone": 0.015,
@@ -202,7 +205,7 @@ CONTROL = {
     "steering_smoothing_correction": 0.14,
     "steering_smoothing_recovery": 0.28,
     "max_steering_delta": 0.46,
-    "max_speed_increase_per_sec": 2.10,
+    "max_speed_increase_per_sec": 1.60,
     "max_speed_decrease_per_sec": 2.20,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
@@ -1061,7 +1064,10 @@ def _select_mode(track: TrackState, signals: dict, timestamp: float, profile: di
         return "lost"
     if _RECOVERY_FRAMES > 0 or track.confidence < profile["recovery_confidence"]:
         return "recovering"
-    if signals["turn_demand"] > profile["hard_turn_threshold"]:
+    if (
+        signals["curve_risk"] > profile["hard_turn_threshold"]
+        or signals["turn_demand"] > profile["hard_turn_threshold"]
+    ):
         return "hard_turn"
     if abs(track.lateral_error) > profile["correction_error"]:
         return "correcting"
@@ -1074,7 +1080,7 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
     功能：把回中项和前瞻项分开组合，并按状态修正。
     参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部驾驶状态。
     返回：裁剪到 `[-1, 1]` 的目标转向。
-    逻辑：偏移大时更看近处，弯道明显时更看前方；丢线时使用历史偏置恢复。
+    逻辑：偏移大时更看近处，弯道明显时更看前方；两者冲突时优先回中。
     """
 
     center_term = track.lateral_error * profile["gain_lateral"]
@@ -1085,6 +1091,11 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
     )
     near_weight = profile["near_weight_base"] + signals["offset_risk"] * profile["near_weight_offset_boost"]
     far_weight = profile["far_weight_base"] + signals["curve_risk"] * profile["far_weight_curve_boost"]
+    if center_term * lookahead_term < 0.0:
+        far_weight *= max(
+            profile["far_conflict_min_scale"],
+            1.0 - signals["offset_risk"] * profile["far_conflict_offset_scale"],
+        )
 
     raw = near_weight * center_term + far_weight * lookahead_term
     raw += profile["gain_lateral_nonlinear"] * _signed_power(track.lateral_error, 1.7)
@@ -1155,7 +1166,12 @@ def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, 
     if mode == "recovering":
         target = min(target, profile["recovery_speed"])
     elif mode == "hard_turn":
-        target = min(target, profile["hard_turn_speed"])
+        centered_bonus = (
+            profile["hard_turn_center_speed_bonus"]
+            * (1.0 - signals["offset_risk"])
+            * track.confidence
+        )
+        target = min(target, profile["hard_turn_speed"] + centered_bonus)
     elif mode == "correcting":
         target = min(target, profile["correction_speed"])
     if timestamp < profile["start_caution_seconds"]:

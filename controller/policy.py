@@ -109,7 +109,10 @@ def _select_mode(track: TrackState, signals: dict, timestamp: float, profile: di
         return "lost"
     if _RECOVERY_FRAMES > 0 or track.confidence < profile["recovery_confidence"]:
         return "recovering"
-    if signals["turn_demand"] > profile["hard_turn_threshold"]:
+    if (
+        signals["curve_risk"] > profile["hard_turn_threshold"]
+        or signals["turn_demand"] > profile["hard_turn_threshold"]
+    ):
         return "hard_turn"
     if abs(track.lateral_error) > profile["correction_error"]:
         return "correcting"
@@ -122,7 +125,7 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
     功能：把回中项和前瞻项分开组合，并按状态修正。
     参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部驾驶状态。
     返回：裁剪到 `[-1, 1]` 的目标转向。
-    逻辑：偏移大时更看近处，弯道明显时更看前方；丢线时使用历史偏置恢复。
+    逻辑：偏移大时更看近处，弯道明显时更看前方；两者冲突时优先回中。
     """
 
     center_term = track.lateral_error * profile["gain_lateral"]
@@ -133,6 +136,11 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
     )
     near_weight = profile["near_weight_base"] + signals["offset_risk"] * profile["near_weight_offset_boost"]
     far_weight = profile["far_weight_base"] + signals["curve_risk"] * profile["far_weight_curve_boost"]
+    if center_term * lookahead_term < 0.0:
+        far_weight *= max(
+            profile["far_conflict_min_scale"],
+            1.0 - signals["offset_risk"] * profile["far_conflict_offset_scale"],
+        )
 
     raw = near_weight * center_term + far_weight * lookahead_term
     raw += profile["gain_lateral_nonlinear"] * _signed_power(track.lateral_error, 1.7)
@@ -203,7 +211,12 @@ def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, 
     if mode == "recovering":
         target = min(target, profile["recovery_speed"])
     elif mode == "hard_turn":
-        target = min(target, profile["hard_turn_speed"])
+        centered_bonus = (
+            profile["hard_turn_center_speed_bonus"]
+            * (1.0 - signals["offset_risk"])
+            * track.confidence
+        )
+        target = min(target, profile["hard_turn_speed"] + centered_bonus)
     elif mode == "correcting":
         target = min(target, profile["correction_speed"])
     if timestamp < profile["start_caution_seconds"]:
