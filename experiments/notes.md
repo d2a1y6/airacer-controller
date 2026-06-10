@@ -1,8 +1,84 @@
 # 实验记录
 
-把每次平台测试或本地 Webots 结果写到 `runs.csv`。较长观察放在这里，重点记录改动、现象和下一步。
+> 本文件与 `experiments/runs.csv` 配对：runs.csv 是结构化台账（一行 = 一次真实测试），
+> 本文件是配套的叙事观察。两者用 **Run ID（R001、R002…）** 交叉引用。
 
-## 2026-06-10 Webots basic 调试
+## 记录规范（2026-06-11 起）
+
+- 一次真实 Webots / 平台测试 = 一个 Run ID；**只有跑了测试才建区块**，纯代码改动不建。
+- 每个区块对应 runs.csv 中同 Run ID 的一行（该行 `notes` 以 `R0xx |` 开头）。
+- 新区块加在「当前记录」**最上面**（倒序，最新在上）。
+- 区块模板：
+
+  ```
+  ### R0xx — <一句话标题> (<date>, <track>)
+  - **构建**: commit / working-tree；相对上一次测试改了什么
+  - **配置**: world / car_slot / 单车·多车 / practice·qualifying
+  - **记录完整性**: clean | interleaved（读到帧数 vs metadata.total_frames；有无孤儿 Webots）
+  - **结果**: 是否完赛；末帧位置/时间；关键 telemetry / 控制日志数字（注明来源工具）
+  - **现象**: 肉眼 + 数据看到的问题
+  - **结论/下一步**: 本次说明了什么；下一步动哪个旋钮
+  ```
+
+- 测量纪律：每次跑前确认无孤儿 Webots 进程，否则 supervisor 的 `telemetry.jsonl` 会交错
+  （帧数远超 `metadata.total_frames`、`t` 非单调），坐标/速度统计不可信。控制器内部日志
+  （`scripts/analyze_control_log.py` 读 `--debug-log` 产出的 JSONL）只由控制器进程写，
+  **不受 supervisor 交错影响**，优先采信。
+- 工具：`scripts/analyze_telemetry.py`（遥测汇总 + 归档到 `.tmp/recordings/<标签>/`）、
+  `scripts/analyze_control_log.py`（控制日志汇总）、
+  `build_submission.py --debug-log <PATH>`（生成带逐帧日志的本地调试构建，禁止上传）。
+
+---
+
+## 当前记录（新格式，最新在上）
+
+### R002 — P0+P1 带日志干净基线：确诊"慢"的主因 (2026-06-11, basic)
+- **构建**: 同 R001 的 P0+P1 代码，构建为调试单文件（`build_submission --debug-log .tmp/run/control_basic.jsonl`）。
+- **配置**: world=basic, car_1, 单车, practice。
+- **记录完整性**: **控制日志 clean**（10222 帧 == metadata.total_frames 10222）；遥测交错（脚本检测到 5 段残留，已自动只取最近一段 = 10222 帧, clean）。本条数据可信。
+- **结果**: duration_sim=327.104s，finish_reason=supervisor_stop，lap=0；末帧 x=-19.78,y=232.67 仍在动（world speed 1.46）。属诊断跑，未判定完赛。
+- **现象（控制日志，最可信）**:
+  - **lost 占比 = 27%**；mode 占比 cruise 42% / lost 27% / hard_turn 23% / recovering 7%。
+  - 指令速度 mean=0.47, median=0.45, max=0.876（始终够不到 base_speed 0.96）。
+  - 转向 mean|steer|=0.063，**换向仅 0.06 次/秒 → 几乎没有左右磨**（推翻"一会左一会右"假设）。
+  - 横向偏置 mean(signed)=-0.002, mean|lat|=0.043 → lateral_error 层面**几乎无系统性内侧偏置**。
+  - 遥测（最近段）world speed mean=2.70，**近停占比 0.00 → 物理上稳定行进、不卡顿**，但只到峰值约 60–75%（p95 4.24 / 历史峰 5.65）。
+- **结论/下一步**: "慢"的主因不是转向震荡、也不是停车，而是 **27% 时间丢线 → 指令速度被压到 lost_speed 0.24**，加上速度因子保守（cruise 也只 ~0.68）。
+  - 优先级 1：**降低丢线率**（perception/estimator 鲁棒性）——这是提速最大杠杆。
+  - 优先级 2：放宽速度上限（`confidence_factor` 下限、加速限制、base_speed）——但要等丢线降下来再提，否则更容易冲出。
+  - 用户肉眼的"偏内侧"未在 `lateral_error` 体现，需结合弯道帧 / 感知 overlay 进一步定位（可能是 hard_turn 切弯而非稳态偏移）。
+
+### R001 — P0+P1：收过舵 + 脱困方向改朝路面 (2026-06-11, basic)
+- **构建**: working-tree（基于 `99b25e4`，P0+P1 未提交）。
+  - P0：新增 `_road_direction_sign`，脱困方向改为朝**感知到的路面一侧**（优先 `lateral_error`，
+    丢线退回 `_LAST_GOOD_BIAS`，再退回反打上一帧），取代写死的 `-1.0` / 盲目反打；低速贴墙脱困
+    **放宽置信度门槛**且 basic / complex 都启用（依赖几何的急弯·大偏移脱困仍只在 red/complex）；
+    lost 模式不再死保上一帧满舵，改为衰减并向最近可信道路方向回收。
+  - P1：去掉 `hard_turn` 固定 `×1.05`（改参数 `hard_turn_steering_scale`）；新增**速度相关收舵**
+    `steering_speed_cap_scale`（高速降低最大舵量上限）；basic 单独降激进度：
+    `max_abs_steering 1.0→0.88`、`gain_heading 0.98→0.90`、`near_weight_offset_boost 0.55→0.45`、
+    `curve_slowdown 0.66→0.70`。28 单测 + 本地/官方 validator 通过。
+- **配置**: world=basic, car_1, 单车, practice（metadata: session_type=practice, total_laps=1）。
+- **记录完整性**: **interleaved / 不可靠**。metadata.total_frames=11236（≈359.55s × 31fps），
+  但分析脚本从 live `telemetry.jsonl` 读到 40273 帧且 `t` 非单调 → 与孤儿 / 后续 run 写入交错
+  （同历史「telemetry 交错」问题）。故本次**不据 telemetry 给精确坐标 / 速度统计**。
+- **结果**: 按用户肉眼记 `physical_finish_unofficial`（约 282s 穿越起点，**未经 telemetry 核验**）；
+  supervisor 侧 `finish_reason=supervisor_stop`、`lap=0`、`final_rankings=[]`（沿用 checkpoint 不匹配判定）；
+  session 实际跑到 `duration_sim=359.552s`。
+- **现象**: 过弯比改动前**更宽**（P1 收过舵方向正确），但仍**系统性偏内侧**；最后一个弯仍轻擦栏杆，
+  基本擦着通过。撞击太轻没触发脱困 → **未能观察脱困方向修复是否生效**。
+- **结论/下一步**: 收过舵有效，但「内侧偏置 + 最后一弯」未解决；「太慢」疑为长时间近停拉低均值。
+  下一步跑**带控制日志的干净基线（R002）**，用 `analyze_control_log` 区分慢的主因
+  （加速限制 / 转向震荡压速 / 内侧偏置），再定向调
+  `steering_speed_cap_scale` / `max_abs_steering` / `curve_slowdown`。
+
+---
+
+## 历史记录（旧格式，2026-06-11 之前，未编号）
+
+> 以下为引入 Run ID 规范之前的流水记录，保留原文，不再追加；新测试一律走上面的新格式。
+
+### 2026-06-10 Webots basic 调试
 
 - 修复了直道上有效扫描点纵向跨度不足导致的假丢线：`min_y_span` 从 60 降到 30 后，6 到 8 个远处扫描点不再直接进入 lost。
 - 右上角固定卡点的主要原因是车贴右侧护栏时，远处弯道项抵消了回中项。现在 `curve_risk` 可直接触发 hard_turn，并在回中项和远处项方向冲突时削弱远处项。
@@ -11,14 +87,14 @@
 - 尝试把全宽道路段放行到 `max_segment_width_ratio=1.0` 后，直道假丢线减少，但中心线过度居中，右上角再次贴外侧卡住，已回退。
 - 最后采用的提速方式是：保留右上角/右下角的回中冲突抑制，只提高 lost/recovery 阶段速度，并给居中、高置信 hard_turn 小幅速度奖励。
 
-## 2026-06-10 Webots complex 冒烟测试
+### 2026-06-10 Webots complex 冒烟测试
 
 - 使用当前 `submissions/final/team_controller.py` 直接跑官方 `track_complex.wbt`，单车 `car_1`，目标 1 圈。
 - 结果：300 秒超时，`laps=0`，`status=normal`，重大碰撞 0。末帧位置 `x=107.595,y=143.495`，速度约 1.68。
 - 过程里车辆没有被判严重碰撞或取消资格，问题更像是复杂赛道上路线效率和速度策略不足，而不是接口或沙箱错误。
 - 当前 baseline 应标记为 `basic` 跑通，不能视为多赛道跑通。下一步需要专门针对 `complex` 调参数，至少先减少低速徘徊和回中/前瞻冲突导致的效率损失。
 
-## 2026-06-10 Webots complex 分叉排查
+### 2026-06-10 Webots complex 分叉排查
 
 - CP3 后失败点稳定出现在东北复合弯。车会从上方直道掉进内部环，再在 `x≈140,y≈145` 或 `x≈169,y≈110` 附近贴边低速。
 - 临时测试过固定负向、正向、直行覆盖和 CP2->CP3 提前限速，都不能通过 CP3；这说明车到 CP3 时已经贴近护栏，单靠后段转向覆盖救不回来。
@@ -56,7 +132,7 @@
 - 为避免 complex 后半程被静止车或道路遮挡帧误判成 basic，估计器现在会在连续红色环境帧后锁存 red environment 标记；timestamp reset 或测试显式 reset 会清空该标记，单帧误检不会污染整轮 basic。
 - 连续红色环境锁存版 final 已复测：`basic_red_latch_check` 于 `t=287.520` 到达 basic 起点区域，`complex_red_latch_check` 于 `t=609.504` 到达 complex 起终点栅格。两次 telemetry 的 lap 仍为 0，原因沿用前面的本地 supervisor/checkpoint 计数问题；从物理轨迹看，basic 和 complex 都已完成一圈。
 
-## 2026-06-11 单车优先拆分
+### 2026-06-11 单车优先拆分
 
 - 已把近处车身检测拆到 `controller/opponent.py`，参数移到 `OPPONENT_PROFILE`，并把 `enable_opponent_avoidance` 默认设为 `False`。`perception.py` 默认不会调用对手车检测，主线只做道路分割和中心线估计。
 - `basic` 复测无退化：官方 `track_basic.wbt` 单车 `car_1` 仍在 `t=287.520` 到达起点区域。

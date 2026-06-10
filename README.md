@@ -201,4 +201,5 @@ date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finis
 
 - `TASK.md`：参赛任务、平台接口规则、算法目标和提交限制。
 - `AGENTS.md`：给 Codex / AI agent 的执行规则。
-- `docs/official_testing.md`：官方 SDK、validator 和 Webots 本地测试接入方式。
+- `docs/official_testing.md`：官方 SDK、validator 和 Webots 本地测试接入方式（首次安装与官方校验）。
+- `docs/manual_testing.md`：日常调参的带日志迭代复测流程（构建调试单文件、防遥测交错、读日志、记账）。
