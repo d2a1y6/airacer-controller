@@ -51,6 +51,34 @@ def _pct(values: list[float], q: float) -> float:
     return ordered[idx]
 
 
+def _split_runs(rows: list[dict]) -> list[list[dict]]:
+    """按时间戳回退切分控制日志。
+
+    功能：避免同一个 JSONL 里残留多次 run 时污染统计。
+    参数：`rows` 是按文件顺序解析出的控制日志。
+    返回：按 `t` 单调递增切出的 run 列表。
+    逻辑：遇到当前 `t` 小于上一帧 `t` 时切段，调用方默认取最后一段。
+    """
+
+    segments: list[list[dict]] = []
+    current: list[dict] = []
+    last_t = None
+    for row in rows:
+        try:
+            t = float(row.get("t", 0.0))
+        except (TypeError, ValueError):
+            t = 0.0
+        if last_t is not None and t < last_t - 1e-6:
+            if current:
+                segments.append(current)
+            current = []
+        current.append(row)
+        last_t = t
+    if current:
+        segments.append(current)
+    return segments
+
+
 def decode_debug_flags(flags: int) -> list[str]:
     """解码 perception / estimator 写入的 debug_flags 位。
 
@@ -219,18 +247,8 @@ def print_lost_diagnostics(rows: list[dict]) -> None:
           f"non_lost={diag['heading_abs_mean']['non_lost']:.3f}")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="汇总控制器内部调试日志。")
-    parser.add_argument("log", type=Path, help="control_*.jsonl 路径")
-    args = parser.parse_args()
-
-    if not args.log.is_file():
-        print(f"[error] 找不到日志: {args.log}")
-        return 1
-    rows = _load(args.log)
-    if not rows:
-        print("[error] 日志为空或无法解析")
-        return 1
+def _print_summary(path: Path, rows: list[dict], integrity: str | None = None) -> None:
+    """打印单段控制日志汇总。"""
 
     n = len(rows)
     t0, t1 = rows[0].get("t", 0.0), rows[-1].get("t", 0.0)
@@ -264,7 +282,9 @@ def main() -> int:
     sp_high_lat = [speed[i] for i in range(n) if abs(lateral[i]) > 0.3]
 
     print("================ CONTROL 日志汇总 ================")
-    print(f"源文件     : {args.log}")
+    print(f"源文件     : {path}")
+    if integrity:
+        print(f"完整性     : {integrity}")
     print(f"帧数/时长  : {n} 帧, t={t0:.2f}→{t1:.2f} ({span:.1f}s)")
     print("---- 转向（震荡诊断）----")
     print(f"  mean(signed)={_mean(steering):+.3f}  mean|steer|={_mean([abs(s) for s in steering]):.3f}  "
@@ -289,7 +309,62 @@ def main() -> int:
     print(f"  |steer|<0.1 均速={_mean(sp_low_steer):.3f}   |steer|>0.3 均速={_mean(sp_high_steer):.3f}")
     print(f"  |lat|<0.1   均速={_mean(sp_low_lat):.3f}   |lat|>0.3   均速={_mean(sp_high_lat):.3f}")
     print("=================================================")
+
+
+def _expand_inputs(paths: list[Path]) -> tuple[list[Path], list[str]]:
+    """把命令行输入展开成日志文件列表。"""
+
+    files: list[Path] = []
+    errors: list[str] = []
+    for path in paths:
+        if path.is_dir():
+            found = sorted(p for p in path.glob("control*.jsonl") if p.is_file())
+            if not found:
+                found = sorted(p for p in path.glob("*.jsonl") if p.is_file())
+            if not found:
+                errors.append(f"[error] 目录内没有 JSONL 日志: {path}")
+            files.extend(found)
+        elif path.is_file():
+            files.append(path)
+        else:
+            errors.append(f"[error] 找不到日志: {path}")
+    return files, errors
+
+
+def analyze_file(path: Path) -> int:
+    """读取并汇总一个控制日志文件。"""
+
+    rows = _load(path)
+    if not rows:
+        print(f"[error] 日志为空或无法解析: {path}")
+        return 1
+
+    runs = _split_runs(rows)
+    active_rows = runs[-1]
+    integrity = None
+    if len(runs) > 1:
+        integrity = f"interleaved（检测到 {len(runs)} 段 run，仅用最后一段）"
+    _print_summary(path, active_rows, integrity=integrity)
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="汇总控制器内部调试日志。")
+    parser.add_argument("logs", nargs="+", type=Path, help="control_*.jsonl 路径，可传多个文件或一个目录")
+    args = parser.parse_args()
+
+    files, errors = _expand_inputs(args.logs)
+    for error in errors:
+        print(error)
+    if not files:
+        return 1
+
+    status = 0
+    for index, path in enumerate(files):
+        if index:
+            print()
+        status = max(status, analyze_file(path))
+    return status
 
 
 if __name__ == "__main__":

@@ -5,6 +5,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import json
+
+from scripts import analyze_control_log
 from scripts.analyze_control_log import collect_lost_diagnostics, decode_debug_flags
 
 
@@ -92,3 +95,46 @@ def test_collect_lost_diagnostics_handles_no_lost_frames():
     assert diag["segment_stats"]["max"] == 0
     assert not diag["flag_counter"]
     assert not diag["entry_prev_modes"]
+
+
+def test_collect_lost_diagnostics_handles_single_lost_frame():
+    diag = collect_lost_diagnostics([
+        _row(0.0, lost=True, mode="lost", debug_flags=1),
+    ])
+
+    assert diag["lost_frames"] == 1
+    assert diag["segments"] == [1]
+    assert diag["entry_prev_modes"]["<start>"] == 1
+
+
+def test_split_runs_uses_timestamp_regression():
+    rows = [
+        _row(5.0, lost=False, mode="cruise"),
+        _row(5.1, lost=True, mode="lost"),
+        _row(0.0, lost=False, mode="cruise"),
+        _row(0.1, lost=False, mode="hard_turn"),
+    ]
+
+    runs = analyze_control_log._split_runs(rows)
+
+    assert [len(run) for run in runs] == [2, 2]
+    assert runs[-1][0]["t"] == 0.0
+
+
+def test_analyze_file_rejects_empty_log(tmp_path, capsys):
+    path = tmp_path / "empty.jsonl"
+    path.write_text("", encoding="utf-8")
+
+    assert analyze_control_log.analyze_file(path) == 1
+    assert "日志为空" in capsys.readouterr().out
+
+
+def test_main_accepts_directory_input(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "control_a.jsonl"
+    path.write_text(json.dumps(_row(0.0, lost=False, mode="cruise")) + "\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["analyze_control_log.py", str(tmp_path)])
+
+    assert analyze_control_log.main() == 0
+    out = capsys.readouterr().out
+    assert "control_a.jsonl" in out
+    assert "lost 帧=0/1" in out
