@@ -3,8 +3,11 @@
 ## 夜间工作小结
 
 - 已完成 P1：`scripts/analyze_control_log.py` 增加丢线诊断段，并用合成 JSONL fixture 覆盖连续 lost 段、flag 解码、进入 lost 前 mode、弯道关联对比。
+- 已完成 P2：两个分析脚本都补了边界测试；control 日志分析现在支持多个文件或目录输入，并会在时间戳回退时只分析最后一段 run。
+- 已完成 P2.5：调试构建新增 `--dump-frames DIR` 和 `--dump-frame-stride N`，只在本地调试单文件里注入 `.npy` 存帧，正常 submissions grep 确认不含 `np.save` / `open(`。
+- 已完成 P3：新增 `scripts/replay_offline.py` 开环回放骨架，合成帧验证可输出 control 同 schema JSONL，并能直接接 `analyze_control_log.py`。
 - R002 的关键结论：27% 丢线主要来自感知层没有稳定产出中心点。lost 帧里 `obs_points` 的 median/p90 都是 0，`debug_flags` 以有效扫描线过少和 mask 填充率极端为主。
-- 还没做：P2 工具加固、P2.5 存帧调试构建、P3 离线回放骨架。
+- 没有跑 Webots，也没有改 controller、baselines、submissions 或实验台账。
 
 ## 数据来源
 
