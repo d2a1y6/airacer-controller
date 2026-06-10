@@ -327,7 +327,8 @@ def _score_scan(
     功能：综合有效扫描线、宽度稳定性、中心稳定性和纹理分数。
     参数：扫描点、宽度序列、纹理分数、mask 命中率和 fallback 次数。
     返回：置信度和调试标记。
-    逻辑：有效线太少、整图近似全命中或全不命中时显著降权。
+    逻辑：有效线太少、整图近似全不命中时重降权；饱和 mask 保留中等降权，
+    避免远处路面可见但底部草地铺满 ROI 时整段丢线。
     """
 
     debug_flags = 0
@@ -361,8 +362,11 @@ def _score_scan(
     if valid_count < min_valid:
         confidence *= valid_count / max(float(min_valid), 1.0)
         debug_flags |= 1
-    if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92:
-        confidence *= 0.25
+    if mask_fill_ratio < 0.015:
+        confidence *= VISION_PROFILE["empty_mask_confidence_scale"]
+        debug_flags |= 4
+    elif mask_fill_ratio > 0.92:
+        confidence *= VISION_PROFILE["saturated_mask_confidence_scale"]
         debug_flags |= 4
     if fallback_count:
         confidence *= max(0.55, 1.0 - 0.06 * fallback_count)

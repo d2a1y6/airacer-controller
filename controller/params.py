@@ -27,6 +27,8 @@ VISION_PROFILE = {
     "max_center_jump_ratio": 0.35,
     "min_valid_scans": 4,
     "min_camera_confidence": 0.12,
+    "empty_mask_confidence_scale": 0.25,
+    "saturated_mask_confidence_scale": 0.50,
     "fusion_max_offset_gap": 0.18,
     "fusion_confidence_margin": 0.18,
     "fusion_merge_gap": 0.12,
