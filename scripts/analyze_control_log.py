@@ -15,6 +15,15 @@ import json
 from collections import Counter
 from pathlib import Path
 
+DEBUG_FLAG_BITS = [
+    (1, "有效扫描线过少"),
+    (2, "用了边缘fallback"),
+    (4, "mask填充率极端"),
+    (8, "左右近处中心偏差大"),
+    (16, "左右置信度接近"),
+    (32, "红色环境"),
+]
+
 
 def _load(path: Path) -> list[dict]:
     rows = []
@@ -40,6 +49,174 @@ def _pct(values: list[float], q: float) -> float:
     ordered = sorted(values)
     idx = min(len(ordered) - 1, max(0, int(round(q * (len(ordered) - 1)))))
     return ordered[idx]
+
+
+def decode_debug_flags(flags: int) -> list[str]:
+    """解码 perception / estimator 写入的 debug_flags 位。
+
+    功能：把整数位图转成人能读的诊断标签。
+    参数：`flags` 是日志中的 debug_flags 整数。
+    返回：命中的中文标签列表，未知位保留为 `未知位<N>`。
+    逻辑：先按已知位逐个匹配，再把剩余未知位逐位展开。
+    """
+
+    labels = [label for bit, label in DEBUG_FLAG_BITS if flags & bit]
+    known_mask = 0
+    for bit, _label in DEBUG_FLAG_BITS:
+        known_mask |= bit
+    unknown = flags & ~known_mask
+    bit = 1
+    while unknown:
+        if unknown & bit:
+            labels.append(f"未知位{bit}")
+            unknown &= ~bit
+        bit <<= 1
+    return labels
+
+
+def _numeric(rows: list[dict], field: str, absolute: bool = False) -> list[float]:
+    values = []
+    for row in rows:
+        try:
+            value = float(row.get(field, 0.0))
+        except (TypeError, ValueError):
+            value = 0.0
+        values.append(abs(value) if absolute else value)
+    return values
+
+
+def _value_stats(rows: list[dict], field: str) -> dict[str, float]:
+    values = _numeric(rows, field)
+    return {
+        "mean": _mean(values),
+        "median": _pct(values, 0.5),
+        "p10": _pct(values, 0.1),
+        "p90": _pct(values, 0.9),
+    }
+
+
+def _lost_segments(rows: list[dict]) -> list[int]:
+    """统计连续 lost 段长度。
+
+    功能：把逐帧 lost 布尔值压成连续段长度。
+    参数：`rows` 是控制日志行。
+    返回：每个 lost 段的帧数。
+    逻辑：遇到 lost=True 累加，离开 lost 时结算当前段。
+    """
+
+    segments: list[int] = []
+    current = 0
+    for row in rows:
+        if row.get("lost"):
+            current += 1
+        elif current:
+            segments.append(current)
+            current = 0
+    if current:
+        segments.append(current)
+    return segments
+
+
+def collect_lost_diagnostics(rows: list[dict]) -> dict:
+    """汇总 lost 帧的离线诊断指标。
+
+    功能：统计丢线占比、连续段、置信度/点数/宽度分布、flag 频率和弯道关联。
+    参数：`rows` 是控制日志 JSONL 解析后的记录。
+    返回：可打印也可单测断言的诊断字典。
+    逻辑：只对 lost 帧做细分，同时保留 lost 与非 lost 的几何均值对比。
+    """
+
+    n = len(rows)
+    lost_rows = [row for row in rows if row.get("lost")]
+    non_lost_rows = [row for row in rows if not row.get("lost")]
+    segments = _lost_segments(rows)
+
+    flag_counter: Counter[int] = Counter()
+    for row in lost_rows:
+        flags = int(row.get("debug_flags", 0) or 0)
+        for bit, _label in DEBUG_FLAG_BITS:
+            if flags & bit:
+                flag_counter[bit] += 1
+        unknown = flags & ~sum(bit for bit, _label in DEBUG_FLAG_BITS)
+        bit = 1
+        while unknown:
+            if unknown & bit:
+                flag_counter[bit] += 1
+                unknown &= ~bit
+            bit <<= 1
+
+    entry_prev_modes: Counter[str] = Counter()
+    for index, row in enumerate(rows):
+        if not row.get("lost"):
+            continue
+        if index > 0 and rows[index - 1].get("lost"):
+            continue
+        prev_mode = "<start>" if index == 0 else str(rows[index - 1].get("mode", "?"))
+        entry_prev_modes[prev_mode] += 1
+
+    return {
+        "frames": n,
+        "lost_frames": len(lost_rows),
+        "lost_frac": len(lost_rows) / n if n else 0.0,
+        "segments": segments,
+        "segment_stats": {
+            "count": len(segments),
+            "max": max(segments) if segments else 0,
+            "mean": _mean([float(v) for v in segments]),
+            "median": _pct([float(v) for v in segments], 0.5),
+            "p90": _pct([float(v) for v in segments], 0.9),
+        },
+        "lost_value_stats": {
+            field: _value_stats(lost_rows, field)
+            for field in ("track_conf", "obs_conf", "obs_points", "road_width")
+        },
+        "flag_counter": flag_counter,
+        "entry_prev_modes": entry_prev_modes,
+        "curvature_abs_mean": {
+            "lost": _mean(_numeric(lost_rows, "curvature", absolute=True)),
+            "non_lost": _mean(_numeric(non_lost_rows, "curvature", absolute=True)),
+        },
+        "heading_abs_mean": {
+            "lost": _mean(_numeric(lost_rows, "heading", absolute=True)),
+            "non_lost": _mean(_numeric(non_lost_rows, "heading", absolute=True)),
+        },
+    }
+
+
+def print_lost_diagnostics(rows: list[dict]) -> None:
+    """打印紧凑的丢线诊断段。"""
+
+    diag = collect_lost_diagnostics(rows)
+    lost_n = diag["lost_frames"]
+    seg = diag["segment_stats"]
+    print("---- 丢线诊断 ----")
+    print(f"  lost 帧={lost_n}/{diag['frames']} ({diag['lost_frac']:.2f})  "
+          f"连续段={seg['count']}  最长={seg['max']}帧  "
+          f"段长 median={seg['median']:.0f} p90={seg['p90']:.0f} mean={seg['mean']:.1f}")
+    if not lost_n:
+        print("  （无 lost 帧）")
+        return
+    for field, label in (
+        ("track_conf", "track_conf"),
+        ("obs_conf", "obs_conf"),
+        ("obs_points", "obs_points"),
+        ("road_width", "road_width"),
+    ):
+        stats = diag["lost_value_stats"][field]
+        print(f"  lost {label}: mean={stats['mean']:.3f} median={stats['median']:.3f} "
+              f"p10={stats['p10']:.3f} p90={stats['p90']:.3f}")
+    print("  debug_flags: " + "  ".join(
+        f"{decode_debug_flags(bit)[0]}={count/lost_n:.2f}({count})"
+        for bit, count in diag["flag_counter"].most_common()
+    ))
+    print("  进入 lost 前 mode: " + "  ".join(
+        f"{mode}={count/seg['count']:.2f}({count})"
+        for mode, count in diag["entry_prev_modes"].most_common()
+    ))
+    print(f"  |curvature| mean: lost={diag['curvature_abs_mean']['lost']:.3f}  "
+          f"non_lost={diag['curvature_abs_mean']['non_lost']:.3f}")
+    print(f"  |heading|   mean: lost={diag['heading_abs_mean']['lost']:.3f}  "
+          f"non_lost={diag['heading_abs_mean']['non_lost']:.3f}")
 
 
 def main() -> int:
@@ -107,6 +284,7 @@ def main() -> int:
     print("---- 状态 ----")
     print(f"  lost 占比={lost_frac:.2f}")
     print(f"  mode 占比: " + "  ".join(f"{m}={c/n:.2f}" for m, c in modes.most_common()))
+    print_lost_diagnostics(rows)
     print("---- 速度-转向耦合（诊断是否被转向压速）----")
     print(f"  |steer|<0.1 均速={_mean(sp_low_steer):.3f}   |steer|>0.3 均速={_mean(sp_high_steer):.3f}")
     print(f"  |lat|<0.1   均速={_mean(sp_low_lat):.3f}   |lat|>0.3   均速={_mean(sp_high_lat):.3f}")
