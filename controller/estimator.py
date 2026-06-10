@@ -12,9 +12,13 @@ from controller.params import ESTIMATOR_PROFILE
 
 _LAST_TRACK = TrackState(0.0, 0.0, 0.0, 0.0, 0.0, True)
 _LAST_TIMESTAMP = None
+_LAST_RED_ENVIRONMENT = False
+_RED_ENVIRONMENT_STREAK = 0
+_RED_ENVIRONMENT_FLAG = 32
+_RED_ENVIRONMENT_LATCH_FRAMES = 3
 
 
-def _lost_track(confidence: float) -> TrackState:
+def _lost_track(confidence: float, red_environment: bool | None = None) -> TrackState:
     """生成丢线状态。
 
     功能：保留上一帧估计的衰减值，避免控制量突然归零。
@@ -23,6 +27,8 @@ def _lost_track(confidence: float) -> TrackState:
     逻辑：各几何量使用独立衰减参数，置信度裁剪到合法范围。
     """
 
+    if red_environment is None:
+        red_environment = _LAST_TRACK.red_environment
     return TrackState(
         _LAST_TRACK.lateral_error * ESTIMATOR_PROFILE["lost_lateral_decay"],
         _LAST_TRACK.heading_error * ESTIMATOR_PROFILE["lost_heading_decay"],
@@ -30,6 +36,7 @@ def _lost_track(confidence: float) -> TrackState:
         _LAST_TRACK.lookahead_error * ESTIMATOR_PROFILE["lost_lookahead_decay"],
         clamp(confidence, 0.0, ESTIMATOR_PROFILE["lost_confidence"]),
         True,
+        red_environment,
     )
 
 
@@ -193,9 +200,11 @@ def reset_estimator_state() -> None:
     逻辑：清空上一帧几何状态和时间戳。
     """
 
-    global _LAST_TRACK, _LAST_TIMESTAMP
+    global _LAST_TRACK, _LAST_TIMESTAMP, _LAST_RED_ENVIRONMENT, _RED_ENVIRONMENT_STREAK
     _LAST_TRACK = TrackState(0.0, 0.0, 0.0, 0.0, 0.0, True)
     _LAST_TIMESTAMP = None
+    _LAST_RED_ENVIRONMENT = False
+    _RED_ENVIRONMENT_STREAK = 0
 
 
 def _maybe_reset_estimator_by_timestamp(timestamp: float) -> None:
@@ -217,21 +226,30 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     逻辑：点集无效时返回衰减 lost 状态；有效时按 progress 拟合中心线并做自适应平滑。
     """
 
-    global _LAST_TRACK, _LAST_TIMESTAMP
+    global _LAST_TRACK, _LAST_TIMESTAMP, _LAST_RED_ENVIRONMENT, _RED_ENVIRONMENT_STREAK
 
     timestamp = float(timestamp)
     _maybe_reset_estimator_by_timestamp(timestamp)
 
+    observed_red = bool(obs.debug_flags & _RED_ENVIRONMENT_FLAG)
+    if observed_red:
+        _RED_ENVIRONMENT_STREAK += 1
+    elif not _LAST_RED_ENVIRONMENT:
+        _RED_ENVIRONMENT_STREAK = 0
+    if _RED_ENVIRONMENT_STREAK >= _RED_ENVIRONMENT_LATCH_FRAMES:
+        _LAST_RED_ENVIRONMENT = True
+    red_environment = observed_red or _LAST_RED_ENVIRONMENT
+
     points = _clean_points(obs.center_points)
     if len(points) < ESTIMATOR_PROFILE["min_center_points"] or obs.confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(obs.confidence)
+        track = _lost_track(obs.confidence, red_environment)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
 
     x_norm, progress, y_span = _normalize_points(points)
     if y_span < ESTIMATOR_PROFILE["min_y_span"]:
-        track = _lost_track(obs.confidence)
+        track = _lost_track(obs.confidence, red_environment)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
@@ -264,7 +282,7 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
 
     confidence = _geometry_confidence(obs, points, y_span, _fit_error_score(progress, x_norm, coeffs))
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(confidence)
+        track = _lost_track(confidence, red_environment)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
@@ -283,6 +301,7 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         _smooth_limited(_LAST_TRACK.lookahead_error, lookahead_error, alpha, ESTIMATOR_PROFILE["max_error_delta"]),
         confidence,
         False,
+        red_environment,
     )
     _LAST_TRACK = track
     _LAST_TIMESTAMP = timestamp

@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.common import TrackState
-from controller.params import get_profile
+from controller.params import BASIC_CONTROL_OVERRIDES, get_profile
 from controller.policy import decide_control, reset_policy_state
 
 
@@ -61,7 +61,7 @@ def test_curves_control_sign_and_reduce_speed():
 def test_lost_track_uses_lost_speed():
     reset_policy_state()
     cmd = warm_policy(make_track(confidence=0.0, lost=True), mode="fastest", steps=6)
-    assert abs(cmd.speed - get_profile("fastest")["lost_speed"]) < 0.03
+    assert abs(cmd.speed - BASIC_CONTROL_OVERRIDES["lost_speed"]) < 0.03
     assert -1.0 <= cmd.steering <= 1.0
 
 

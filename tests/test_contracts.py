@@ -8,7 +8,9 @@ sys.path.insert(0, str(ROOT))
 
 from controller.common import ControlCmd, PerceptionObs, TrackState, clamp_cmd
 from controller.estimator import estimate_track, reset_estimator_state
+from controller.params import OPPONENT_PROFILE, VISION_PROFILE
 from controller.policy import decide_control, reset_policy_state
+import controller.perception as perception
 from controller.perception import extract_observation
 
 
@@ -44,6 +46,20 @@ def test_module_contracts_on_mock_lane():
     steering, speed = clamp_cmd(cmd)
     assert -1.0 <= steering <= 1.0
     assert 0.0 <= speed <= 1.0
+
+
+def test_opponent_detection_is_disabled_by_default(monkeypatch):
+    assert OPPONENT_PROFILE["enable_opponent_avoidance"] is False
+    assert "near_obstacle_min_timestamp" not in VISION_PROFILE
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("opponent detector should stay disabled")
+
+    monkeypatch.setattr(perception, "detect_near_vehicle_obstacle", fail_if_called)
+    image = make_lane_image()
+    obs = extract_observation(image, image, 999.0)
+    assert isinstance(obs, PerceptionObs)
+    assert len(obs.center_points) >= 4
 
 
 def test_estimator_lost_contract_on_empty_observation():

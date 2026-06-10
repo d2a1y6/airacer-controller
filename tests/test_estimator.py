@@ -82,6 +82,27 @@ def test_low_confidence_enters_lost():
     assert_track_range(track)
 
 
+def test_red_environment_stays_latched_until_reset():
+    reset_estimator_state()
+    red_obs = make_obs(lambda progress: 0.0)
+    red_obs.debug_flags = 32
+    one_red_track = estimate_track(red_obs, 0.0)
+    assert one_red_track.red_environment is True
+
+    plain_after_single_red = estimate_track(make_obs(lambda progress: 0.0), 0.032)
+    assert plain_after_single_red.red_environment is False
+
+    estimate_track(red_obs, 0.064)
+    estimate_track(red_obs, 0.096)
+    estimate_track(red_obs, 0.128)
+    latched_track = estimate_track(make_obs(lambda progress: 0.0), 0.160)
+    assert latched_track.red_environment is True
+
+    reset_estimator_state()
+    reset_track = estimate_track(make_obs(lambda progress: 0.0), 0.0)
+    assert reset_track.red_environment is False
+
+
 def test_timestamp_reset_discards_previous_smoothing_state():
     reset_estimator_state()
     previous = estimate_track(make_obs(lambda progress: 0.35), 10.0)

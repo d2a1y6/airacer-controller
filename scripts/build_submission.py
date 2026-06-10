@@ -19,6 +19,7 @@ DEFAULT_OUTPUTS = {
 MODULE_ORDER = [
     "common.py",
     "params.py",
+    "opponent.py",
     "perception.py",
     "estimator.py",
     "policy.py",

@@ -214,3 +214,5 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 ```
 
 如果这几步都通过，再用 Webots 跑 `basic` 和 `complex`，并把测试结果写入 `experiments/runs.csv` 和 `experiments/notes.md`。
+
+完整赛道、测试入口和正式赛制清单见 [official_test_matrix.md](official_test_matrix.md)。

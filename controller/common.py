@@ -44,6 +44,7 @@ class TrackState:
     lookahead_error: float
     confidence: float
     lost: bool
+    red_environment: bool = False
 
 
 @dataclass

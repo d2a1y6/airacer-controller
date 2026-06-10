@@ -52,6 +52,7 @@ class TrackState:
     lookahead_error: float
     confidence: float
     lost: bool
+    red_environment: bool = False
 
 
 @dataclass
@@ -116,7 +117,11 @@ VISION_PROFILE = {
     "texture_gray_std_scale": 35.0,
     "min_segment_width": 24.0,
     "max_segment_gap": 90.0,
-    "max_segment_width_ratio": 0.995,
+    "early_max_segment_width_ratio": 0.995,
+    "red_world_min_ratio": 0.05,
+    "max_segment_width_ratio": 0.90,
+    "wide_segment_localize_ratio": 0.58,
+    "wide_segment_window_ratio": 0.34,
     "max_center_jump_ratio": 0.35,
     "min_valid_scans": 4,
     "min_camera_confidence": 0.12,
@@ -124,6 +129,19 @@ VISION_PROFILE = {
     "fusion_confidence_margin": 0.18,
     "fusion_merge_gap": 0.12,
     "fusion_merge_min_confidence": 0.35,
+}
+
+OPPONENT_PROFILE = {
+    "enable_opponent_avoidance": False,
+    "near_obstacle_segment_gap": 48.0,
+    "near_obstacle_min_timestamp": 520.0,
+    "near_obstacle_scan_y_ratio": 0.58,
+    "near_obstacle_roi_top_ratio": 0.52,
+    "near_obstacle_roi_bottom_ratio": 0.94,
+    "near_obstacle_roi_x_margin_ratio": 0.08,
+    "near_obstacle_min_area": 700.0,
+    "near_obstacle_min_width": 28.0,
+    "near_obstacle_min_height": 18.0,
 }
 
 ESTIMATOR_PROFILE = {
@@ -168,11 +186,11 @@ CONTROL = {
     "start_speed": 0.36,
     "lost_confidence": 0.10,
     "recovery_confidence": 0.28,
-    "lost_speed": 0.24,
-    "recovery_speed": 0.38,
-    "hard_turn_speed": 0.30,
-    "hard_turn_center_speed_bonus": 0.30,
-    "correction_speed": 0.50,
+    "lost_speed": 0.28,
+    "recovery_speed": 0.44,
+    "hard_turn_speed": 0.38,
+    "hard_turn_center_speed_bonus": 0.20,
+    "correction_speed": 0.58,
     "hard_turn_threshold": 0.20,
     "correction_error": 0.25,
     "recovery_frames": 4,
@@ -183,32 +201,80 @@ CONTROL = {
     "near_weight_base": 0.90,
     "near_weight_offset_boost": 0.55,
     "far_weight_base": 0.75,
-    "far_weight_curve_boost": 0.45,
-    "far_conflict_offset_scale": 3.20,
-    "far_conflict_min_scale": 0.05,
+    "far_weight_curve_boost": 0.36,
+    "far_conflict_offset_start": 0.18,
+    "far_conflict_offset_scale": 2.00,
+    "far_conflict_min_scale": 0.22,
     "gain_lateral": 0.65,
     "gain_lookahead": 0.90,
-    "gain_heading": 0.98,
-    "gain_curve": 0.25,
+    "gain_heading": 0.86,
+    "gain_curve": 0.18,
     "gain_lateral_nonlinear": 0.18,
     "gain_curve_nonlinear": 0.04,
     "steering_deadzone": 0.015,
-    "curve_slowdown": 0.66,
-    "curve_power": 1.35,
+    "max_abs_steering": 0.82,
+    "inside_left_lateral_min": 0.05,
+    "inside_left_heading_max": -0.24,
+    "inside_left_curvature_max": -0.45,
+    "inside_left_steering_limit": -0.40,
+    "curve_slowdown": 0.64,
+    "curve_power": 1.18,
     "offset_slowdown": 0.38,
     "offset_power": 1.25,
     "min_confidence_factor": 0.58,
-    "steering_slowdown": 0.28,
+    "steering_slowdown": 0.18,
     "steering_power": 1.15,
     "steering_smoothing_cruise": 0.16,
     "steering_smoothing_turn": 0.14,
     "steering_smoothing_correction": 0.14,
     "steering_smoothing_recovery": 0.28,
     "max_steering_delta": 0.46,
-    "max_speed_increase_per_sec": 1.60,
-    "max_speed_decrease_per_sec": 2.20,
+    "max_speed_increase_per_sec": 1.85,
+    "max_speed_decrease_per_sec": 4.80,
+    "escape_min_confidence": 0.48,
+    "escape_curve_threshold": 0.45,
+    "escape_steering_threshold": 0.70,
+    "escape_offset_threshold": 0.62,
+    "escape_offset_speed_threshold": 0.36,
+    "escape_offset_heading_abs_max": 0.18,
+    "escape_offset_curve_abs_max": 0.30,
+    "escape_offset_lookahead_alignment": 0.30,
+    "escape_offset_trigger_frames": 14,
+    "escape_low_speed_threshold": 0.22,
+    "escape_low_speed_trigger_frames": 120,
+    "escape_signature_delta": 0.13,
+    "escape_trigger_frames": 18,
+    "escape_turn_frames": 24,
+    "escape_turn_steering": 0.58,
+    "escape_turn_speed": 0.62,
+    "escape_offset_frames": 72,
+    "escape_offset_steering": 0.74,
+    "escape_offset_speed": 0.78,
+    "escape_low_speed_frames": 120,
+    "escape_low_speed_steering": 0.74,
+    "escape_low_speed_speed": 0.90,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
+}
+
+BASIC_CONTROL_OVERRIDES = {
+    "lost_speed": 0.24,
+    "recovery_speed": 0.38,
+    "hard_turn_speed": 0.30,
+    "hard_turn_center_speed_bonus": 0.30,
+    "correction_speed": 0.50,
+    "far_weight_curve_boost": 0.45,
+    "far_conflict_offset_start": 0.00,
+    "far_conflict_offset_scale": 3.20,
+    "far_conflict_min_scale": 0.05,
+    "gain_heading": 0.98,
+    "gain_curve": 0.25,
+    "max_abs_steering": 1.00,
+    "curve_slowdown": 0.66,
+    "curve_power": 1.35,
+    "steering_slowdown": 0.28,
+    "max_speed_increase_per_sec": 1.60,
+    "max_speed_decrease_per_sec": 2.20,
 }
 
 
@@ -226,6 +292,60 @@ def get_profile(name: str) -> dict:
 
 
 
+# ---- opponent.py ----
+
+"""对手车辆感知模块。
+
+功能概述：保留可提交的近处车身检测逻辑，供后续多车策略使用。
+输入输出：输入单张 BGR 图像，输出是否检测到近距离车身遮挡。
+处理流程：截取下半部中间 ROI，提取高饱和、亮白和近黑候选块，再用连通域尺寸过滤噪声。
+"""
+
+
+
+
+def detect_near_vehicle_obstacle(image: np.ndarray, profile: dict | None = None) -> bool:
+    """检测近处是否有大块车身遮挡。
+
+    功能：识别发车格静止车辆或近距离对手车这类大块遮挡。
+    参数：`image` 是单张 BGR 摄像头图像，`profile` 可覆盖默认检测参数。
+    返回：检测到较大车身色块时返回 True。
+    逻辑：只看图像下半部中间区域，用高饱和、亮白和近黑色块做候选，再用连通域面积过滤车道线。
+    """
+
+    params = OPPONENT_PROFILE if profile is None else profile
+    height, width = image.shape[:2]
+    y0 = int(height * params["near_obstacle_roi_top_ratio"])
+    y1 = int(height * params["near_obstacle_roi_bottom_ratio"])
+    x_margin = int(width * params["near_obstacle_roi_x_margin_ratio"])
+    roi = image[y0:y1, x_margin : width - x_margin]
+    if roi.size == 0:
+        return False
+
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+    candidate = (
+        ((saturation > 85) & (value > 80))
+        | ((gray > 135) & (saturation < 95))
+        | ((gray < 35) & (value < 55))
+    ).astype(np.uint8) * 255
+
+    kernel = np.ones((5, 5), dtype=np.uint8)
+    candidate = cv2.morphologyEx(candidate, cv2.MORPH_OPEN, kernel, iterations=1)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(candidate, 8)
+    min_area = float(params["near_obstacle_min_area"])
+    min_width = float(params["near_obstacle_min_width"])
+    min_height = float(params["near_obstacle_min_height"])
+    for index in range(1, count):
+        _, _, comp_width, comp_height, area = stats[index]
+        if area >= min_area and comp_width >= min_width and comp_height >= min_height:
+            return True
+    return False
+
+
+
 # ---- perception.py ----
 
 """视觉感知模块。
@@ -237,6 +357,8 @@ def get_profile(name: str) -> dict:
 
 
 
+
+_RED_ENVIRONMENT_FLAG = 32
 
 
 @dataclass
@@ -296,12 +418,28 @@ def _road_color_from_patch(lab_roi: np.ndarray) -> np.ndarray:
     return np.median(patch.reshape(-1, 3).astype(np.float32), axis=0)
 
 
-def _build_masks(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
+def _is_red_environment(image: np.ndarray) -> bool:
+    """判断当前摄像头是否处在 complex 的红色场地环境。"""
+
+    height = image.shape[0]
+    roi = image[int(height * 0.30) : int(height * 0.88), :]
+    if roi.size == 0:
+        return False
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    hue = hsv[:, :, 0]
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+    red = ((hue < 12) | (hue > 168)) & (saturation > 80) & (value > 50)
+    red_ratio = float(np.count_nonzero(red)) / max(float(red.size), 1.0)
+    return red_ratio >= VISION_PROFILE["red_world_min_ratio"]
+
+
+def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndarray, float, float, bool]:
     """生成道路表面 mask 和边缘 fallback mask。
 
     功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
     参数：`image` 是单张 BGR 图像。
-    返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数和主 mask 命中率。
+    返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数、主 mask 命中率和近处障碍标记。
     逻辑：暗灰 mask 可避免偏离赛道时把底部中心的草地当道路；边缘不混入主 mask，
     避免把背景强边缘误当成道路表面。
     """
@@ -343,7 +481,17 @@ def _build_masks(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, floa
 
     texture_score = clamp(float(np.std(gray_roi)) / VISION_PROFILE["texture_gray_std_scale"], 0.0, 1.0)
     mask_fill_ratio = float(np.count_nonzero(road_roi)) / max(float(road_roi.size), 1.0)
-    return road_mask, edge_mask, texture_score, mask_fill_ratio
+    near_obstacle = False
+    if OPPONENT_PROFILE["enable_opponent_avoidance"]:
+        try:
+            current_time = float(timestamp)
+        except (TypeError, ValueError):
+            current_time = 0.0
+        near_obstacle = (
+            current_time >= OPPONENT_PROFILE["near_obstacle_min_timestamp"]
+            and detect_near_vehicle_obstacle(image, OPPONENT_PROFILE)
+        )
+    return road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle
 
 
 def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
@@ -356,12 +504,13 @@ def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
     return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
 
 
-def _merge_close_segments(segments: list[tuple[int, int]]) -> list[tuple[int, int]]:
+def _merge_close_segments(segments: list[tuple[int, int]], max_gap: int | None = None) -> list[tuple[int, int]]:
     """合并被车道虚线或护栏细缝切开的相邻道路段。"""
 
     if not segments:
         return []
-    max_gap = int(VISION_PROFILE["max_segment_gap"])
+    if max_gap is None:
+        max_gap = int(VISION_PROFILE["max_segment_gap"])
     merged = [segments[0]]
     for left, right in segments[1:]:
         prev_left, prev_right = merged[-1]
@@ -372,7 +521,7 @@ def _merge_close_segments(segments: list[tuple[int, int]]) -> list[tuple[int, in
     return merged
 
 
-def _road_segments(mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
+def _road_segments(mask: np.ndarray, y: int, row_band: int, max_gap: int | None = None) -> list[tuple[int, int]]:
     """从道路 mask 的水平横带中提取连续道路区间。"""
 
     y0 = max(int(y) - row_band, 0)
@@ -380,7 +529,7 @@ def _road_segments(mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, i
     band = mask[y0:y1, :]
     min_hits = max(1, int(np.ceil(band.shape[0] * 0.45)))
     active = np.count_nonzero(band, axis=0) >= min_hits
-    return _merge_close_segments(_segments_from_active(active))
+    return _merge_close_segments(_segments_from_active(active), max_gap=max_gap)
 
 
 def _edge_fallback_segments(edge_mask: np.ndarray, y: int, row_band: int) -> list[tuple[int, int]]:
@@ -404,11 +553,17 @@ def _edge_fallback_segments(edge_mask: np.ndarray, y: int, row_band: int) -> lis
     return [(edge_centers[index], edge_centers[index + 1]) for index in range(len(edge_centers) - 1)]
 
 
-def _filter_segments(segments: list[tuple[int, int]], width: int) -> list[tuple[int, int]]:
+def _filter_segments(
+    segments: list[tuple[int, int]],
+    width: int,
+    max_width_ratio: float | None = None,
+) -> list[tuple[int, int]]:
     """按道路宽度约束过滤候选区间。"""
 
     min_width = float(VISION_PROFILE["min_segment_width"])
-    max_width = float(width) * VISION_PROFILE["max_segment_width_ratio"]
+    if max_width_ratio is None:
+        max_width_ratio = VISION_PROFILE["max_segment_width_ratio"]
+    max_width = float(width) * float(max_width_ratio)
     filtered = []
     for left, right in segments:
         segment_width = float(right - left + 1)
@@ -417,12 +572,49 @@ def _filter_segments(segments: list[tuple[int, int]], width: int) -> list[tuple[
     return filtered
 
 
+def _localize_wide_segment(
+    segment: tuple[int, int],
+    previous_center: float,
+    width: int,
+    enabled: bool = True,
+) -> tuple[int, int]:
+    """把过宽道路段截成上一扫描中心附近的局部走廊。
+
+    功能：处理复合弯中多条道路被暗色 mask 连成一片的情况。
+    参数：`segment` 是候选暗区，`previous_center` 是近处已选中心，`width` 是图像宽度。
+    返回：可能被截窄后的 `(left, right)`。
+    逻辑：正常宽度道路不处理；过宽时保留靠近上一中心的一段，避免用整块暗区中心。
+    """
+
+    left, right = segment
+    segment_width = float(right - left + 1)
+    if not enabled:
+        return segment
+    if segment_width <= float(width) * VISION_PROFILE["wide_segment_localize_ratio"]:
+        return segment
+
+    target_width = max(
+        VISION_PROFILE["min_segment_width"],
+        float(width) * VISION_PROFILE["wide_segment_window_ratio"],
+    )
+    half = target_width * 0.5
+    center = previous_center
+    center = clamp(center, float(left) + half, float(right) - half)
+    localized_left = max(left, int(round(center - half)))
+    localized_right = min(right, int(round(center + half)))
+    if localized_right <= localized_left:
+        return segment
+    return localized_left, localized_right
+
+
 def _pick_segment(
     road_mask: np.ndarray,
     edge_mask: np.ndarray,
     y: int,
     previous_center: float,
     has_previous: bool,
+    near_obstacle: bool,
+    wide_localize_enabled: bool,
 ) -> tuple[tuple[int, int] | None, bool]:
     """选择当前扫描线的最佳走廊 segment。
 
@@ -434,15 +626,32 @@ def _pick_segment(
 
     width = road_mask.shape[1]
     row_band = int(VISION_PROFILE["row_band"])
-    candidates = _filter_segments(_road_segments(road_mask, y, row_band), width)
+    max_width_ratio = (
+        VISION_PROFILE["max_segment_width_ratio"]
+        if wide_localize_enabled
+        else VISION_PROFILE["early_max_segment_width_ratio"]
+    )
+    max_gap = None
+    if near_obstacle and y >= int(road_mask.shape[0] * OPPONENT_PROFILE["near_obstacle_scan_y_ratio"]):
+        max_gap = int(OPPONENT_PROFILE["near_obstacle_segment_gap"])
+    candidates = _filter_segments(
+        _road_segments(road_mask, y, row_band, max_gap=max_gap),
+        width,
+        max_width_ratio=max_width_ratio,
+    )
     used_fallback = False
     if not candidates:
-        candidates = _filter_segments(_edge_fallback_segments(edge_mask, y, row_band), width)
+        candidates = _filter_segments(
+            _edge_fallback_segments(edge_mask, y, row_band),
+            width,
+            max_width_ratio=max_width_ratio,
+        )
         used_fallback = bool(candidates)
     if not candidates:
         return None, used_fallback
 
     best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+    best = _localize_wide_segment(best, previous_center, width, enabled=wide_localize_enabled)
     center = (best[0] + best[1]) * 0.5
     max_jump = float(width) * VISION_PROFILE["max_center_jump_ratio"]
     if has_previous and abs(center - previous_center) > max_jump:
@@ -506,11 +715,11 @@ def _score_scan(
     return clamp(confidence, 0.0, 1.0), debug_flags
 
 
-def _scan_image(image: np.ndarray) -> _CameraScan:
+def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
     """按扫描线跟踪单张图像的道路走廊。
 
     功能：输出中心点、左右边界点、道路宽度和置信度。
-    参数：`image` 是单个摄像头 BGR 图像。
+    参数：`image` 是单个摄像头 BGR 图像，`timestamp` 用于限制末段障碍处理。
     返回：`_CameraScan`。
     逻辑：从近处向远处扫描，每条线选择离上一条有效中心最近的连续道路 segment。
     """
@@ -518,7 +727,9 @@ def _scan_image(image: np.ndarray) -> _CameraScan:
     if not _valid_image(image):
         return _empty_scan()
 
-    road_mask, edge_mask, texture_score, mask_fill_ratio = _build_masks(image)
+    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp)
+    red_environment = _is_red_environment(image)
+    wide_localize_enabled = red_environment
     height, width = road_mask.shape
     rows = np.linspace(
         int(height * VISION_PROFILE["scan_bottom_ratio"]),
@@ -536,7 +747,15 @@ def _scan_image(image: np.ndarray) -> _CameraScan:
     fallback_count = 0
 
     for y in rows:
-        segment, used_fallback = _pick_segment(road_mask, edge_mask, int(y), previous_center, has_previous)
+        segment, used_fallback = _pick_segment(
+            road_mask,
+            edge_mask,
+            int(y),
+            previous_center,
+            has_previous,
+            near_obstacle,
+            wide_localize_enabled,
+        )
         if segment is None:
             continue
         left, right = segment
@@ -556,6 +775,8 @@ def _scan_image(image: np.ndarray) -> _CameraScan:
         return _empty_scan(debug_flags=debug_flags)
 
     confidence, debug_flags = _score_scan(centers, widths, texture_score, mask_fill_ratio, fallback_count)
+    if red_environment:
+        debug_flags |= _RED_ENVIRONMENT_FLAG
     return _CameraScan(
         np.array(centers, dtype=np.float32),
         np.array(left_edges, dtype=np.float32),
@@ -656,9 +877,8 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
     逻辑：分别扫描左右图像；单侧有效则使用单侧，双侧一致则合并，双侧冲突则选择高置信度结果。
     """
 
-    del timestamp
-    left_scan = _scan_image(left_img) if _valid_image(left_img) else _empty_scan()
-    right_scan = _scan_image(right_img) if _valid_image(right_img) else _empty_scan()
+    left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
+    right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
     return _fuse_scans(left_scan, right_scan)
 
 
@@ -676,9 +896,13 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
 
 _LAST_TRACK = TrackState(0.0, 0.0, 0.0, 0.0, 0.0, True)
 _LAST_TIMESTAMP = None
+_LAST_RED_ENVIRONMENT = False
+_RED_ENVIRONMENT_STREAK = 0
+_RED_ENVIRONMENT_FLAG = 32
+_RED_ENVIRONMENT_LATCH_FRAMES = 3
 
 
-def _lost_track(confidence: float) -> TrackState:
+def _lost_track(confidence: float, red_environment: bool | None = None) -> TrackState:
     """生成丢线状态。
 
     功能：保留上一帧估计的衰减值，避免控制量突然归零。
@@ -687,6 +911,8 @@ def _lost_track(confidence: float) -> TrackState:
     逻辑：各几何量使用独立衰减参数，置信度裁剪到合法范围。
     """
 
+    if red_environment is None:
+        red_environment = _LAST_TRACK.red_environment
     return TrackState(
         _LAST_TRACK.lateral_error * ESTIMATOR_PROFILE["lost_lateral_decay"],
         _LAST_TRACK.heading_error * ESTIMATOR_PROFILE["lost_heading_decay"],
@@ -694,6 +920,7 @@ def _lost_track(confidence: float) -> TrackState:
         _LAST_TRACK.lookahead_error * ESTIMATOR_PROFILE["lost_lookahead_decay"],
         clamp(confidence, 0.0, ESTIMATOR_PROFILE["lost_confidence"]),
         True,
+        red_environment,
     )
 
 
@@ -857,9 +1084,11 @@ def reset_estimator_state() -> None:
     逻辑：清空上一帧几何状态和时间戳。
     """
 
-    global _LAST_TRACK, _LAST_TIMESTAMP
+    global _LAST_TRACK, _LAST_TIMESTAMP, _LAST_RED_ENVIRONMENT, _RED_ENVIRONMENT_STREAK
     _LAST_TRACK = TrackState(0.0, 0.0, 0.0, 0.0, 0.0, True)
     _LAST_TIMESTAMP = None
+    _LAST_RED_ENVIRONMENT = False
+    _RED_ENVIRONMENT_STREAK = 0
 
 
 def _maybe_reset_estimator_by_timestamp(timestamp: float) -> None:
@@ -881,21 +1110,30 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     逻辑：点集无效时返回衰减 lost 状态；有效时按 progress 拟合中心线并做自适应平滑。
     """
 
-    global _LAST_TRACK, _LAST_TIMESTAMP
+    global _LAST_TRACK, _LAST_TIMESTAMP, _LAST_RED_ENVIRONMENT, _RED_ENVIRONMENT_STREAK
 
     timestamp = float(timestamp)
     _maybe_reset_estimator_by_timestamp(timestamp)
 
+    observed_red = bool(obs.debug_flags & _RED_ENVIRONMENT_FLAG)
+    if observed_red:
+        _RED_ENVIRONMENT_STREAK += 1
+    elif not _LAST_RED_ENVIRONMENT:
+        _RED_ENVIRONMENT_STREAK = 0
+    if _RED_ENVIRONMENT_STREAK >= _RED_ENVIRONMENT_LATCH_FRAMES:
+        _LAST_RED_ENVIRONMENT = True
+    red_environment = observed_red or _LAST_RED_ENVIRONMENT
+
     points = _clean_points(obs.center_points)
     if len(points) < ESTIMATOR_PROFILE["min_center_points"] or obs.confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(obs.confidence)
+        track = _lost_track(obs.confidence, red_environment)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
 
     x_norm, progress, y_span = _normalize_points(points)
     if y_span < ESTIMATOR_PROFILE["min_y_span"]:
-        track = _lost_track(obs.confidence)
+        track = _lost_track(obs.confidence, red_environment)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
@@ -928,7 +1166,7 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
 
     confidence = _geometry_confidence(obs, points, y_span, _fit_error_score(progress, x_norm, coeffs))
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(confidence)
+        track = _lost_track(confidence, red_environment)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
@@ -947,6 +1185,7 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         _smooth_limited(_LAST_TRACK.lookahead_error, lookahead_error, alpha, ESTIMATOR_PROFILE["max_error_delta"]),
         confidence,
         False,
+        red_environment,
     )
     _LAST_TRACK = track
     _LAST_TIMESTAMP = timestamp
@@ -972,6 +1211,12 @@ _LOST_FRAMES = 0
 _RECOVERY_FRAMES = 0
 _LAST_GOOD_BIAS = 0.0
 _LAST_MODE = "start"
+_STALL_FRAMES = 0
+_ESCAPE_FRAMES = 0
+_ESCAPE_STEERING_SIGN = 1.0
+_ESCAPE_STEERING_MAGNITUDE = 0.0
+_ESCAPE_SPEED = 0.0
+_LAST_TRACK_SIGNATURE = None
 
 
 def reset_policy_state() -> None:
@@ -985,6 +1230,8 @@ def reset_policy_state() -> None:
 
     global _LAST_STEERING, _LAST_SPEED, _LAST_TIMESTAMP
     global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
+    global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
+    global _LAST_TRACK_SIGNATURE
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -992,6 +1239,12 @@ def reset_policy_state() -> None:
     _RECOVERY_FRAMES = 0
     _LAST_GOOD_BIAS = 0.0
     _LAST_MODE = "start"
+    _STALL_FRAMES = 0
+    _ESCAPE_FRAMES = 0
+    _ESCAPE_STEERING_SIGN = 1.0
+    _ESCAPE_STEERING_MAGNITUDE = 0.0
+    _ESCAPE_SPEED = 0.0
+    _LAST_TRACK_SIGNATURE = None
 
 
 def _maybe_reset_policy_by_timestamp(timestamp: float, profile: dict) -> None:
@@ -1092,9 +1345,10 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
     near_weight = profile["near_weight_base"] + signals["offset_risk"] * profile["near_weight_offset_boost"]
     far_weight = profile["far_weight_base"] + signals["curve_risk"] * profile["far_weight_curve_boost"]
     if center_term * lookahead_term < 0.0:
+        conflict_offset = max(0.0, signals["offset_risk"] - profile["far_conflict_offset_start"])
         far_weight *= max(
             profile["far_conflict_min_scale"],
-            1.0 - signals["offset_risk"] * profile["far_conflict_offset_scale"],
+            1.0 - conflict_offset * profile["far_conflict_offset_scale"],
         )
 
     raw = near_weight * center_term + far_weight * lookahead_term
@@ -1110,9 +1364,19 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
     elif mode == "hard_turn":
         raw *= 1.05
 
+    if (
+        track.red_environment
+        and
+        track.lateral_error > profile["inside_left_lateral_min"]
+        and track.heading_error < profile["inside_left_heading_max"]
+        and track.curvature < profile["inside_left_curvature_max"]
+    ):
+        raw = max(raw, profile["inside_left_steering_limit"])
+
     if abs(raw) < profile["steering_deadzone"]:
         raw = 0.0
-    return clamp(raw, -1.0, 1.0)
+    max_abs = profile["max_abs_steering"]
+    return clamp(raw, -max_abs, max_abs)
 
 
 def _steering_smoothing_for_mode(mode: str, profile: dict) -> float:
@@ -1142,7 +1406,8 @@ def _smooth_steering(target: float, mode: str, timestamp: float, profile: dict) 
     speed_factor = 1.0 - 0.35 * clamp(_LAST_SPEED / max(profile["max_speed"], 1e-6), 0.0, 1.0)
     max_delta = profile["max_steering_delta"] * dt_factor * speed_factor
     delta = clamp(smoothed - _LAST_STEERING, -max_delta, max_delta)
-    return clamp(_LAST_STEERING + delta, -1.0, 1.0)
+    max_abs = profile["max_abs_steering"]
+    return clamp(_LAST_STEERING + delta, -max_abs, max_abs)
 
 
 def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, timestamp: float, profile: dict) -> float:
@@ -1197,6 +1462,120 @@ def _smooth_speed(target: float, timestamp: float, profile: dict) -> float:
     return clamp(_LAST_SPEED + delta, min(profile["min_speed"], target), profile["max_speed"])
 
 
+def _track_signature(track: TrackState) -> tuple[float, float, float, float, float]:
+    """提取用于判断画面是否停滞的几何签名。"""
+
+    return (
+        track.lateral_error,
+        track.heading_error,
+        track.curvature,
+        track.lookahead_error,
+        track.confidence,
+    )
+
+
+def _escape_if_stalled(
+    track: TrackState,
+    signals: dict,
+    steering: float,
+    speed: float,
+    mode: str,
+    profile: dict,
+) -> tuple[float, float, str]:
+    """在顶住边界时短暂反打脱困。
+
+    功能：检测急弯大转向卡边，或长时间低速且几何签名几乎不变的状态。
+    参数：当前赛道状态、风险信号、已平滑的转向和速度、内部模式、参数表。
+    返回：可能被覆盖后的 `(steering, speed, mode)`。
+    逻辑：急弯短反打；大偏移贴边长反打；低速稳态触发更慢，并固定向右侧脱离最终卡边。
+    """
+
+    global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
+    global _LAST_TRACK_SIGNATURE
+
+    signature = _track_signature(track)
+    if _LAST_TRACK_SIGNATURE is None:
+        signature_delta = 1.0
+    else:
+        signature_delta = sum(abs(a - b) for a, b in zip(signature, _LAST_TRACK_SIGNATURE))
+    _LAST_TRACK_SIGNATURE = signature
+
+    if _ESCAPE_FRAMES > 0:
+        _ESCAPE_FRAMES -= 1
+        escape_steering = _ESCAPE_STEERING_SIGN * _ESCAPE_STEERING_MAGNITUDE
+        max_abs = profile["max_abs_steering"]
+        return (
+            clamp(escape_steering, -max_abs, max_abs),
+            max(speed, _ESCAPE_SPEED),
+            "escaping",
+        )
+
+    high_turn = (
+        signals["curve_risk"] >= profile["escape_curve_threshold"]
+        or abs(steering) >= profile["escape_steering_threshold"]
+    )
+    aligned_offset = (
+        signals["offset_risk"] >= profile["escape_offset_threshold"]
+        and track.lateral_error * track.lookahead_error >= profile["escape_offset_lookahead_alignment"]
+    )
+    large_offset_stall = (
+        mode in {"hard_turn", "correcting"}
+        and signals["offset_risk"] >= profile["escape_offset_threshold"]
+        and speed <= profile["escape_offset_speed_threshold"]
+        and abs(track.heading_error) <= profile["escape_offset_heading_abs_max"]
+        and abs(track.curvature) <= profile["escape_offset_curve_abs_max"]
+        and track.lateral_error * track.lookahead_error >= profile["escape_offset_lookahead_alignment"]
+    )
+    low_speed_stall = speed <= profile["escape_low_speed_threshold"]
+    stable_view = signature_delta <= profile["escape_signature_delta"]
+    should_count_stall = False
+    trigger_frames = int(profile["escape_trigger_frames"])
+    escape_sign = 1.0
+    escape_frames = int(profile["escape_turn_frames"])
+    escape_steering = profile["escape_turn_steering"]
+    escape_speed = profile["escape_turn_speed"]
+    if large_offset_stall:
+        should_count_stall = True
+        trigger_frames = int(profile["escape_offset_trigger_frames"])
+        escape_frames = int(profile["escape_offset_frames"])
+        escape_steering = profile["escape_offset_steering"]
+        escape_speed = profile["escape_offset_speed"]
+        reference = _LAST_STEERING if abs(_LAST_STEERING) > 0.05 else steering
+        if abs(reference) <= 0.05:
+            reference = track.lateral_error
+        escape_sign = -math.copysign(1.0, reference if reference else 1.0)
+    elif mode == "hard_turn" and high_turn and not aligned_offset:
+        should_count_stall = True
+        reference = _LAST_STEERING if abs(_LAST_STEERING) > 0.05 else steering
+        escape_sign = -math.copysign(1.0, reference if reference else 1.0)
+    elif low_speed_stall:
+        should_count_stall = True
+        trigger_frames = int(profile["escape_low_speed_trigger_frames"])
+        escape_frames = int(profile["escape_low_speed_frames"])
+        escape_steering = profile["escape_low_speed_steering"]
+        escape_speed = profile["escape_low_speed_speed"]
+        escape_sign = -1.0
+
+    if (
+        should_count_stall
+        and stable_view
+        and not track.lost
+        and track.confidence >= profile["escape_min_confidence"]
+    ):
+        _STALL_FRAMES += 1
+    else:
+        _STALL_FRAMES = 0
+
+    if _STALL_FRAMES >= trigger_frames:
+        _STALL_FRAMES = 0
+        _ESCAPE_STEERING_SIGN = escape_sign
+        _ESCAPE_STEERING_MAGNITUDE = escape_steering
+        _ESCAPE_SPEED = escape_speed
+        _ESCAPE_FRAMES = escape_frames
+
+    return steering, speed, mode
+
+
 def _update_policy_state(track: TrackState, steering: float, speed: float, mode: str, timestamp: float, profile: dict) -> None:
     """写回策略跨帧状态。
 
@@ -1241,6 +1620,8 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     """
 
     profile = get_profile(mode if mode in {"fastest", "safe"} else "fastest")
+    if not track.red_environment:
+        profile.update(BASIC_CONTROL_OVERRIDES)
     timestamp = float(timestamp)
     _maybe_reset_policy_by_timestamp(timestamp, profile)
     signals = _control_signals(track, profile)
@@ -1249,6 +1630,8 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     steering = _smooth_steering(target_steering, drive_mode, timestamp, profile)
     target_speed = _target_speed(track, signals, drive_mode, steering, timestamp, profile)
     speed = _smooth_speed(target_speed, timestamp, profile)
+    if track.red_environment:
+        steering, speed, drive_mode = _escape_if_stalled(track, signals, steering, speed, drive_mode, profile)
     _update_policy_state(track, steering, speed, drive_mode, timestamp, profile)
     return ControlCmd(steering, speed)
 
