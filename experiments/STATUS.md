@@ -230,7 +230,7 @@ t=37.2 强制 -0.58 舵角 0.8s，是 R016 撞左栏的直接原因。
 
 ## 下一步（建议顺序）
 
-1. 请人用当前 Phase 2.2 候选从头跑 `bash scripts/webots_run.sh complex`。重点看第一个左转、后段复合弯、旧起点前直道是否视觉上稳定沿中间白色虚线，是否还有轻微擦栏。
+1. 请人按 `docs/human_webots_testing.md` 的“当前 Phase 2.2 complex 终判清单”，从头跑 `bash scripts/webots_run.sh complex`。重点看第一个左转、后段复合弯、旧起点前直道是否视觉上稳定沿中间白色虚线，是否还有轻微擦栏。
 2. 若肉眼仍失败，先对比 R029/R035 控制日志：确认是正常左弯舵角仍切内，还是白线误锁到护栏/车辆/路肩。前者再调 heading/turn-in 权重，后者回到 `_camera_line_state` 的 road-context 和单目兜底门控。
 3. 修白线检测时继续保留误锁防护：白栏杆、白车、斑马线仍要拒绝，不能靠全局放宽阈值蒙混通过。
 4. 若人眼确认 complex 走线达标，再跑 basic 回归和最终 validator；之后才考虑合 main / 提速。
