@@ -32,6 +32,23 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R014 — complex 白线前移与边界保护：仍切内线撞栏，无法脱困 (2026-06-11, complex)
+- **构建**: working-tree；把白线检测前移到 perception/estimator，policy 直接消费白线目标；新增近处左右边界余量保护和 hard_turn/recovering 连续帧确认。
+- **配置**: world=complex, car_1, 单车, practice；正式 `submissions/final/team_controller.py`。
+- **记录完整性**: interleaved；`analyze_telemetry.py` 检测到 3 段 run，仅使用最后一段；归档到 `.tmp/recordings/complex_line_state_R014/`。
+- **结果**: 未完整跑通。最后一段 telemetry 6716 帧，`t=0.03→214.91s`；末帧 `x=165.23,y=119.25,speed=0.000`。速度 mean=2.110、median=1.930、p95=5.430，近停占比 `<0.3=0.45`。
+- **现象**: 第一左弯旧卡点 `x≈186,y≈-27` 只爬行约 2.9s 后通过；后续在 `t≈121.1s` 起卡在 `x≈164.5,y≈119.6`，最长爬行段 93.8s。用户截图和肉眼反馈显示：车在弯中仍然转弯半径太小，直接贴内侧栏杆/撞栏，且无法自行脱困；这不是单纯的“新坐标卡点”，本质仍是切内线问题没有解决。
+- **用户反馈**: R014 仍出现三类核心问题：一是转弯半径太小，车贴内侧栏杆过弯；二是车没有稳定骑在白线上，仍会在白线一侧行驶；三是仍有无意义打轮、减速，最后这个现象尤其明显。也就是说，“白线前移到 estimator/policy + 边界余量保护”没有把用户关心的走线问题修好。
+- **结论/下一步**: 本轮结构改动只能算诊断字段和接口铺垫，不能算行为修复。下一步不应继续小幅调 `line_gain` 或速度；应抓取撞栏窗口的 debug 帧和控制日志，直接核对：白线是否被检测到、`line_offset` 是否符号正确、`right/left_margin` 是否在撞栏前已经变小、policy 为什么仍允许继续向内打轮、脱困条件为什么没触发。
+
+### R013 — basic 白线前移与边界保护：能跑完代理，但比 R011 慢且视觉走线仍不达标 (2026-06-11, basic)
+- **构建**: working-tree；同 R014 的结构改动，重建正式 `submissions/final/team_controller.py`。
+- **配置**: world=basic, car_1, 单车, practice；正式 `submissions/final/team_controller.py`。
+- **记录完整性**: interleaved；`analyze_telemetry.py` 检测到 2 段 run，仅使用最后一段；归档到 `.tmp/recordings/basic_line_state_R013/`。
+- **结果**: 运行到 `t=442.08s` 后手动终止。最后一段 telemetry 13815 帧；速度 mean=5.238、median=6.090、p95=6.100、max=6.130，近停占比 `<0.3=0.00`。车在 `t≈299.36s` 重新进入 basic 起点区域 `x≈-19.23,y≈127.88`，按历史代理记为物理完成一圈。
+- **现象**: 没有 car5 撞停或低速卡死；末帧 `x=-19.16,y=106.27,speed=2.94`，仍正常行驶。与 R011 相比，物理完成一圈代理时间从约 `259.84s` 内仍高速行驶/车阵通过，变成约 `299.36s` 才回到起点区域，basic 明显变慢。用户肉眼仍认为车没有稳定压住白线，且仍会出现不必要打轮和减速。
+- **结论/下一步**: R013 不能写成“basic 无退化”。真实结论是：basic 没有撞停，但速度退化，视觉走线目标仍不达标。后续如果继续 basic，应先拿 debug 构建记录白线字段和最终 steering 分解，找出为什么“看见白线”没有变成“车身中心压白线”。
+
 ### R012 — complex 白线位置优先修正：通过首个左弯卡点，但未完整跑通 (2026-06-11, complex)
 - **构建**: working-tree；新增白线后置校正，白线位置优先、方向辅助；开启近车检测；同时降低远处前瞻/急弯舵角以放大转弯半径。
 - **配置**: world=complex, car_1, 单车, practice；正式 `submissions/final/team_controller.py`。

@@ -12,7 +12,7 @@ import numpy as np
 
 from controller.common import PerceptionObs, clamp
 from controller.opponent import detect_near_vehicle_obstacle
-from controller.params import OPPONENT_PROFILE, VISION_PROFILE
+from controller.params import LINE_FOLLOW_PROFILE, OPPONENT_PROFILE, VISION_PROFILE
 
 _RED_ENVIRONMENT_FLAG = 32
 
@@ -33,6 +33,7 @@ class _CameraScan:
     road_width_est: float
     confidence: float
     debug_flags: int = 0
+    near_obstacle: bool = False
 
 
 def _empty_points() -> np.ndarray:
@@ -185,6 +186,95 @@ def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
     padded = np.concatenate(([False], active.astype(bool), [False]))
     changes = np.flatnonzero(padded[1:] != padded[:-1])
     return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
+
+
+def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, float] | None:
+    """估计单个相机里的白色中心线。
+
+    功能：找连续的窄白色虚线，输出近处偏移、线方向和置信度。
+    参数：`image` 是 BGR 图像，`profile` 是白线跟踪参数。
+    返回：`(offset, heading, confidence)`；白线不足时返回 None。
+    逻辑：逐行找短白段并按连续性串起来，排除车身大白块和孤立噪声。
+    """
+
+    if not _valid_image(image):
+        return None
+    height, width = image.shape[:2]
+    lower = int(profile["white_min"])
+    y_top = int(height * profile["scan_top_ratio"])
+    y_bottom = int(height * profile["scan_bottom_ratio"])
+    rows = np.linspace(y_bottom, y_top, int(profile["scan_count"]), dtype=np.int32)
+    row_band = int(profile["row_band"])
+    min_width = float(profile["min_segment_width"])
+    max_width = float(profile["max_segment_width"])
+    initial_limit = float(width) * profile["initial_center_max_offset"]
+    jump_limit = float(width) * profile["max_center_jump_ratio"]
+    image_center = float(width) * 0.5
+
+    points = []
+    previous_center = image_center
+    has_previous = False
+    for y in rows:
+        y0 = max(int(y) - row_band, 0)
+        y1 = min(int(y) + row_band + 1, height)
+        band = image[y0:y1, :, :]
+        white = np.all(band >= lower, axis=2)
+        active = np.count_nonzero(white, axis=0) >= 2
+        candidates = []
+        for left, right in _segments_from_active(active):
+            segment_width = float(right - left + 1)
+            if not (min_width <= segment_width <= max_width):
+                continue
+            center = (float(left) + float(right)) * 0.5
+            if not has_previous and abs(center - image_center) <= initial_limit:
+                candidates.append(center)
+            elif has_previous and abs(center - previous_center) <= jump_limit:
+                candidates.append(center)
+        if not candidates:
+            continue
+        center = min(candidates, key=lambda value: abs(value - previous_center))
+        points.append((center, float(y)))
+        previous_center = center
+        has_previous = True
+
+    if len(points) < int(profile["min_points_per_camera"]):
+        return None
+    point_arr = np.array(points, dtype=np.float32)
+    y = point_arr[:, 1]
+    x = point_arr[:, 0]
+    y_span = float(np.max(y) - np.min(y))
+    if y_span < float(profile["min_y_span"]):
+        return None
+    coeffs = np.polyfit(y, x, deg=1)
+    near_x = float(np.polyval(coeffs, height * profile["near_y_ratio"]))
+    far_x = float(np.polyval(coeffs, height * profile["far_y_ratio"]))
+    offset = (near_x - image_center) / max(image_center, 1.0)
+    heading = (far_x - near_x) / max(image_center, 1.0)
+    confidence = clamp(len(points) / float(profile["scan_count"]), 0.0, 1.0)
+    return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
+
+
+def _stereo_line_state(left_img, right_img, profile: dict) -> tuple[float, float, float]:
+    """融合左右相机的白线状态。
+
+    功能：估计白线相对车身中轴的位置和方向。
+    参数：左右 BGR 图像和白线参数。
+    返回：`(line_offset, line_heading, line_confidence)`。
+    逻辑：双目都看到连续白线时才输出高置信，避免单目被车身、栏杆或断线误导。
+    """
+
+    if not profile["enable"]:
+        return 0.0, 0.0, 0.0
+    left = _camera_line_state(left_img, profile)
+    right = _camera_line_state(right_img, profile)
+    if left is None or right is None:
+        return 0.0, 0.0, 0.0
+    confidence = min(left[2], right[2])
+    if confidence < profile["min_confidence"]:
+        return 0.0, 0.0, confidence
+    offset = (left[0] + right[0]) * 0.5
+    heading = (left[1] + right[1]) * 0.5
+    return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
 
 
 def _merge_close_segments(segments: list[tuple[int, int]], max_gap: int | None = None) -> list[tuple[int, int]]:
@@ -495,7 +585,9 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
 
     if not centers:
         debug_flags = 4 if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92 else 1
-        return _empty_scan(debug_flags=debug_flags)
+        scan = _empty_scan(debug_flags=debug_flags)
+        scan.near_obstacle = bool(near_obstacle)
+        return scan
 
     confidence, debug_flags = _score_scan(centers, widths, texture_score, mask_fill_ratio, fallback_count)
     if red_environment:
@@ -507,6 +599,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
         float(np.median(np.array(widths, dtype=np.float32))),
         confidence,
         debug_flags=debug_flags,
+        near_obstacle=bool(near_obstacle),
     )
 
 
@@ -535,6 +628,7 @@ def _to_obs(scan: _CameraScan, debug_flags: int | None = None) -> PerceptionObs:
         scan.road_width_est,
         clamp(scan.confidence, 0.0, 1.0),
         debug_flags=flags,
+        near_obstacle=bool(scan.near_obstacle),
     )
 
 
@@ -554,7 +648,9 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
     if right_ok and not left_ok:
         return _to_obs(right_scan)
     if not left_ok and not right_ok:
-        return _empty_obs(debug_flags=left_scan.debug_flags | right_scan.debug_flags | 1)
+        obs = _empty_obs(debug_flags=left_scan.debug_flags | right_scan.debug_flags | 1)
+        obs.near_obstacle = bool(left_scan.near_obstacle or right_scan.near_obstacle)
+        return obs
 
     center_gap = abs(_near_center(left_scan) - _near_center(right_scan))
     merge_gap = 640.0 * VISION_PROFILE["fusion_merge_gap"]
@@ -588,7 +684,27 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
         road_width_est,
         clamp(confidence, 0.0, 1.0),
         debug_flags=left_scan.debug_flags | right_scan.debug_flags,
+        near_obstacle=bool(left_scan.near_obstacle or right_scan.near_obstacle),
     )
+
+
+def _with_line_state(obs: PerceptionObs, left_img, right_img) -> PerceptionObs:
+    """把双目白线状态写入观测结果。"""
+
+    if (
+        obs.confidence < LINE_FOLLOW_PROFILE["min_obs_confidence"]
+        or len(obs.center_points) < int(LINE_FOLLOW_PROFILE["min_obs_points"])
+    ):
+        return obs
+    line_offset, line_heading, line_confidence = _stereo_line_state(
+        left_img,
+        right_img,
+        LINE_FOLLOW_PROFILE,
+    )
+    obs.line_offset = line_offset
+    obs.line_heading = line_heading
+    obs.line_confidence = line_confidence
+    return obs
 
 
 def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
@@ -602,4 +718,5 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
 
     left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
     right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
-    return _fuse_scans(left_scan, right_scan)
+    obs = _fuse_scans(left_scan, right_scan)
+    return _with_line_state(obs, left_img, right_img)

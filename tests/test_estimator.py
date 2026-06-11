@@ -16,7 +16,10 @@ def make_obs(fn, count=12, confidence=0.95, y_min=220.0, y_max=450.0, road_width
     x = 320.0 + x_norm * 320.0
     y = y_max - progress * (y_max - y_min)
     points = np.column_stack([x, y]).astype(np.float32)
-    return PerceptionObs(points, points, points, road_width, confidence)
+    half_width = road_width * 0.5
+    left_edges = np.column_stack([x - half_width, y]).astype(np.float32)
+    right_edges = np.column_stack([x + half_width, y]).astype(np.float32)
+    return PerceptionObs(points, left_edges, right_edges, road_width, confidence)
 
 
 def assert_track_range(track):
@@ -119,3 +122,19 @@ def test_estimator_outputs_stay_in_range_for_extreme_points():
     obs = make_obs(lambda progress: 2.5 - 5.0 * progress, count=14, confidence=0.85)
     track = estimate_track(obs, 0.0)
     assert_track_range(track)
+
+
+def test_high_confidence_line_becomes_target_lateral_error():
+    reset_estimator_state()
+    obs = make_obs(lambda progress: 0.0)
+    obs.line_offset = 0.32
+    obs.line_heading = 0.08
+    obs.line_confidence = 0.90
+
+    track = estimate_track(obs, 0.0)
+
+    assert track.lost is False
+    assert track.line_confidence == obs.line_confidence
+    assert track.lateral_error > 0.12
+    assert track.heading_error > 0.02
+    assert track.lookahead_error > 0.08

@@ -24,6 +24,13 @@ _ESCAPE_STEERING_MAGNITUDE = 0.0
 _ESCAPE_SPEED = 0.0
 _LAST_TRACK_SIGNATURE = None
 _STRAIGHT_MEMORY_FRAMES = 0
+_HARD_TURN_CANDIDATE_FRAMES = 0
+_RECOVERY_CANDIDATE_FRAMES = 0
+_LAST_MODE_REASON = "start"
+_LAST_TARGET_STEERING = 0.0
+_LAST_TARGET_SPEED = 0.0
+_LAST_SIGNALS = {}
+_LAST_STRAIGHT_MEMORY_ACTIVE = False
 
 
 def reset_policy_state() -> None:
@@ -39,6 +46,8 @@ def reset_policy_state() -> None:
     global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
     global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
+    global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
+    global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -53,6 +62,13 @@ def reset_policy_state() -> None:
     _ESCAPE_SPEED = 0.0
     _LAST_TRACK_SIGNATURE = None
     _STRAIGHT_MEMORY_FRAMES = 0
+    _HARD_TURN_CANDIDATE_FRAMES = 0
+    _RECOVERY_CANDIDATE_FRAMES = 0
+    _LAST_MODE_REASON = "start"
+    _LAST_TARGET_STEERING = 0.0
+    _LAST_TARGET_SPEED = 0.0
+    _LAST_SIGNALS = {}
+    _LAST_STRAIGHT_MEMORY_ACTIVE = False
 
 
 def _maybe_reset_policy_by_timestamp(timestamp: float, profile: dict) -> None:
@@ -111,6 +127,8 @@ def _control_signals(track: TrackState, profile: dict) -> dict:
     offset_risk = clamp(abs(track.lateral_error), 0.0, 1.0)
     confidence_risk = clamp(1.0 - track.confidence, 0.0, 1.0)
     lost_risk = 1.0 if track.lost else 0.0
+    min_margin = min(clamp(track.left_margin_near, 0.0, 1.0), clamp(track.right_margin_near, 0.0, 1.0))
+    margin_risk = clamp((profile["inside_margin_warning"] - min_margin) / profile["inside_margin_warning"], 0.0, 1.0)
     turn_demand = clamp(curve_risk * 0.55 + offset_risk * 0.45, 0.0, 1.0)
     risk = clamp(
         curve_risk * profile["risk_curve_weight"]
@@ -125,6 +143,7 @@ def _control_signals(track: TrackState, profile: dict) -> dict:
         "offset_risk": offset_risk,
         "confidence_risk": confidence_risk,
         "lost_risk": lost_risk,
+        "margin_risk": margin_risk,
         "turn_demand": turn_demand,
         "risk": risk,
     }
@@ -197,19 +216,68 @@ def _select_mode(track: TrackState, signals: dict, timestamp: float, profile: di
     逻辑：丢线优先，其次恢复缓冲、急弯、回中和巡航。
     """
 
+    global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES, _LAST_MODE_REASON
+
     del timestamp
     if track.lost or track.confidence < profile["lost_confidence"]:
+        _HARD_TURN_CANDIDATE_FRAMES = 0
+        _RECOVERY_CANDIDATE_FRAMES = 0
+        _LAST_MODE_REASON = "lost_or_low_confidence"
         return "lost"
     if _RECOVERY_FRAMES > 0 or track.confidence < profile["recovery_confidence"]:
-        return "recovering"
-    if (
+        _RECOVERY_CANDIDATE_FRAMES += 1
+        _HARD_TURN_CANDIDATE_FRAMES = 0
+        if _RECOVERY_FRAMES > 0 or _RECOVERY_CANDIDATE_FRAMES >= int(profile["recovery_enter_frames"]):
+            _LAST_MODE_REASON = "recovery_buffer_or_confidence"
+            return "recovering"
+    else:
+        _RECOVERY_CANDIDATE_FRAMES = 0
+
+    hard_turn_candidate = (
         signals["curve_risk"] > profile["hard_turn_threshold"]
         or signals["turn_demand"] > profile["hard_turn_threshold"]
-    ):
+    )
+    hard_turn_hold = _LAST_MODE == "hard_turn" and (
+        signals["curve_risk"] > profile["hard_turn_exit_threshold"]
+        or signals["turn_demand"] > profile["hard_turn_exit_threshold"]
+    )
+    if hard_turn_candidate or hard_turn_hold:
+        _HARD_TURN_CANDIDATE_FRAMES += 1
+    else:
+        _HARD_TURN_CANDIDATE_FRAMES = 0
+    if hard_turn_hold or _HARD_TURN_CANDIDATE_FRAMES >= int(profile["hard_turn_enter_frames"]):
+        _LAST_MODE_REASON = "curve_or_turn_demand"
         return "hard_turn"
     if abs(track.lateral_error) > profile["correction_error"]:
+        _LAST_MODE_REASON = "lateral_error"
         return "correcting"
+    _LAST_MODE_REASON = "nominal"
     return "cruise"
+
+
+def _apply_inside_margin_guard(raw: float, track: TrackState, profile: dict) -> float:
+    """根据近处边界余量限制继续向内打轮。
+
+    功能：弯中贴近内侧护栏时，把目标舵角往外侧推。
+    参数：`raw` 是未限幅目标舵角，`track` 提供左右边界余量。
+    返回：保护后的目标舵角。
+    逻辑：只在舵角方向指向低余量一侧时生效，避免直道无端左右摆。
+    """
+
+    warning = max(float(profile["inside_margin_warning"]), 1e-6)
+    if raw > 0.0:
+        pressure = clamp((warning - track.right_margin_near) / warning, 0.0, 1.0)
+        if pressure <= 0.0:
+            return raw
+        capped = min(raw, profile["inside_margin_steering_cap"])
+        return capped - pressure * profile["inside_margin_outward_gain"]
+    if raw < 0.0:
+        pressure = clamp((warning - track.left_margin_near) / warning, 0.0, 1.0)
+        if pressure <= 0.0:
+            return raw
+        capped = max(raw, -profile["inside_margin_steering_cap"])
+        return capped + pressure * profile["inside_margin_outward_gain"]
+    return raw
 
 
 def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict) -> float:
@@ -270,6 +338,8 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
         and track.curvature < profile["inside_left_curvature_max"]
     ):
         raw = max(raw, profile["inside_left_steering_limit"])
+
+    raw = _apply_inside_margin_guard(raw, track, profile)
 
     if abs(raw) < profile["steering_deadzone"]:
         raw = 0.0
@@ -337,7 +407,8 @@ def _target_speed(
     offset_factor = 1.0 - profile["offset_slowdown"] * (signals["offset_risk"] ** profile["offset_power"])
     confidence_factor = profile["min_confidence_factor"] + (1.0 - profile["min_confidence_factor"]) * track.confidence
     steering_factor = 1.0 - profile["steering_slowdown"] * (abs(steering) ** profile["steering_power"])
-    target = profile["base_speed"] * curve_factor * offset_factor * confidence_factor * steering_factor
+    margin_factor = 1.0 - profile["inside_margin_slowdown"] * signals["margin_risk"]
+    target = profile["base_speed"] * curve_factor * offset_factor * confidence_factor * steering_factor * margin_factor
 
     if mode == "recovering":
         target = min(target, profile["recovery_speed"])
@@ -549,6 +620,8 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     逻辑：非法模式回退 fastest；内部用状态机协同转向、速度和恢复策略。
     """
 
+    global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
+
     profile = get_profile(mode if mode in {"fastest", "safe"} else "fastest")
     if not track.red_environment:
         profile.update(BASIC_CONTROL_OVERRIDES)
@@ -558,6 +631,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     drive_mode = _select_mode(track, signals, timestamp, profile)
     straight_memory_active = _update_straight_memory(track, signals, drive_mode, profile)
     target_steering = _target_steering(track, signals, drive_mode, profile)
+    _LAST_TARGET_STEERING = target_steering
     steering = _smooth_steering(target_steering, drive_mode, timestamp, profile)
     target_speed = _target_speed(
         track,
@@ -568,6 +642,9 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
         profile,
         straight_memory_active=straight_memory_active,
     )
+    _LAST_TARGET_SPEED = target_speed
+    _LAST_SIGNALS = dict(signals)
+    _LAST_STRAIGHT_MEMORY_ACTIVE = bool(straight_memory_active)
     speed = _smooth_speed(target_speed, timestamp, profile)
     # 低速贴墙脱困两条赛道都启用；依赖可靠几何的急弯/大偏移脱困仍只在 complex(red)。
     steering, speed, drive_mode = _escape_if_stalled(

@@ -27,6 +27,8 @@ venv/
 config/local/
 
 # Large local artifacts
+*.npy
+*.npz
 *.mp4
 *.mov
 *.avi

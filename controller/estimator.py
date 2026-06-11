@@ -37,6 +37,12 @@ def _lost_track(confidence: float, red_environment: bool | None = None) -> Track
         clamp(confidence, 0.0, ESTIMATOR_PROFILE["lost_confidence"]),
         True,
         red_environment,
+        _LAST_TRACK.line_offset * ESTIMATOR_PROFILE["lost_lateral_decay"],
+        _LAST_TRACK.line_heading * ESTIMATOR_PROFILE["lost_heading_decay"],
+        _LAST_TRACK.line_confidence * ESTIMATOR_PROFILE["lost_confidence"],
+        _LAST_TRACK.left_margin_near,
+        _LAST_TRACK.right_margin_near,
+        _LAST_TRACK.near_obstacle,
     )
 
 
@@ -77,6 +83,63 @@ def _normalize_points(points: np.ndarray) -> tuple[np.ndarray, np.ndarray, float
     x_norm = (x - ESTIMATOR_PROFILE["image_center_x"]) / ESTIMATOR_PROFILE["x_scale"]
     x_norm = np.clip(x_norm, -1.0, 1.0)
     return x_norm.astype(np.float32), progress.astype(np.float32), y_span
+
+
+def _near_edge_margin(edge_points, side: str) -> float:
+    """估计近处车身中线到某侧边界的归一化余量。"""
+
+    points = _clean_points(edge_points)
+    if len(points) == 0:
+        return 1.0
+    y = points[:, 1].astype(np.float32)
+    y_min = float(np.min(y))
+    y_max = float(np.max(y))
+    y_span = max(y_max - y_min, 1.0)
+    near_mask = y >= y_min + y_span * 0.62
+    if not np.any(near_mask):
+        near_mask = np.ones(len(points), dtype=bool)
+    x = float(np.median(points[near_mask, 0]))
+    center = ESTIMATOR_PROFILE["image_center_x"]
+    scale = ESTIMATOR_PROFILE["x_scale"]
+    if side == "left":
+        return clamp((center - x) / scale, 0.0, 1.0)
+    return clamp((x - center) / scale, 0.0, 1.0)
+
+
+def _line_weight(line_confidence: float) -> float:
+    """把白线置信度转换成目标线融合权重。"""
+
+    min_confidence = ESTIMATOR_PROFILE["line_target_min_confidence"]
+    if line_confidence < min_confidence:
+        return 0.0
+    usable = (line_confidence - min_confidence) / max(1.0 - min_confidence, 1e-6)
+    return clamp(usable, 0.0, 1.0)
+
+
+def _apply_line_target(
+    lateral_error: float,
+    heading_error: float,
+    lookahead_error: float,
+    obs: PerceptionObs,
+) -> tuple[float, float, float]:
+    """白线可信时，把道路中心估计融合到白线目标上。"""
+
+    weight = _line_weight(obs.line_confidence)
+    if weight <= 0.0:
+        return lateral_error, heading_error, lookahead_error
+    lateral_weight = weight * ESTIMATOR_PROFILE["line_lateral_weight"]
+    heading_weight = weight * ESTIMATOR_PROFILE["line_heading_weight"]
+    lookahead_weight = weight * ESTIMATOR_PROFILE["line_lookahead_weight"]
+    projected_lookahead = clamp(
+        obs.line_offset + obs.line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"],
+        -1.0,
+        1.0,
+    )
+    return (
+        clamp(lateral_error * (1.0 - lateral_weight) + obs.line_offset * lateral_weight, -1.0, 1.0),
+        clamp(heading_error * (1.0 - heading_weight) + obs.line_heading * heading_weight, -1.0, 1.0),
+        clamp(lookahead_error * (1.0 - lookahead_weight) + projected_lookahead * lookahead_weight, -1.0, 1.0),
+    )
 
 
 def _fit_centerline(progress: np.ndarray, x_norm: np.ndarray) -> tuple[np.ndarray, int]:
@@ -295,11 +358,21 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         1.0,
     )
     heading_error = _heading_from_fit(coeffs, degree)
+    lateral_error, heading_error, lookahead_error = _apply_line_target(
+        lateral_error,
+        heading_error,
+        lookahead_error,
+        obs,
+    )
     fit_score = _fit_error_score(progress, x_norm, coeffs)
     curvature_trust = _curvature_trust(len(points), y_span, fit_score)
     curvature = _curvature_from_fit(coeffs, degree, lateral_error, lookahead_error, curvature_trust)
+    left_margin_near = _near_edge_margin(obs.left_edge_points, "left")
+    right_margin_near = _near_edge_margin(obs.right_edge_points, "right")
 
     confidence = _geometry_confidence(obs, points, y_span, fit_score)
+    if obs.line_confidence >= ESTIMATOR_PROFILE["line_target_min_confidence"]:
+        confidence = max(confidence, min(obs.confidence, obs.line_confidence) * 0.90)
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
         track = _lost_track(confidence, red_environment)
         _LAST_TRACK = track
@@ -321,6 +394,12 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         confidence,
         False,
         red_environment,
+        clamp(float(obs.line_offset), -1.0, 1.0),
+        clamp(float(obs.line_heading), -1.0, 1.0),
+        clamp(float(obs.line_confidence), 0.0, 1.0),
+        left_margin_near,
+        right_margin_near,
+        bool(obs.near_obstacle),
     )
     _LAST_TRACK = track
     _LAST_TIMESTAMP = timestamp

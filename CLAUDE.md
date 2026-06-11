@@ -72,10 +72,10 @@ left_img, right_img
 | `estimator.py` | 从 `PerceptionObs` 估计几何状态 | 接触原图，输出控制量 |
 | `policy.py` | 计算转向和速度 | 处理原图 |
 | `params.py` | 集中存放参数 | 运行算法逻辑 |
-| `opponent.py` | 近处车身检测（默认关闭） | 道路分割或控制决策 |
+| `opponent.py` | 近处车身检测 | 道路分割或控制决策 |
 | `team_controller_local.py` | 接线、异常兜底、最终限幅 | 算法实现 |
 
-`opponent.py` 的 `detect_near_vehicle_obstacle` 默认被 `OPPONENT_PROFILE["enable_opponent_avoidance"] = False` 关闭，不会在主线流水线中执行。
+`opponent.py` 的 `detect_near_vehicle_obstacle` 由 `OPPONENT_PROFILE["enable_opponent_avoidance"]` 控制；当前为开启，用于 basic/complex 近处静态车避让。
 
 ## 关键约定
 

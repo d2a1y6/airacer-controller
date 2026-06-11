@@ -6,7 +6,8 @@ sys.path.insert(0, str(ROOT))
 
 from controller.common import TrackState
 from controller.params import BASIC_CONTROL_OVERRIDES, get_profile
-from controller.policy import decide_control, reset_policy_state
+import controller.policy as policy
+from controller.policy import _control_signals, _target_steering, decide_control, reset_policy_state
 
 
 def make_track(
@@ -139,3 +140,27 @@ def test_timestamp_reset_discards_speed_state():
     reset_cmd = decide_control(make_track(), 0.10, mode="fastest")
     assert reset_cmd.speed < fast.speed
     assert reset_cmd.speed <= 0.20
+
+
+def test_inside_margin_limits_steering_toward_guardrail():
+    profile = get_profile("fastest")
+    normal = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
+    close_right = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
+    close_right.right_margin_near = profile["inside_margin_warning"] * 0.35
+
+    normal_steer = _target_steering(normal, _control_signals(normal, profile), "hard_turn", profile)
+    guarded_steer = _target_steering(close_right, _control_signals(close_right, profile), "hard_turn", profile)
+
+    assert normal_steer > 0.05
+    assert guarded_steer < normal_steer
+
+
+def test_hard_turn_requires_consecutive_frames():
+    reset_policy_state()
+    track = make_track(heading=0.28, curvature=0.35, lookahead=0.32, red_environment=True)
+
+    decide_control(track, 0.00, mode="fastest")
+    assert policy._LAST_MODE != "hard_turn"
+
+    decide_control(track, 0.05, mode="fastest")
+    assert policy._LAST_MODE == "hard_turn"

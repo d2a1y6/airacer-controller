@@ -58,7 +58,6 @@ _DEBUG_CONTROL_BLOCK = '''    try:
         obs = extract_observation(left_img, right_img, timestamp)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
-        cmd = _apply_lane_line_correction(cmd, left_img, right_img)
         steering, speed = clamp_cmd(cmd)
         return steering, speed
     except Exception:
@@ -93,7 +92,6 @@ def _debug_control_block(
         obs = extract_observation(left_img, right_img, timestamp)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
-        cmd = _apply_lane_line_correction(cmd, left_img, right_img)
         steering, speed = clamp_cmd(cmd)
         if _DBG_FH is not None:
             try:
@@ -109,10 +107,23 @@ def _debug_control_block(
                     "lost": bool(track.lost),
                     "red_env": bool(track.red_environment),
                     "mode": _LAST_MODE,
+                    "mode_reason": _LAST_MODE_REASON,
+                    "target_steering": round(float(_LAST_TARGET_STEERING), 4),
+                    "target_speed": round(float(_LAST_TARGET_SPEED), 4),
+                    "curve_risk": round(float(_LAST_SIGNALS.get("curve_risk", 0.0)), 4),
+                    "offset_risk": round(float(_LAST_SIGNALS.get("offset_risk", 0.0)), 4),
+                    "margin_risk": round(float(_LAST_SIGNALS.get("margin_risk", 0.0)), 4),
+                    "straight_memory": bool(_LAST_STRAIGHT_MEMORY_ACTIVE),
                     "obs_conf": round(float(obs.confidence), 4),
                     "obs_points": int(len(obs.center_points)),
                     "road_width": round(float(obs.road_width_est), 2),
                     "debug_flags": int(obs.debug_flags),
+                    "line_offset": round(float(track.line_offset), 4),
+                    "line_heading": round(float(track.line_heading), 4),
+                    "line_conf": round(float(track.line_confidence), 4),
+                    "left_margin": round(float(track.left_margin_near), 4),
+                    "right_margin": round(float(track.right_margin_near), 4),
+                    "near_obstacle": bool(track.near_obstacle),
                 }}) + "\\n")
                 _DBG_FH.flush()
             except Exception:

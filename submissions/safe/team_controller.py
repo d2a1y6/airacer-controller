@@ -22,10 +22,10 @@ import numpy as np
 class PerceptionObs:
     """视觉感知结果。
 
-    功能：承载扫描线中心点、左右边界点、道路宽度和感知置信度。
+    功能：承载扫描线中心点、左右边界点、白线状态、道路宽度和感知置信度。
     参数：各字段由 `perception.extract_observation()` 生成。
     返回：dataclass 实例。
-    逻辑：字段名作为模块契约，后续估计模块只读取这些字段。
+    逻辑：道路中心、白线和边界余量都作为模块契约，后续估计模块不再回读原图。
     """
 
     center_points: np.ndarray
@@ -34,16 +34,22 @@ class PerceptionObs:
     road_width_est: float
     confidence: float
     debug_flags: int = 0
+    line_offset: float = 0.0
+    line_heading: float = 0.0
+    line_confidence: float = 0.0
+    left_margin_near: float = 1.0
+    right_margin_near: float = 1.0
+    near_obstacle: bool = False
 
 
 @dataclass
 class TrackState:
     """赛道几何状态。
 
-    功能：保存控制所需的偏移、方向、曲率、前瞻误差和丢线状态。
+    功能：保存控制所需的目标线、方向、曲率、边界余量和丢线状态。
     参数：字段由 `estimator.estimate_track()` 估计。
     返回：dataclass 实例。
-    逻辑：统一使用左负右正的误差符号，便于转向和速度策略复用。
+    逻辑：统一使用左负右正的误差符号，白线可信时优先代表目标线。
     """
 
     lateral_error: float
@@ -53,6 +59,12 @@ class TrackState:
     confidence: float
     lost: bool
     red_environment: bool = False
+    line_offset: float = 0.0
+    line_heading: float = 0.0
+    line_confidence: float = 0.0
+    left_margin_near: float = 1.0
+    right_margin_near: float = 1.0
+    near_obstacle: bool = False
 
 
 @dataclass
@@ -160,11 +172,13 @@ OPPONENT_PROFILE = {
 
 LINE_FOLLOW_PROFILE = {
     "enable": True,
+    "min_obs_confidence": 0.35,
+    "min_obs_points": 4,
     "white_min": 145.0,
     "scan_top_ratio": 0.48,
     "scan_bottom_ratio": 0.86,
-    "scan_count": 9,
-    "row_band": 3,
+    "scan_count": 5,
+    "row_band": 2,
     "min_segment_width": 3.0,
     "max_segment_width": 70.0,
     "initial_center_max_offset": 0.40,
@@ -212,6 +226,11 @@ ESTIMATOR_PROFILE = {
     "lost_heading_decay": 0.78,
     "lost_curvature_decay": 0.76,
     "lost_lookahead_decay": 0.82,
+    "line_target_min_confidence": 0.30,
+    "line_lateral_weight": 0.82,
+    "line_heading_weight": 0.68,
+    "line_lookahead_weight": 0.58,
+    "line_lookahead_projection": 0.55,
     "timestamp_reset_gap": 2.0,
 }
 
@@ -236,6 +255,9 @@ CONTROL = {
     "hard_turn_center_speed_bonus": 0.20,
     "correction_speed": 0.58,
     "hard_turn_threshold": 0.20,
+    "hard_turn_exit_threshold": 0.16,
+    "hard_turn_enter_frames": 2,
+    "recovery_enter_frames": 2,
     "correction_error": 0.25,
     "recovery_frames": 4,
     "risk_curve_weight": 0.42,
@@ -262,6 +284,10 @@ CONTROL = {
     "max_abs_steering": 0.76,
     "hard_turn_steering_scale": 0.84,
     "steering_speed_cap_scale": 0.36,
+    "inside_margin_warning": 0.34,
+    "inside_margin_outward_gain": 0.32,
+    "inside_margin_steering_cap": 0.42,
+    "inside_margin_slowdown": 0.12,
     "inside_left_lateral_min": 0.05,
     "inside_left_heading_max": -0.24,
     "inside_left_curvature_max": -0.45,
@@ -440,6 +466,7 @@ class _CameraScan:
     road_width_est: float
     confidence: float
     debug_flags: int = 0
+    near_obstacle: bool = False
 
 
 def _empty_points() -> np.ndarray:
@@ -592,6 +619,95 @@ def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
     padded = np.concatenate(([False], active.astype(bool), [False]))
     changes = np.flatnonzero(padded[1:] != padded[:-1])
     return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
+
+
+def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, float] | None:
+    """估计单个相机里的白色中心线。
+
+    功能：找连续的窄白色虚线，输出近处偏移、线方向和置信度。
+    参数：`image` 是 BGR 图像，`profile` 是白线跟踪参数。
+    返回：`(offset, heading, confidence)`；白线不足时返回 None。
+    逻辑：逐行找短白段并按连续性串起来，排除车身大白块和孤立噪声。
+    """
+
+    if not _valid_image(image):
+        return None
+    height, width = image.shape[:2]
+    lower = int(profile["white_min"])
+    y_top = int(height * profile["scan_top_ratio"])
+    y_bottom = int(height * profile["scan_bottom_ratio"])
+    rows = np.linspace(y_bottom, y_top, int(profile["scan_count"]), dtype=np.int32)
+    row_band = int(profile["row_band"])
+    min_width = float(profile["min_segment_width"])
+    max_width = float(profile["max_segment_width"])
+    initial_limit = float(width) * profile["initial_center_max_offset"]
+    jump_limit = float(width) * profile["max_center_jump_ratio"]
+    image_center = float(width) * 0.5
+
+    points = []
+    previous_center = image_center
+    has_previous = False
+    for y in rows:
+        y0 = max(int(y) - row_band, 0)
+        y1 = min(int(y) + row_band + 1, height)
+        band = image[y0:y1, :, :]
+        white = np.all(band >= lower, axis=2)
+        active = np.count_nonzero(white, axis=0) >= 2
+        candidates = []
+        for left, right in _segments_from_active(active):
+            segment_width = float(right - left + 1)
+            if not (min_width <= segment_width <= max_width):
+                continue
+            center = (float(left) + float(right)) * 0.5
+            if not has_previous and abs(center - image_center) <= initial_limit:
+                candidates.append(center)
+            elif has_previous and abs(center - previous_center) <= jump_limit:
+                candidates.append(center)
+        if not candidates:
+            continue
+        center = min(candidates, key=lambda value: abs(value - previous_center))
+        points.append((center, float(y)))
+        previous_center = center
+        has_previous = True
+
+    if len(points) < int(profile["min_points_per_camera"]):
+        return None
+    point_arr = np.array(points, dtype=np.float32)
+    y = point_arr[:, 1]
+    x = point_arr[:, 0]
+    y_span = float(np.max(y) - np.min(y))
+    if y_span < float(profile["min_y_span"]):
+        return None
+    coeffs = np.polyfit(y, x, deg=1)
+    near_x = float(np.polyval(coeffs, height * profile["near_y_ratio"]))
+    far_x = float(np.polyval(coeffs, height * profile["far_y_ratio"]))
+    offset = (near_x - image_center) / max(image_center, 1.0)
+    heading = (far_x - near_x) / max(image_center, 1.0)
+    confidence = clamp(len(points) / float(profile["scan_count"]), 0.0, 1.0)
+    return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
+
+
+def _stereo_line_state(left_img, right_img, profile: dict) -> tuple[float, float, float]:
+    """融合左右相机的白线状态。
+
+    功能：估计白线相对车身中轴的位置和方向。
+    参数：左右 BGR 图像和白线参数。
+    返回：`(line_offset, line_heading, line_confidence)`。
+    逻辑：双目都看到连续白线时才输出高置信，避免单目被车身、栏杆或断线误导。
+    """
+
+    if not profile["enable"]:
+        return 0.0, 0.0, 0.0
+    left = _camera_line_state(left_img, profile)
+    right = _camera_line_state(right_img, profile)
+    if left is None or right is None:
+        return 0.0, 0.0, 0.0
+    confidence = min(left[2], right[2])
+    if confidence < profile["min_confidence"]:
+        return 0.0, 0.0, confidence
+    offset = (left[0] + right[0]) * 0.5
+    heading = (left[1] + right[1]) * 0.5
+    return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
 
 
 def _merge_close_segments(segments: list[tuple[int, int]], max_gap: int | None = None) -> list[tuple[int, int]]:
@@ -902,7 +1018,9 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
 
     if not centers:
         debug_flags = 4 if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92 else 1
-        return _empty_scan(debug_flags=debug_flags)
+        scan = _empty_scan(debug_flags=debug_flags)
+        scan.near_obstacle = bool(near_obstacle)
+        return scan
 
     confidence, debug_flags = _score_scan(centers, widths, texture_score, mask_fill_ratio, fallback_count)
     if red_environment:
@@ -914,6 +1032,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
         float(np.median(np.array(widths, dtype=np.float32))),
         confidence,
         debug_flags=debug_flags,
+        near_obstacle=bool(near_obstacle),
     )
 
 
@@ -942,6 +1061,7 @@ def _to_obs(scan: _CameraScan, debug_flags: int | None = None) -> PerceptionObs:
         scan.road_width_est,
         clamp(scan.confidence, 0.0, 1.0),
         debug_flags=flags,
+        near_obstacle=bool(scan.near_obstacle),
     )
 
 
@@ -961,7 +1081,9 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
     if right_ok and not left_ok:
         return _to_obs(right_scan)
     if not left_ok and not right_ok:
-        return _empty_obs(debug_flags=left_scan.debug_flags | right_scan.debug_flags | 1)
+        obs = _empty_obs(debug_flags=left_scan.debug_flags | right_scan.debug_flags | 1)
+        obs.near_obstacle = bool(left_scan.near_obstacle or right_scan.near_obstacle)
+        return obs
 
     center_gap = abs(_near_center(left_scan) - _near_center(right_scan))
     merge_gap = 640.0 * VISION_PROFILE["fusion_merge_gap"]
@@ -995,7 +1117,27 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
         road_width_est,
         clamp(confidence, 0.0, 1.0),
         debug_flags=left_scan.debug_flags | right_scan.debug_flags,
+        near_obstacle=bool(left_scan.near_obstacle or right_scan.near_obstacle),
     )
+
+
+def _with_line_state(obs: PerceptionObs, left_img, right_img) -> PerceptionObs:
+    """把双目白线状态写入观测结果。"""
+
+    if (
+        obs.confidence < LINE_FOLLOW_PROFILE["min_obs_confidence"]
+        or len(obs.center_points) < int(LINE_FOLLOW_PROFILE["min_obs_points"])
+    ):
+        return obs
+    line_offset, line_heading, line_confidence = _stereo_line_state(
+        left_img,
+        right_img,
+        LINE_FOLLOW_PROFILE,
+    )
+    obs.line_offset = line_offset
+    obs.line_heading = line_heading
+    obs.line_confidence = line_confidence
+    return obs
 
 
 def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
@@ -1009,7 +1151,8 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
 
     left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
     right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
-    return _fuse_scans(left_scan, right_scan)
+    obs = _fuse_scans(left_scan, right_scan)
+    return _with_line_state(obs, left_img, right_img)
 
 
 
@@ -1051,6 +1194,12 @@ def _lost_track(confidence: float, red_environment: bool | None = None) -> Track
         clamp(confidence, 0.0, ESTIMATOR_PROFILE["lost_confidence"]),
         True,
         red_environment,
+        _LAST_TRACK.line_offset * ESTIMATOR_PROFILE["lost_lateral_decay"],
+        _LAST_TRACK.line_heading * ESTIMATOR_PROFILE["lost_heading_decay"],
+        _LAST_TRACK.line_confidence * ESTIMATOR_PROFILE["lost_confidence"],
+        _LAST_TRACK.left_margin_near,
+        _LAST_TRACK.right_margin_near,
+        _LAST_TRACK.near_obstacle,
     )
 
 
@@ -1091,6 +1240,63 @@ def _normalize_points(points: np.ndarray) -> tuple[np.ndarray, np.ndarray, float
     x_norm = (x - ESTIMATOR_PROFILE["image_center_x"]) / ESTIMATOR_PROFILE["x_scale"]
     x_norm = np.clip(x_norm, -1.0, 1.0)
     return x_norm.astype(np.float32), progress.astype(np.float32), y_span
+
+
+def _near_edge_margin(edge_points, side: str) -> float:
+    """估计近处车身中线到某侧边界的归一化余量。"""
+
+    points = _clean_points(edge_points)
+    if len(points) == 0:
+        return 1.0
+    y = points[:, 1].astype(np.float32)
+    y_min = float(np.min(y))
+    y_max = float(np.max(y))
+    y_span = max(y_max - y_min, 1.0)
+    near_mask = y >= y_min + y_span * 0.62
+    if not np.any(near_mask):
+        near_mask = np.ones(len(points), dtype=bool)
+    x = float(np.median(points[near_mask, 0]))
+    center = ESTIMATOR_PROFILE["image_center_x"]
+    scale = ESTIMATOR_PROFILE["x_scale"]
+    if side == "left":
+        return clamp((center - x) / scale, 0.0, 1.0)
+    return clamp((x - center) / scale, 0.0, 1.0)
+
+
+def _line_weight(line_confidence: float) -> float:
+    """把白线置信度转换成目标线融合权重。"""
+
+    min_confidence = ESTIMATOR_PROFILE["line_target_min_confidence"]
+    if line_confidence < min_confidence:
+        return 0.0
+    usable = (line_confidence - min_confidence) / max(1.0 - min_confidence, 1e-6)
+    return clamp(usable, 0.0, 1.0)
+
+
+def _apply_line_target(
+    lateral_error: float,
+    heading_error: float,
+    lookahead_error: float,
+    obs: PerceptionObs,
+) -> tuple[float, float, float]:
+    """白线可信时，把道路中心估计融合到白线目标上。"""
+
+    weight = _line_weight(obs.line_confidence)
+    if weight <= 0.0:
+        return lateral_error, heading_error, lookahead_error
+    lateral_weight = weight * ESTIMATOR_PROFILE["line_lateral_weight"]
+    heading_weight = weight * ESTIMATOR_PROFILE["line_heading_weight"]
+    lookahead_weight = weight * ESTIMATOR_PROFILE["line_lookahead_weight"]
+    projected_lookahead = clamp(
+        obs.line_offset + obs.line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"],
+        -1.0,
+        1.0,
+    )
+    return (
+        clamp(lateral_error * (1.0 - lateral_weight) + obs.line_offset * lateral_weight, -1.0, 1.0),
+        clamp(heading_error * (1.0 - heading_weight) + obs.line_heading * heading_weight, -1.0, 1.0),
+        clamp(lookahead_error * (1.0 - lookahead_weight) + projected_lookahead * lookahead_weight, -1.0, 1.0),
+    )
 
 
 def _fit_centerline(progress: np.ndarray, x_norm: np.ndarray) -> tuple[np.ndarray, int]:
@@ -1309,11 +1515,21 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         1.0,
     )
     heading_error = _heading_from_fit(coeffs, degree)
+    lateral_error, heading_error, lookahead_error = _apply_line_target(
+        lateral_error,
+        heading_error,
+        lookahead_error,
+        obs,
+    )
     fit_score = _fit_error_score(progress, x_norm, coeffs)
     curvature_trust = _curvature_trust(len(points), y_span, fit_score)
     curvature = _curvature_from_fit(coeffs, degree, lateral_error, lookahead_error, curvature_trust)
+    left_margin_near = _near_edge_margin(obs.left_edge_points, "left")
+    right_margin_near = _near_edge_margin(obs.right_edge_points, "right")
 
     confidence = _geometry_confidence(obs, points, y_span, fit_score)
+    if obs.line_confidence >= ESTIMATOR_PROFILE["line_target_min_confidence"]:
+        confidence = max(confidence, min(obs.confidence, obs.line_confidence) * 0.90)
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
         track = _lost_track(confidence, red_environment)
         _LAST_TRACK = track
@@ -1335,6 +1551,12 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         confidence,
         False,
         red_environment,
+        clamp(float(obs.line_offset), -1.0, 1.0),
+        clamp(float(obs.line_heading), -1.0, 1.0),
+        clamp(float(obs.line_confidence), 0.0, 1.0),
+        left_margin_near,
+        right_margin_near,
+        bool(obs.near_obstacle),
     )
     _LAST_TRACK = track
     _LAST_TIMESTAMP = timestamp
@@ -1367,6 +1589,13 @@ _ESCAPE_STEERING_MAGNITUDE = 0.0
 _ESCAPE_SPEED = 0.0
 _LAST_TRACK_SIGNATURE = None
 _STRAIGHT_MEMORY_FRAMES = 0
+_HARD_TURN_CANDIDATE_FRAMES = 0
+_RECOVERY_CANDIDATE_FRAMES = 0
+_LAST_MODE_REASON = "start"
+_LAST_TARGET_STEERING = 0.0
+_LAST_TARGET_SPEED = 0.0
+_LAST_SIGNALS = {}
+_LAST_STRAIGHT_MEMORY_ACTIVE = False
 
 
 def reset_policy_state() -> None:
@@ -1382,6 +1611,8 @@ def reset_policy_state() -> None:
     global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
     global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
+    global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
+    global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -1396,6 +1627,13 @@ def reset_policy_state() -> None:
     _ESCAPE_SPEED = 0.0
     _LAST_TRACK_SIGNATURE = None
     _STRAIGHT_MEMORY_FRAMES = 0
+    _HARD_TURN_CANDIDATE_FRAMES = 0
+    _RECOVERY_CANDIDATE_FRAMES = 0
+    _LAST_MODE_REASON = "start"
+    _LAST_TARGET_STEERING = 0.0
+    _LAST_TARGET_SPEED = 0.0
+    _LAST_SIGNALS = {}
+    _LAST_STRAIGHT_MEMORY_ACTIVE = False
 
 
 def _maybe_reset_policy_by_timestamp(timestamp: float, profile: dict) -> None:
@@ -1454,6 +1692,8 @@ def _control_signals(track: TrackState, profile: dict) -> dict:
     offset_risk = clamp(abs(track.lateral_error), 0.0, 1.0)
     confidence_risk = clamp(1.0 - track.confidence, 0.0, 1.0)
     lost_risk = 1.0 if track.lost else 0.0
+    min_margin = min(clamp(track.left_margin_near, 0.0, 1.0), clamp(track.right_margin_near, 0.0, 1.0))
+    margin_risk = clamp((profile["inside_margin_warning"] - min_margin) / profile["inside_margin_warning"], 0.0, 1.0)
     turn_demand = clamp(curve_risk * 0.55 + offset_risk * 0.45, 0.0, 1.0)
     risk = clamp(
         curve_risk * profile["risk_curve_weight"]
@@ -1468,6 +1708,7 @@ def _control_signals(track: TrackState, profile: dict) -> dict:
         "offset_risk": offset_risk,
         "confidence_risk": confidence_risk,
         "lost_risk": lost_risk,
+        "margin_risk": margin_risk,
         "turn_demand": turn_demand,
         "risk": risk,
     }
@@ -1540,19 +1781,68 @@ def _select_mode(track: TrackState, signals: dict, timestamp: float, profile: di
     逻辑：丢线优先，其次恢复缓冲、急弯、回中和巡航。
     """
 
+    global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES, _LAST_MODE_REASON
+
     del timestamp
     if track.lost or track.confidence < profile["lost_confidence"]:
+        _HARD_TURN_CANDIDATE_FRAMES = 0
+        _RECOVERY_CANDIDATE_FRAMES = 0
+        _LAST_MODE_REASON = "lost_or_low_confidence"
         return "lost"
     if _RECOVERY_FRAMES > 0 or track.confidence < profile["recovery_confidence"]:
-        return "recovering"
-    if (
+        _RECOVERY_CANDIDATE_FRAMES += 1
+        _HARD_TURN_CANDIDATE_FRAMES = 0
+        if _RECOVERY_FRAMES > 0 or _RECOVERY_CANDIDATE_FRAMES >= int(profile["recovery_enter_frames"]):
+            _LAST_MODE_REASON = "recovery_buffer_or_confidence"
+            return "recovering"
+    else:
+        _RECOVERY_CANDIDATE_FRAMES = 0
+
+    hard_turn_candidate = (
         signals["curve_risk"] > profile["hard_turn_threshold"]
         or signals["turn_demand"] > profile["hard_turn_threshold"]
-    ):
+    )
+    hard_turn_hold = _LAST_MODE == "hard_turn" and (
+        signals["curve_risk"] > profile["hard_turn_exit_threshold"]
+        or signals["turn_demand"] > profile["hard_turn_exit_threshold"]
+    )
+    if hard_turn_candidate or hard_turn_hold:
+        _HARD_TURN_CANDIDATE_FRAMES += 1
+    else:
+        _HARD_TURN_CANDIDATE_FRAMES = 0
+    if hard_turn_hold or _HARD_TURN_CANDIDATE_FRAMES >= int(profile["hard_turn_enter_frames"]):
+        _LAST_MODE_REASON = "curve_or_turn_demand"
         return "hard_turn"
     if abs(track.lateral_error) > profile["correction_error"]:
+        _LAST_MODE_REASON = "lateral_error"
         return "correcting"
+    _LAST_MODE_REASON = "nominal"
     return "cruise"
+
+
+def _apply_inside_margin_guard(raw: float, track: TrackState, profile: dict) -> float:
+    """根据近处边界余量限制继续向内打轮。
+
+    功能：弯中贴近内侧护栏时，把目标舵角往外侧推。
+    参数：`raw` 是未限幅目标舵角，`track` 提供左右边界余量。
+    返回：保护后的目标舵角。
+    逻辑：只在舵角方向指向低余量一侧时生效，避免直道无端左右摆。
+    """
+
+    warning = max(float(profile["inside_margin_warning"]), 1e-6)
+    if raw > 0.0:
+        pressure = clamp((warning - track.right_margin_near) / warning, 0.0, 1.0)
+        if pressure <= 0.0:
+            return raw
+        capped = min(raw, profile["inside_margin_steering_cap"])
+        return capped - pressure * profile["inside_margin_outward_gain"]
+    if raw < 0.0:
+        pressure = clamp((warning - track.left_margin_near) / warning, 0.0, 1.0)
+        if pressure <= 0.0:
+            return raw
+        capped = max(raw, -profile["inside_margin_steering_cap"])
+        return capped + pressure * profile["inside_margin_outward_gain"]
+    return raw
 
 
 def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict) -> float:
@@ -1613,6 +1903,8 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
         and track.curvature < profile["inside_left_curvature_max"]
     ):
         raw = max(raw, profile["inside_left_steering_limit"])
+
+    raw = _apply_inside_margin_guard(raw, track, profile)
 
     if abs(raw) < profile["steering_deadzone"]:
         raw = 0.0
@@ -1680,7 +1972,8 @@ def _target_speed(
     offset_factor = 1.0 - profile["offset_slowdown"] * (signals["offset_risk"] ** profile["offset_power"])
     confidence_factor = profile["min_confidence_factor"] + (1.0 - profile["min_confidence_factor"]) * track.confidence
     steering_factor = 1.0 - profile["steering_slowdown"] * (abs(steering) ** profile["steering_power"])
-    target = profile["base_speed"] * curve_factor * offset_factor * confidence_factor * steering_factor
+    margin_factor = 1.0 - profile["inside_margin_slowdown"] * signals["margin_risk"]
+    target = profile["base_speed"] * curve_factor * offset_factor * confidence_factor * steering_factor * margin_factor
 
     if mode == "recovering":
         target = min(target, profile["recovery_speed"])
@@ -1892,6 +2185,8 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     逻辑：非法模式回退 fastest；内部用状态机协同转向、速度和恢复策略。
     """
 
+    global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
+
     profile = get_profile(mode if mode in {"fastest", "safe"} else "fastest")
     if not track.red_environment:
         profile.update(BASIC_CONTROL_OVERRIDES)
@@ -1901,6 +2196,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     drive_mode = _select_mode(track, signals, timestamp, profile)
     straight_memory_active = _update_straight_memory(track, signals, drive_mode, profile)
     target_steering = _target_steering(track, signals, drive_mode, profile)
+    _LAST_TARGET_STEERING = target_steering
     steering = _smooth_steering(target_steering, drive_mode, timestamp, profile)
     target_speed = _target_speed(
         track,
@@ -1911,6 +2207,9 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
         profile,
         straight_memory_active=straight_memory_active,
     )
+    _LAST_TARGET_SPEED = target_speed
+    _LAST_SIGNALS = dict(signals)
+    _LAST_STRAIGHT_MEMORY_ACTIVE = bool(straight_memory_active)
     speed = _smooth_speed(target_speed, timestamp, profile)
     # 低速贴墙脱困两条赛道都启用；依赖可靠几何的急弯/大偏移脱困仍只在 complex(red)。
     steering, speed, drive_mode = _escape_if_stalled(
@@ -1931,130 +2230,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 """
 
 
-
 PROFILE = "safe"
-
-
-def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
-    if active.size == 0:
-        return []
-    padded = np.concatenate(([False], active.astype(bool), [False]))
-    changes = np.flatnonzero(padded[1:] != padded[:-1])
-    return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
-
-
-def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, float] | None:
-    """估计单个相机里的白色中心线。
-
-    功能：找连续的窄白色虚线，输出近处偏移、线方向和置信度。
-    参数：`image` 是 BGR 图像，`profile` 是白线跟踪参数。
-    返回：`(offset, heading, confidence)`；白线不足时返回 None。
-    逻辑：逐行找短白段并按连续性串起来，排除车身大白块和孤立噪声。
-    """
-
-    if image is None or not hasattr(image, "shape") or len(image.shape) != 3:
-        return None
-    height, width = image.shape[:2]
-    lower = int(profile["white_min"])
-    mask = cv2.inRange(image, (lower, lower, lower), (255, 255, 255))
-    kernel = np.ones((3, 3), dtype=np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-
-    rows = np.linspace(
-        int(height * profile["scan_bottom_ratio"]),
-        int(height * profile["scan_top_ratio"]),
-        int(profile["scan_count"]),
-        dtype=np.int32,
-    )
-    row_band = int(profile["row_band"])
-    min_width = float(profile["min_segment_width"])
-    max_width = float(profile["max_segment_width"])
-    initial_limit = float(width) * profile["initial_center_max_offset"]
-    jump_limit = float(width) * profile["max_center_jump_ratio"]
-    image_center = float(width) * 0.5
-
-    points = []
-    previous_center = image_center
-    has_previous = False
-    for y in rows:
-        y0 = max(int(y) - row_band, 0)
-        y1 = min(int(y) + row_band + 1, height)
-        band = mask[y0:y1, :]
-        active = np.count_nonzero(band, axis=0) >= 2
-        candidates = []
-        for left, right in _segments_from_active(active):
-            segment_width = float(right - left + 1)
-            if not (min_width <= segment_width <= max_width):
-                continue
-            center = (float(left) + float(right)) * 0.5
-            if not has_previous and abs(center - image_center) <= initial_limit:
-                candidates.append(center)
-            elif has_previous and abs(center - previous_center) <= jump_limit:
-                candidates.append(center)
-        if not candidates:
-            continue
-        center = min(candidates, key=lambda value: abs(value - previous_center))
-        points.append((center, float(y)))
-        previous_center = center
-        has_previous = True
-
-    min_points = int(profile["min_points_per_camera"])
-    if len(points) < min_points:
-        return None
-    point_arr = np.array(points, dtype=np.float32)
-    y = point_arr[:, 1]
-    x = point_arr[:, 0]
-    y_span = float(np.max(y) - np.min(y))
-    if y_span < float(profile["min_y_span"]):
-        return None
-    coeffs = np.polyfit(y, x, deg=1)
-    near_x = float(np.polyval(coeffs, height * profile["near_y_ratio"]))
-    far_x = float(np.polyval(coeffs, height * profile["far_y_ratio"]))
-    offset = (near_x - image_center) / max(image_center, 1.0)
-    heading = (far_x - near_x) / max(image_center, 1.0)
-    confidence = clamp(len(points) / float(profile["scan_count"]), 0.0, 1.0)
-    return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
-
-
-def _lane_line_correction(left_img, right_img, profile: dict) -> tuple[float, float] | None:
-    """融合左右相机白线误差。
-
-    功能：估计白线相对车身中轴的位置和方向。
-    参数：左右 BGR 图像和白线参数。
-    返回：`(correction, confidence)`；不可信时返回 None。
-    逻辑：左右相机都看到连续白线时才强校正，避免单目被车身、栏杆或断线误导。
-    """
-
-    if not profile["enable"]:
-        return None
-    left = _camera_line_state(left_img, profile)
-    right = _camera_line_state(right_img, profile)
-    if left is None or right is None:
-        return None
-    offset = (left[0] + right[0]) * 0.5
-    heading = (left[1] + right[1]) * 0.5
-    confidence = min(left[2], right[2])
-    if confidence < profile["min_confidence"]:
-        return None
-    correction = offset * profile["offset_gain"] + heading * profile["heading_gain"]
-    correction = clamp(correction, -profile["max_correction"], profile["max_correction"])
-    return correction, confidence
-
-
-def _apply_lane_line_correction(cmd: ControlCmd, left_img, right_img) -> ControlCmd:
-    """用白线误差小幅修正舵角。
-
-    功能：让车身中线追向白色虚线，同时保持原道路中心控制作为兜底。
-    参数：原始控制命令和左右相机图像。
-    返回：修正后的控制命令。
-    逻辑：白线可信时只加有限幅度的舵角修正，不直接覆盖速度和状态机。
-    """
-
-    line = _lane_line_correction(left_img, right_img, LINE_FOLLOW_PROFILE)
-    if line is None:
-        return cmd
-    correction, _confidence = line
-    return ControlCmd(clamp(cmd.steering + correction, -1.0, 1.0), cmd.speed)
 
 
 def control(left_img, right_img, timestamp):
@@ -2070,7 +2246,6 @@ def control(left_img, right_img, timestamp):
         obs = extract_observation(left_img, right_img, timestamp)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
-        cmd = _apply_lane_line_correction(cmd, left_img, right_img)
         steering, speed = clamp_cmd(cmd)
         return steering, speed
     except Exception:

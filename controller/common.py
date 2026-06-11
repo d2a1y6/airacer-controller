@@ -14,10 +14,10 @@ import numpy as np
 class PerceptionObs:
     """视觉感知结果。
 
-    功能：承载扫描线中心点、左右边界点、道路宽度和感知置信度。
+    功能：承载扫描线中心点、左右边界点、白线状态、道路宽度和感知置信度。
     参数：各字段由 `perception.extract_observation()` 生成。
     返回：dataclass 实例。
-    逻辑：字段名作为模块契约，后续估计模块只读取这些字段。
+    逻辑：道路中心、白线和边界余量都作为模块契约，后续估计模块不再回读原图。
     """
 
     center_points: np.ndarray
@@ -26,16 +26,22 @@ class PerceptionObs:
     road_width_est: float
     confidence: float
     debug_flags: int = 0
+    line_offset: float = 0.0
+    line_heading: float = 0.0
+    line_confidence: float = 0.0
+    left_margin_near: float = 1.0
+    right_margin_near: float = 1.0
+    near_obstacle: bool = False
 
 
 @dataclass
 class TrackState:
     """赛道几何状态。
 
-    功能：保存控制所需的偏移、方向、曲率、前瞻误差和丢线状态。
+    功能：保存控制所需的目标线、方向、曲率、边界余量和丢线状态。
     参数：字段由 `estimator.estimate_track()` 估计。
     返回：dataclass 实例。
-    逻辑：统一使用左负右正的误差符号，便于转向和速度策略复用。
+    逻辑：统一使用左负右正的误差符号，白线可信时优先代表目标线。
     """
 
     lateral_error: float
@@ -45,6 +51,12 @@ class TrackState:
     confidence: float
     lost: bool
     red_environment: bool = False
+    line_offset: float = 0.0
+    line_heading: float = 0.0
+    line_confidence: float = 0.0
+    left_margin_near: float = 1.0
+    right_margin_near: float = 1.0
+    near_obstacle: bool = False
 
 
 @dataclass

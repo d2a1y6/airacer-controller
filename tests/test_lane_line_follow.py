@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.params import LINE_FOLLOW_PROFILE
-from controller.team_controller_local import _lane_line_correction
+from controller.perception import _stereo_line_state
 
 
 def _line_image(x_values):
@@ -25,17 +25,17 @@ def test_symmetric_stereo_line_has_near_zero_correction():
     left = _line_image([350, 348, 346, 344, 342, 340])
     right = _line_image([290, 292, 294, 296, 298, 300])
 
-    correction = _lane_line_correction(left, right, LINE_FOLLOW_PROFILE)
+    offset, _heading, confidence = _stereo_line_state(left, right, LINE_FOLLOW_PROFILE)
 
-    assert correction is not None
-    assert abs(correction[0]) < 0.03
+    assert confidence >= LINE_FOLLOW_PROFILE["min_confidence"]
+    assert abs(offset) < 0.03
 
 
 def test_stereo_line_right_of_car_steers_right():
     left = _line_image([390, 388, 386, 384, 382, 380])
     right = _line_image([330, 332, 334, 336, 338, 340])
 
-    correction = _lane_line_correction(left, right, LINE_FOLLOW_PROFILE)
+    offset, heading, confidence = _stereo_line_state(left, right, LINE_FOLLOW_PROFILE)
 
-    assert correction is not None
-    assert correction[0] > 0.04
+    assert confidence >= LINE_FOLLOW_PROFILE["min_confidence"]
+    assert offset * LINE_FOLLOW_PROFILE["offset_gain"] + heading * LINE_FOLLOW_PROFILE["heading_gain"] > 0.04

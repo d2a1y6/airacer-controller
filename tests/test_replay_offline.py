@@ -23,10 +23,23 @@ CONTROL_SCHEMA = {
     "lost",
     "red_env",
     "mode",
+    "mode_reason",
+    "target_steering",
+    "target_speed",
+    "curve_risk",
+    "offset_risk",
+    "margin_risk",
+    "straight_memory",
     "obs_conf",
     "obs_points",
     "road_width",
     "debug_flags",
+    "line_offset",
+    "line_heading",
+    "line_conf",
+    "left_margin",
+    "right_margin",
+    "near_obstacle",
 }
 
 
