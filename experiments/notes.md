@@ -34,6 +34,14 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R031 — Phase 2.2 候选覆盖旧后段内切窗口：未复现长爬行 (2026-06-12, complex)
+- **构建**: commit `2c12f6d`，即 R029/R030 后的 Phase 2.2 候选。
+- **配置**: AI 自主运行 `bash scripts/webots_run.sh complex --frames 4`，world=complex, car_1, practice；不跑完整场，覆盖旧 R024/R025 的 `t≈130→185` 后段内切窗口后主动停止，实际到 `t≈220.35s`。
+- **记录完整性**: clean。控制日志 `6886` 帧，telemetry `6886` 帧，`metadata.total_frames=6886`；保存 `1721` 对 stereo PNG。
+- **结果**: telemetry 无事件、无近停，末帧 `x=46.32,y=114.04,speed=5.79,status=normal`。旧窗口 `t=130→185` 从 `x≈118.5,y≈98.3` 走到 `x≈79.6,y≈5.4`，最低真实速度约 `1.74`，没有复现旧 `x≈169,y≈111` 长爬行。
+- **现象**: 旧窗口控制日志 `line_conf>0` 为 `1673/1719`，lost 为 0；命令速度最低 `0.2949`，低速 `<0.3` 仅 1 帧。`t≈149→155` 有一段强左舵和低命令速度，但 overlay 显示白线候选仍在路面中，远处栏杆没有被当成中心虚线。
+- **结论/下一步**: Phase 2.2 不只通过第一个左弯，也覆盖了历史后段内切窗口。仍不能标完成：目标要求人眼确认“沿中间白色虚线”，且本轮没有跑完整场。
+
 ### R030 — Phase 2.2 候选 basic 短回归：红色环境单目兜底未污染 basic (2026-06-12, basic)
 - **构建**: working-tree；同 R029 Phase 2.2 候选。
 - **配置**: AI 自主运行 `bash scripts/webots_run.sh basic --frames 4`，world=basic, car_1, practice；只跑早段回归，主动停止于 `t≈46.78s`。

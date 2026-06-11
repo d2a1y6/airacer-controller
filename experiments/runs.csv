@@ -53,3 +53,4 @@ date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finis
 2026-06-12,local,fastest,complex,0,,64.58,0,ai_short_stop,"R028 | Phase 2.1 候选 AI 自主短测：只跑到当前问题窗口之后即停止；第一个左弯无长爬行、无 telemetry 事件，t≈42 已回到直道中央。残留 t≈32-35 低速硬左瞬态，case 仍需人眼终判，详见 notes.md R028。"
 2026-06-12,local,fastest,complex,0,,70.75,0,ai_short_stop,"R029 | Phase 2.2 候选 AI 自主短测：只跑到第一个左弯后；红色环境单目白线兜底+曲线虚线门控放宽后，line_conf>0 达 481/500，窗口无 telemetry 事件、无近停，t≈42 已稳定出弯。case 仍需人眼终判，详见 notes.md R029。"
 2026-06-12,local,fastest,basic,0,,46.78,0,ai_short_stop,"R030 | Phase 2.2 候选 basic 短回归：只跑早段 46.8s；red_env 全程 0，确认红色环境单目兜底未污染 basic。无 telemetry 事件、无近停，详见 notes.md R030。"
+2026-06-12,local,fastest,complex,0,,220.35,0,ai_short_stop,"R031 | Phase 2.2 候选覆盖旧 R024/R025 后段内切窗口：跑到 t≈220s 主动停止，130-185s 窗口无 telemetry 事件、无近停，最低真实速度约 1.74，旧 x≈169,y≈111 长爬行未复现。详见 notes.md R031。"

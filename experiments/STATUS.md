@@ -6,7 +6,7 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-12（白线感知 **Phase 2.2 候选已实现并完成 AI 短测 R029/R030**：R028 通过第一个左弯窗口，但 `t≈32→35` 仍有短暂白线掉线和低速硬左。R029 查明原因是弯中稀疏虚线横向跳变略超门槛、单侧相机短时凑不齐双目条件。当前候选只在 complex 红色环境启用低置信单目白线兜底，放宽曲线虚线 `max_center_jump_ratio 0.24→0.32`、`min_y_span 70→60`，并把 offset-heading 冲突的回中优先阈值 `0.30→0.18`。AI complex 短测显示第一个左弯无长爬行、无 telemetry 事件，`line_conf>0` 达 `481/500`，`t≈42` 已稳定出弯；basic 短回归 R030 显示 `red_env` 全程 0、无近停或事件。**这是走线/驾驶改动，必须下一次人上车跑 complex 终判；R026/R027 第一个左弯 case 仍 open，未合 main。**
+最后更新：2026-06-12（白线感知 **Phase 2.2 候选已实现并完成 AI 短测 R029/R030/R031**：R028 通过第一个左弯窗口，但 `t≈32→35` 仍有短暂白线掉线和低速硬左。R029 查明原因是弯中稀疏虚线横向跳变略超门槛、单侧相机短时凑不齐双目条件。当前候选只在 complex 红色环境启用低置信单目白线兜底，放宽曲线虚线 `max_center_jump_ratio 0.24→0.32`、`min_y_span 70→60`，并把 offset-heading 冲突的回中优先阈值 `0.30→0.18`。AI complex 短测显示第一个左弯无长爬行、无 telemetry 事件，`line_conf>0` 达 `481/500`，`t≈42` 已稳定出弯；basic 短回归 R030 显示 `red_env` 全程 0、无近停或事件；R031 覆盖旧 R024/R025 后段 `130→185s` 内切窗口，也无事件、无近停。**这是走线/驾驶改动，必须下一次人上车跑 complex 终判；R026/R027 第一个左弯 case 仍 open，未合 main。**
 
 之前（2026-06-11 仓库整理）：相机帧改无损 PNG 且 `webots_run.sh` **默认每轮存帧**，跳完不用为看某时刻重跑；删除废弃 `docs/debug_tools.md`；README 加文档地图；新增报告可视化归档 `experiments/figures/` + 生成器 `scripts/plot_run.py` / `analyze_perception_dump.py --at`。上一轮实验结论：R024 证明 complex 旧 `x≈169,y≈111` 低速/内切问题仍会复现，不能合 main。
 
@@ -95,6 +95,11 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 - 配置：`bash scripts/webots_run.sh basic --frames 4`，AI 在 `t≈46.8s` 主动停止。
 - 结果：telemetry clean，无事件、无近停，末帧 `x=84.69,y=265.23,speed=5.95,status=normal`。
 - 判断：`red_env` 全程 0，说明 R029 的红色环境单目白线兜底没有污染 basic；控制日志 `mean|lat|=0.039`，`|lat|>0.3=0.00`，basic 早段未见明显回归。
+
+**R031 后段内切窗口短测**（2026-06-12，已完成，不跑完整场）：
+- 配置：`bash scripts/webots_run.sh complex --frames 4`，AI 在 `t≈220.35s` 主动停止，覆盖旧 R024/R025 的 `130→185s` 窗口。
+- 结果：telemetry clean，无事件、无近停；旧窗口从 `x≈118.5,y≈98.3` 到 `x≈79.6,y≈5.4`，最低真实速度约 `1.74`。
+- 判断：旧 `x≈169,y≈111` 长爬行未复现；overlay 显示 `t≈149→155` 的白线候选仍在路面中，没有明显锁到远处栏杆。
 
 **回归门槛**：下一次人跑 `bash scripts/webots_run.sh complex` 必须确认第一个左转不再出现 R026 的 `14.1s` 爬行，也不能重新锁白色护栏。若肉眼仍见擦左，优先复盘 R029 的 `t≈34→36` 正常左弯舵角是否仍切得过内。case：`experiments/cases/R026_first_left_tight_radius/`（open）。
 
