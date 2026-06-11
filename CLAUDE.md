@@ -50,7 +50,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
   --world basic --car-slot car_1
 ```
 
-完整 Webots 测试流程见 [docs/official_testing.md](docs/official_testing.md)。
+官方 SDK 和 Webots 安装见 [docs/official_testing.md](docs/official_testing.md)。人类守着 Webots 实跑时读 [docs/human_webots_testing.md](docs/human_webots_testing.md)；AI 复盘人类跑出的日志、telemetry、帧和截图时读 [docs/ai_offline_review.md](docs/ai_offline_review.md)。
 
 ## 控制流水线
 
@@ -95,4 +95,4 @@ left_img, right_img
 
 `baselines/` 保存已实跑确认的策略快照（单文件 + 参数摘要 + 证据说明），供对比和回退。
 
-平台或 Webots 测试后，结构化结果写入 `experiments/runs.csv`（`date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finish_reason,notes`），较长观察写入 `experiments/notes.md`。
+平台或 Webots 测试后，结构化结果写入 `experiments/runs.csv`（`date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finish_reason,notes`），较长观察写入 `experiments/notes.md`。人类肉眼观察先按 `docs/human_webots_testing.md` 记录；AI 追加机制分析时按 `docs/ai_offline_review.md` 取证。

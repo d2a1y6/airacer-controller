@@ -13,7 +13,8 @@ def control(left_img, right_img, timestamp):
 
 - 新接手先读：`CLAUDE.md`、`docs/debug_tools.md`、`experiments/notes.md` 最新记录。
 - 要改控制行为：读 `controller/`，尤其是 `common.py`、`params.py`、`perception.py`、`estimator.py`、`policy.py`。
-- 要跑 Webots 或看录像：读 `docs/manual_testing.md` 和 `docs/debug_tools.md`。
+- 人类要守着 Webots 实跑：读 `docs/human_webots_testing.md`。
+- AI 要复盘人类跑出的日志、telemetry、帧和截图：读 `docs/ai_offline_review.md`。
 - 要理解当前失败点：读 `experiments/notes.md` 的最新 R-id 和 `experiments/handoff_2026-06-11.md`。
 
 ## 目录约定
@@ -60,15 +61,19 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 
-Webots 实跑和 debug 构建流程见 `docs/manual_testing.md`。
+Webots 实跑分两段：
+
+- 人类实跑和肉眼观察：`docs/human_webots_testing.md`
+- AI 离线复盘、逐帧取证和归档：`docs/ai_offline_review.md`
 
 ## 调试产物规则
 
-整场录像和逐帧回看很重要，但它们是临时诊断材料，不是长期仓库资产。这里的“整场回看”不是逐帧看完整场，而是先看全局摘要，再从整场记录里挑关键窗口逐帧取证。
+整场录像和逐帧回看很重要，但它们是临时诊断材料，不是长期仓库资产。这里的“整场回看”是 AI 先看全局摘要，再从整场记录里挑关键窗口逐帧取证；不是要求人类或 AI 把完整录像逐帧看完。
 
 - `.tmp/` 用来放 debug 构建、控制日志、整场 `.npy` 帧、overlay、Webots 录像和临时 SDK 克隆。
-- 每次实跑后必须看整场摘要，并用关键窗口的逐帧 overlay 支撑分析；不要只凭数字或猜测下结论。
-- 看完后清理 `.tmp/`。不要提交整场帧、整场录像、批量截图或临时 telemetry 复制件。
+- 人类负责实跑和肉眼现象记录；AI 负责用日志、telemetry、帧和 overlay 解释机制。
+- AI 分析时必须用关键窗口的逐帧画面或 overlay 支撑判断；不要只凭数字或猜测下结论。
+- AI 看完并把结论写进 `experiments/` 后清理 `.tmp/`。不要提交整场帧、整场录像、批量截图或临时 telemetry 复制件。
 - 如果某个失败窗口以后还会反复用来回归，裁剪成 `experiments/cases/<R-id>_<slug>/`，只保留很小的窗口和少量关键 overlay。
 
 ## 实验记录

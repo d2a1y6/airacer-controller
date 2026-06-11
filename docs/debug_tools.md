@@ -1,11 +1,15 @@
 # 调试工具与产物规则
 
-本文是调试数据、工具命令、整场摘要复盘、关键窗口逐帧取证和产物归档的权威说明。AI 接手实跑问题前先读这里。
+本文是调试数据和产物生命周期说明。具体流程分两份：
+
+- 人类守着 Webots 跑车、截图、记录肉眼现象：`docs/human_webots_testing.md`
+- AI 接手日志、telemetry、帧和截图后做离线复盘：`docs/ai_offline_review.md`
 
 ## 1. 基本原则
 
 - 真实 Webots / 平台画面是最终裁判；日志和离线回放只用来解释原因。
-- 每次实跑后都要看整场摘要，再挑关键窗口逐帧看画面。不是要求逐帧看完整场，而是要求分析必须有画面或 overlay 作证。
+- 人类负责实跑和肉眼判断；AI 负责复盘日志、telemetry、帧和 overlay。
+- AI 的“整场 review”不是逐帧看完整场，而是先看全局摘要，再挑关键窗口逐帧看画面。分析必须有画面或 overlay 作证。
 - `.tmp/` 是临时工作区，不是仓库归档区。看完、提炼结论后要清理。
 - 长期仓库资产只保存结论、裁剪后的关键 case、稳定 baseline 和脚本。
 - 调试构建含 `open/json/np.save`，只能本地跑，不能上传平台。
@@ -47,48 +51,31 @@ python scripts/build_submission.py --mode fastest \
 - dump 帧很大，通常一圈数 GB。只有定位视觉/走线问题时开启。
 - `--dump-frame-stride 3` 适合整场回看；需要精确撞栏窗口时可对短跑用 stride 1。
 
-## 4. 整场摘要 + 关键窗口取证流程
+## 4. AI 离线复盘入口
 
-每次真实 run 结束后按这个顺序看，不要跳步。目标是从整场记录里找需要看的片段，而不是把每一帧都人工看完。
+真实 run 结束后，AI 按 `docs/ai_offline_review.md` 复盘。目标是从整场记录里找需要看的片段，而不是把每一帧都人工看完。下面只保留常用命令索引。
 
-1. 看 telemetry 全局：
+看 telemetry 全局：
 
 ```bash
 python scripts/analyze_telemetry.py --no-archive
 ```
 
-重点看完整性、末帧位置、速度剖面、最长爬行段、事件。`interleaved` 时只能采信脚本切出的最后一段。
-
-2. 看控制日志全局：
+看控制日志全局：
 
 ```bash
 python scripts/analyze_control_log.py .tmp/run/control_basic.jsonl
 ```
 
-重点看速度、转向震荡、mode 占比、lost 段、`margin_risk`、`line_conf`、`mode_reason`。
+生成关键窗口 overlay：
 
-3. 列出关键窗口：
-
-- 最大爬行段。
-- 大 `|steering|` 或 steering 突变段。
-- 持续 `hard_turn` / `recovering` / `lost` 段。
-- 用户肉眼看到的撞栏、撞车、偏离白线时间窗。
-- `line_conf` 高但车没压白线的窗口。
-- `margin_risk` 高但仍继续向内打轮的窗口。
-
-4. 对关键窗口渲染少量 overlay 作为证据：
-
-- 每个窗口通常取 3-5 帧：进入前、异常中、异常后。
-- overlay 至少要能看原图、道路 mask、扫描中心、白线状态、左右边界。
-- 对照 debug log 的 `target_steering/steering/mode_reason/line_conf/left_margin/right_margin` 判断矛盾点。
-- 结论里应写清楚看了哪个时间窗、画面显示了什么、日志字段如何对应；避免凭空推断。
-
-5. 写结论并清理：
-
-- 真实 run 写 `experiments/runs.csv` 和 `experiments/notes.md`。
-- 机制分析写 `experiments/analysis_*.md`。
-- 反复要用的失败窗口裁剪进 `experiments/cases/`。
-- 删除 `.tmp` 原始产物。
+```bash
+python scripts/analyze_perception_dump.py .tmp/run/frames_basic \
+  --control-log .tmp/run/control_basic.jsonl \
+  --out .tmp/run/perception_after.json \
+  --overlay-dir .tmp/run/overlays \
+  --overlay-limit 12
+```
 
 ## 5. 工具命令
 

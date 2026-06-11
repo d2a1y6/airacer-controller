@@ -1,0 +1,136 @@
+# AI 离线复盘手册
+
+本文给接手实验记录的 AI 看。人类按 `docs/human_webots_testing.md` 跑过 Webots 后，AI 应该用 telemetry、控制日志、相机帧和 overlay 解释现象。人类肉眼结论是最终事实来源；离线复盘负责找机制证据、定位代码链路和整理下一步。
+
+这里的“整场 review”不是逐帧看完整场。正确做法是先看整场摘要，再从整场记录里挑关键窗口逐帧看图、生成少量 overlay，用画面和日志支撑判断。
+
+## 1. 先确认有什么数据
+
+常见输入：
+
+| 数据 | 常见路径 | 用途 |
+|---|---|---|
+| 人类反馈 | 用户消息、截图、`experiments/notes.md` | 判断真实现象，确定优先级 |
+| telemetry | `/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl` | 位置、速度、爬行段、事件 |
+| 控制日志 | `.tmp/run/control_*.jsonl` | 每帧内部状态、mode、目标控制量、最终输出 |
+| 相机帧 | `.tmp/run/frames_*/*.npy` | 逐帧看白线、道路 mask、障碍物、栏杆 |
+| 截图 | 用户附件或 `.tmp/run/*overlay*` | 证明肉眼现象和关键窗口 |
+
+没有帧也能先分析 telemetry 和控制日志；涉及白线、撞栏、视觉误判时，应要求下一轮 dump 帧，或使用已有帧生成 overlay。
+
+## 2. 全局摘要
+
+先看真实轨迹和速度：
+
+```bash
+python scripts/analyze_telemetry.py --no-archive
+```
+
+记录：
+
+- telemetry 是否干净，是否 interleaved。
+- 末帧位置、最长爬行段、低速段。
+- 是否有 lap、finish、collision 事件。
+- 与人类反馈是否一致。
+
+再看控制器内部行为：
+
+```bash
+python scripts/analyze_control_log.py .tmp/run/control_basic.jsonl
+```
+
+重点看：
+
+- `mode` / `mode_reason`
+- `steering` / `target_steering`
+- `speed` / `target_speed`
+- `line_conf`、`line_offset`、`line_heading`
+- `left_margin`、`right_margin`、`margin_risk`
+- `lost`、`recovering`、`hard_turn` 的连续段
+
+## 3. 选关键窗口
+
+不要平均地看所有帧。优先挑这些窗口逐帧看：
+
+- 人类看到撞车、撞栏、偏离白线的时间窗。
+- telemetry 的最长爬行段或近停段。
+- 大 `|steering|`、steering 突变、突然减速的窗口。
+- `line_conf` 高但车没骑白线的窗口。
+- `margin_risk` 高但仍继续向内打轮的窗口。
+- `lost/recovering/hard_turn` 持续较久的窗口。
+
+每个窗口通常取 3-5 帧：异常前、异常中、异常后。需要精确定位撞栏时，再看更密的帧。
+
+## 4. 逐帧和 overlay
+
+已有相机帧时，可以做感知 dump 分析并生成少量 overlay：
+
+```bash
+python scripts/analyze_perception_dump.py .tmp/run/frames_basic \
+  --control-log .tmp/run/control_basic.jsonl \
+  --out .tmp/run/perception_after.json \
+  --overlay-dir .tmp/run/overlays \
+  --overlay-limit 12
+```
+
+看图时要回答：
+
+- 白线在画面里是否清楚。
+- 识别到的白线 offset/heading 符号是否正确。
+- 道路 mask、中心线、边界点是否被白车、接缝、栏杆污染。
+- debug log 里的 `target_steering` 和最终 `steering` 是否朝错误方向。
+- 如果车贴内栏，`left_margin/right_margin` 和 `margin_risk` 是否提前反映风险。
+
+结论必须写清楚证据来源，例如“看了 t=92.4-96.0 的 overlay，白线在车身左侧，但 `target_steering` 仍为右打”。不要只凭一组均值推断。
+
+## 5. 开环回放
+
+已有帧后，可以离线重跑同一段固定画面：
+
+```bash
+python scripts/replay_offline.py .tmp/run/frames_basic \
+  --out .tmp/run/replay_basic.jsonl
+
+python scripts/analyze_control_log.py .tmp/run/replay_basic.jsonl
+```
+
+回放脚本会在开始前调用 `reset_estimator_state()` 和 `reset_policy_state()`，再按：
+
+```text
+extract_observation → estimate_track → decide_control → clamp_cmd
+```
+
+逐帧输出 JSONL。输出字段和 `--debug-log` 控制日志一致，可以直接交给 `analyze_control_log.py`。
+
+开环回放适合比较同一批画面下，感知、估计或 policy 改动如何影响 `line_conf`、`lost`、`target_steering`、`margin_risk` 等字段。
+
+开环回放不能判断圈速、是否完赛、是否真实撞栏。真实 Webots 中，控制输出会改变车的位置和后续画面；回放里的后续画面已经固定。
+
+## 6. 记录和归档
+
+真实 Webots / 平台 run 才分配 R-id。AI 复盘后应把结论写回：
+
+- `experiments/runs.csv`：一行结构化摘要，`notes` 以 `R0xx |` 开头。
+- `experiments/notes.md`：肉眼现象、数据摘要、看过的关键窗口、结论、下一步。
+- `experiments/analysis_*.md`：有机制解释价值的长分析。
+- `experiments/cases/<R-id>_<slug>/`：只保存会反复用于回归的小型失败窗口。
+
+`analyze_telemetry.py --archive <label>` 只把当前原始 telemetry 临时复制到 `.tmp/recordings/<label>/`，方便本轮分析。它不是长期归档。
+
+## 7. 清理
+
+确认有价值的信息已经写进 `experiments/` 后，删除临时产物：
+
+```bash
+rm -rf .tmp .pytest_cache
+find . -type d -name '__pycache__' -prune -exec rm -rf {} +
+find . -name '.DS_Store' -delete
+```
+
+长期不要保存：
+
+- 整场 `.npy` 左右相机帧。
+- 整场 Webots 录像或批量截图。
+- 整场原始 telemetry 复制件。
+- 临时 debug controller。
+- cache、`.DS_Store`、`__pycache__`。

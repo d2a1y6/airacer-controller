@@ -62,7 +62,7 @@ experiments/cases/R014_inner_rail_stuck/
 
 ## 处理流程
 
-1. 在 `.tmp` 里完成整场摘要复盘，并挑关键窗口逐帧取证。
+1. AI 按 `docs/ai_offline_review.md` 在 `.tmp` 里完成全局摘要复盘，并挑关键窗口逐帧取证。
 2. 只裁剪最小窗口和少量 overlay。
 3. 写 case README。
 4. 把整场原始产物从 `.tmp` 删除。

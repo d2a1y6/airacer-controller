@@ -6,9 +6,11 @@
 
 1. `README.md`：仓库入口和产物规则。
 2. `CLAUDE.md`：模块边界、命令、提交限制。
-3. `docs/debug_tools.md`：整场摘要复盘、关键窗口逐帧取证、`.tmp` 生命周期。
-4. `experiments/notes.md` 最新 R-id：R013/R014 是当前最近实跑结论。
-5. 本文。
+3. `docs/human_webots_testing.md`：人类如何守着 Webots 实跑、截图、记录肉眼现象。
+4. `docs/ai_offline_review.md`：AI 如何复盘日志、telemetry、相机帧和 overlay。
+5. `docs/debug_tools.md`：调试产物类型和 `.tmp` 生命周期。
+6. `experiments/notes.md` 最新 R-id：R013/R014 是当前最近实跑结论。
+7. 本文。
 
 ## 已提交 checkpoint
 
@@ -84,13 +86,15 @@
 
 - 删除 `docs/repository_map.md`，避免和 README 双维护。
 - 精简 `README.md`，只保留入口信息、目录约定、常用命令、产物规则。
-- 重写 `docs/debug_tools.md`：
-  - `.tmp` 是临时工作区。
-  - 每次实跑后要看整场摘要，再挑关键窗口逐帧取证。
-  - 不要求逐帧看完整场，但分析必须有画面/overlay 支撑。
-  - 明确保留/删除矩阵。
-- 重写 `docs/manual_testing.md`：
-  - 流程变成 debug 构建 → Webots → 全局摘要 → 关键窗口逐帧取证 → 写 notes/runs → 清理 `.tmp`。
+- 重写并改名 `docs/human_webots_testing.md`：
+  - 只写人类守着 Webots 实跑的流程：构建调试控制器、启动 Webots、肉眼记录车身相对白线/栏杆/障碍物的位置，把 `.tmp/run` 产物交给 AI。
+  - 不再要求人类跑完整日志分析，也不要求人工逐帧看完整场。
+- 重写并改名 `docs/ai_offline_review.md`：
+  - AI 接手人类反馈、telemetry、控制日志、相机帧和截图后，先看全局摘要，再挑关键窗口逐帧取证。
+  - 明确“整场 review”不是逐帧看完整场，而是分析必须能被关键窗口画面或 overlay 支撑。
+- 更新 `docs/debug_tools.md`：
+  - 它只保留调试数据来源、产物生命周期、常用命令和归档规则。
+  - 人类实跑流程与 AI 离线复盘流程分别跳转到上面两份文档。
 - 新增 `experiments/cases/README.md`：
   - 只允许保存裁剪后的关键失败窗口。
   - 禁止提交整场 `.npy` 帧、整场录像、批量 overlay。
