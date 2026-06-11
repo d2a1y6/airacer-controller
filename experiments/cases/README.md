@@ -2,6 +2,8 @@
 
 `experiments/cases/` 只保存会反复用于回归、交接或解释机制的小型失败窗口。它不是录像库，也不是 `.tmp` 的替代品。
 
+> 和 `experiments/figures/` 区分：`cases/` 是**为了复现某个 bug**（修好后可能就删）；`figures/` 是**为了最终报告和回查的可视化叙事**（长期保留，含整场轨迹图）。报告要贴的图放 `figures/`，规则见 `experiments/figures/README.md`。
+
 ## 什么时候建 case
 
 满足至少一条才建：
@@ -35,7 +37,7 @@ experiments/cases/R014_inner_rail_stuck/
 
 ## 禁止保存的内容
 
-- 整场 `.npy` 左右相机帧。
+- 整场左右相机帧 PNG。
 - 整场 Webots 录像或整场 telemetry 复制件。
 - 批量 overlay 截图。
 - debug controller 单文件。

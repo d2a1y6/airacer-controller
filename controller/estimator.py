@@ -5,6 +5,8 @@
 处理流程：清洗中心点，按 progress 拟合中心线，估计偏移、朝向和曲率，再按置信度平滑。
 """
 
+import math
+
 import numpy as np
 
 from controller.common import PerceptionObs, TrackState, clamp
@@ -216,6 +218,31 @@ def _update_line_memory(obs: PerceptionObs, line_trust: float, timestamp: float,
     return clamp(remembered_trust * ESTIMATOR_PROFILE["line_startup_memory_trust_scale"], 0.0, 1.0)
 
 
+def _line_guidance_targets(obs: PerceptionObs) -> tuple[float, float]:
+    """把白线 offset/heading 转成主几何链路可用的方向目标。
+
+    功能：在车明显偏离白线时，让 offset 回中优先于弯中斜率。
+    参数：`obs` 提供白线 offset 和 heading。
+    返回：削弱后的 `line_heading` 与 `projected_lookahead`。
+    逻辑：R027 第一个左弯里，白线在车右侧（offset>0）但虚线向左弯（heading<0）。
+    若直接融合 heading/lookahead，会继续左打并撞左栏。offset 足够大且与 heading 反号时，
+    heading 只作弱参考，lookahead 保持在 offset 同侧，用于把车先拉回白线附近。
+    """
+
+    line_offset = clamp(float(obs.line_offset), -1.0, 1.0)
+    line_heading = clamp(float(obs.line_heading), -1.0, 1.0)
+    projected = line_offset + line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"]
+    conflict = (
+        abs(line_offset) >= ESTIMATOR_PROFILE["line_offset_priority_min"]
+        and line_offset * line_heading < 0.0
+    )
+    if conflict:
+        line_heading *= ESTIMATOR_PROFILE["line_conflict_heading_scale"]
+        min_projected = abs(line_offset) * ESTIMATOR_PROFILE["line_conflict_projected_scale"]
+        projected = math.copysign(max(abs(projected), min_projected), line_offset)
+    return clamp(line_heading, -1.0, 1.0), clamp(projected, -1.0, 1.0)
+
+
 def _apply_line_target(
     lateral_error: float,
     heading_error: float,
@@ -230,14 +257,10 @@ def _apply_line_target(
     lateral_weight = line_trust * ESTIMATOR_PROFILE["line_lateral_weight"]
     heading_weight = line_trust * ESTIMATOR_PROFILE["line_heading_weight"]
     lookahead_weight = line_trust * ESTIMATOR_PROFILE["line_lookahead_weight"]
-    projected_lookahead = clamp(
-        obs.line_offset + obs.line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"],
-        -1.0,
-        1.0,
-    )
+    line_heading, projected_lookahead = _line_guidance_targets(obs)
     return (
         clamp(lateral_error * (1.0 - lateral_weight) + obs.line_offset * lateral_weight, -1.0, 1.0),
-        clamp(heading_error * (1.0 - heading_weight) + obs.line_heading * heading_weight, -1.0, 1.0),
+        clamp(heading_error * (1.0 - heading_weight) + line_heading * heading_weight, -1.0, 1.0),
         clamp(lookahead_error * (1.0 - lookahead_weight) + projected_lookahead * lookahead_weight, -1.0, 1.0),
     )
 
@@ -257,13 +280,10 @@ def _line_only_track(obs: PerceptionObs, timestamp: float, red_environment: bool
         0.0,
         1.0,
     )
+    line_heading, projected_lookahead = _line_guidance_targets(obs)
     lateral_error = clamp(obs.line_offset * line_trust, -1.0, 1.0)
-    heading_error = clamp(obs.line_heading * line_trust, -1.0, 1.0)
-    lookahead_error = clamp(
-        (obs.line_offset + obs.line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"]) * line_trust,
-        -1.0,
-        1.0,
-    )
+    heading_error = clamp(line_heading * line_trust, -1.0, 1.0)
+    lookahead_error = clamp(projected_lookahead * line_trust, -1.0, 1.0)
     alpha = _smooth_alpha(confidence)
     track = TrackState(
         _smooth_limited(_LAST_TRACK.lateral_error, lateral_error, alpha, ESTIMATOR_PROFILE["max_error_delta"]),

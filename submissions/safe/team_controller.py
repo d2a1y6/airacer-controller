@@ -233,12 +233,28 @@ OPPONENT_PROFILE = {
 LINE_FOLLOW_PROFILE = {
     "enable": True,
     "white_min": 145.0,
-    "scan_top_ratio": 0.48,
-    "scan_bottom_ratio": 0.86,
-    "scan_count": 5,
+
+
+
+    "scan_top_ratio": 0.44,
+    "scan_bottom_ratio": 0.92,
+    "scan_count": 12,
+    "confidence_full_points": 5.0,
     "row_band": 2,
     "min_segment_width": 3.0,
     "max_segment_width": 70.0,
+
+
+
+
+    "white_chroma_max": 40.0,
+    "context_window": 18,
+    "context_gap": 4,
+    "context_min_ratio": 0.5,
+    "road_dark_min": 28.0,
+    "road_dark_max": 110.0,
+    "road_dark_chroma_max": 36.0,
+    "offset_near_fraction": 0.34,
     "initial_center_max_offset": 0.40,
     "max_center_jump_ratio": 0.24,
     "min_points_per_camera": 3,
@@ -254,11 +270,20 @@ LINE_FOLLOW_PROFILE = {
 
 
 
-    "offset_trust_max": 0.30,
+
+
+
+
+
+    "offset_trust_max": 0.75,
     "offset_jump_max": 0.12,
     "confirm_frames": 3,
     "smoothing": 0.5,
     "curve_gate": 0.35,
+
+
+    "offset_priority_min": 0.30,
+    "offset_curve_min_scale": 0.35,
 
 
 
@@ -314,12 +339,18 @@ ESTIMATOR_PROFILE = {
     "line_heading_weight": 0.55,
     "line_lookahead_weight": 0.70,
     "line_lookahead_projection": 0.55,
-    "line_target_normal_offset_max": 0.30,
+    "line_target_normal_offset_max": 0.75,
     "line_target_normal_scale": 0.55,
     "line_target_unreliable_road_scale": 1.00,
     "line_target_startup_scale": 0.76,
     "line_target_road_confidence_max": 0.60,
     "line_target_confidence_scale": 0.75,
+
+
+
+    "line_offset_priority_min": 0.30,
+    "line_conflict_heading_scale": 0.20,
+    "line_conflict_projected_scale": 0.65,
     "line_startup_until": 14.0,
     "line_startup_offset_min": 0.32,
     "line_startup_offset_max": 0.65,
@@ -756,6 +787,32 @@ def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
     return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
 
 
+def _neighbors_are_road(road_cols: np.ndarray, left: int, right: int, profile: dict) -> bool:
+\
+\
+\
+\
+\
+\
+
+
+    gap = int(profile["context_gap"])
+    window = int(profile["context_window"])
+    min_ratio = float(profile["context_min_ratio"])
+    width = int(road_cols.shape[0])
+
+    def _side_ratio(start: int, stop: int) -> float:
+        start = max(int(start), 0)
+        stop = min(int(stop), width)
+        if stop - start < 1:
+            return 0.0
+        return float(np.count_nonzero(road_cols[start:stop])) / float(stop - start)
+
+    left_ratio = _side_ratio(left - gap - window, left - gap)
+    right_ratio = _side_ratio(right + gap + 1, right + gap + 1 + window)
+    return left_ratio >= min_ratio and right_ratio >= min_ratio
+
+
 def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, float] | None:
 \
 \
@@ -769,6 +826,10 @@ def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, 
         return None
     height, width = image.shape[:2]
     lower = int(profile["white_min"])
+    chroma_max = float(profile["white_chroma_max"])
+    road_dark_min = float(profile["road_dark_min"])
+    road_dark_max = float(profile["road_dark_max"])
+    road_dark_chroma_max = float(profile["road_dark_chroma_max"])
     y_top = int(height * profile["scan_top_ratio"])
     y_bottom = int(height * profile["scan_bottom_ratio"])
     rows = np.linspace(y_bottom, y_top, int(profile["scan_count"]), dtype=np.int32)
@@ -785,13 +846,26 @@ def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, 
     for y in rows:
         y0 = max(int(y) - row_band, 0)
         y1 = min(int(y) + row_band + 1, height)
-        band = image[y0:y1, :, :]
-        white = np.all(band >= lower, axis=2)
+        band = image[y0:y1, :, :].astype(np.int16)
+        band_min = band.min(axis=2)
+        band_max = band.max(axis=2)
+        band_chroma = band_max - band_min
+
+        white = (band_min >= lower) & (band_chroma <= chroma_max)
         active = np.count_nonzero(white, axis=0) >= 2
+
+        road_dark = (
+            (band_min >= road_dark_min)
+            & (band_max <= road_dark_max)
+            & (band_chroma <= road_dark_chroma_max)
+        )
+        road_cols = np.count_nonzero(road_dark, axis=0) >= 1
         candidates = []
         for left, right in _segments_from_active(active):
             segment_width = float(right - left + 1)
             if not (min_width <= segment_width <= max_width):
+                continue
+            if not _neighbors_are_road(road_cols, left, right, profile):
                 continue
             center = (float(left) + float(right)) * 0.5
             if not has_previous and abs(center - image_center) <= initial_limit:
@@ -808,17 +882,21 @@ def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, 
     if len(points) < int(profile["min_points_per_camera"]):
         return None
     point_arr = np.array(points, dtype=np.float32)
-    y = point_arr[:, 1]
-    x = point_arr[:, 0]
-    y_span = float(np.max(y) - np.min(y))
+    point_y = point_arr[:, 1]
+    point_x = point_arr[:, 0]
+    y_span = float(np.max(point_y) - np.min(point_y))
     if y_span < float(profile["min_y_span"]):
         return None
-    coeffs = np.polyfit(y, x, deg=1)
-    near_x = float(np.polyval(coeffs, height * profile["near_y_ratio"]))
-    far_x = float(np.polyval(coeffs, height * profile["far_y_ratio"]))
+
+
+    order = np.argsort(-point_y)
+    k = max(1, int(round(len(points) * profile["offset_near_fraction"])))
+    near_x = float(np.median(point_x[order[:k]]))
+    far_x = float(np.median(point_x[order[-k:]]))
     offset = (near_x - image_center) / max(image_center, 1.0)
     heading = (far_x - near_x) / max(image_center, 1.0)
-    confidence = clamp(len(points) / float(profile["scan_count"]), 0.0, 1.0)
+
+    confidence = clamp(len(points) / float(profile["confidence_full_points"]), 0.0, 1.0)
     return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
 
 
@@ -1349,6 +1427,7 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
 
 
 
+
 _LAST_TRACK = TrackState(0.0, 0.0, 0.0, 0.0, 0.0, True)
 _LAST_TIMESTAMP = None
 _LAST_RED_ENVIRONMENT = False
@@ -1555,6 +1634,31 @@ def _update_line_memory(obs: PerceptionObs, line_trust: float, timestamp: float,
     return clamp(remembered_trust * ESTIMATOR_PROFILE["line_startup_memory_trust_scale"], 0.0, 1.0)
 
 
+def _line_guidance_targets(obs: PerceptionObs) -> tuple[float, float]:
+\
+\
+\
+\
+\
+\
+\
+\
+
+
+    line_offset = clamp(float(obs.line_offset), -1.0, 1.0)
+    line_heading = clamp(float(obs.line_heading), -1.0, 1.0)
+    projected = line_offset + line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"]
+    conflict = (
+        abs(line_offset) >= ESTIMATOR_PROFILE["line_offset_priority_min"]
+        and line_offset * line_heading < 0.0
+    )
+    if conflict:
+        line_heading *= ESTIMATOR_PROFILE["line_conflict_heading_scale"]
+        min_projected = abs(line_offset) * ESTIMATOR_PROFILE["line_conflict_projected_scale"]
+        projected = math.copysign(max(abs(projected), min_projected), line_offset)
+    return clamp(line_heading, -1.0, 1.0), clamp(projected, -1.0, 1.0)
+
+
 def _apply_line_target(
     lateral_error: float,
     heading_error: float,
@@ -1569,14 +1673,10 @@ def _apply_line_target(
     lateral_weight = line_trust * ESTIMATOR_PROFILE["line_lateral_weight"]
     heading_weight = line_trust * ESTIMATOR_PROFILE["line_heading_weight"]
     lookahead_weight = line_trust * ESTIMATOR_PROFILE["line_lookahead_weight"]
-    projected_lookahead = clamp(
-        obs.line_offset + obs.line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"],
-        -1.0,
-        1.0,
-    )
+    line_heading, projected_lookahead = _line_guidance_targets(obs)
     return (
         clamp(lateral_error * (1.0 - lateral_weight) + obs.line_offset * lateral_weight, -1.0, 1.0),
-        clamp(heading_error * (1.0 - heading_weight) + obs.line_heading * heading_weight, -1.0, 1.0),
+        clamp(heading_error * (1.0 - heading_weight) + line_heading * heading_weight, -1.0, 1.0),
         clamp(lookahead_error * (1.0 - lookahead_weight) + projected_lookahead * lookahead_weight, -1.0, 1.0),
     )
 
@@ -1596,13 +1696,10 @@ def _line_only_track(obs: PerceptionObs, timestamp: float, red_environment: bool
         0.0,
         1.0,
     )
+    line_heading, projected_lookahead = _line_guidance_targets(obs)
     lateral_error = clamp(obs.line_offset * line_trust, -1.0, 1.0)
-    heading_error = clamp(obs.line_heading * line_trust, -1.0, 1.0)
-    lookahead_error = clamp(
-        (obs.line_offset + obs.line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"]) * line_trust,
-        -1.0,
-        1.0,
-    )
+    heading_error = clamp(line_heading * line_trust, -1.0, 1.0)
+    lookahead_error = clamp(projected_lookahead * line_trust, -1.0, 1.0)
     alpha = _smooth_alpha(confidence)
     track = TrackState(
         _smooth_limited(_LAST_TRACK.lateral_error, lateral_error, alpha, ESTIMATOR_PROFILE["max_error_delta"]),
@@ -2598,11 +2695,22 @@ def _lane_line_correction(
     target = 0.0
     confirm_frames = int(profile["startup_confirm_frames"] if startup_valid and not normal_valid else profile["confirm_frames"])
     if valid and _LINE_STREAK >= confirm_frames:
-        target = track.line_offset * profile["offset_gain"] + track.line_heading * profile["heading_gain"]
         max_correction = profile["startup_max_correction"] if startup_valid and not normal_valid else profile["max_correction"]
         curve_gate = profile["startup_curve_gate"] if startup_valid and not normal_valid else profile["curve_gate"]
-        target = clamp(target, -max_correction, max_correction)
-        target *= 1.0 - clamp(signals["curve_risk"] / curve_gate, 0.0, 1.0)
+        offset_target = track.line_offset * profile["offset_gain"]
+        mixed_target = offset_target + track.line_heading * profile["heading_gain"]
+        curve_scale = 1.0 - clamp(signals["curve_risk"] / curve_gate, 0.0, 1.0)
+        target = clamp(mixed_target, -max_correction, max_correction) * curve_scale
+        if abs(track.line_offset) >= profile["offset_priority_min"]:
+
+
+            offset_floor = clamp(
+                offset_target * profile["offset_curve_min_scale"],
+                -max_correction,
+                max_correction,
+            )
+            if offset_floor * target <= 0.0 or abs(offset_floor) > abs(target):
+                target = offset_floor
 
     if startup_valid and not normal_valid:
         alpha = profile["startup_smoothing"]

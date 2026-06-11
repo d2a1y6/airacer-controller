@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 
@@ -53,8 +54,8 @@ def _lane_image() -> np.ndarray:
 
 
 def _save_pair(frame_dir: Path, timestamp_name: str, left: np.ndarray, right: np.ndarray) -> None:
-    np.save(frame_dir / f"frame_{timestamp_name}_left.npy", left)
-    np.save(frame_dir / f"frame_{timestamp_name}_right.npy", right)
+    cv2.imwrite(str(frame_dir / f"frame_{timestamp_name}_left.png"), left)
+    cv2.imwrite(str(frame_dir / f"frame_{timestamp_name}_right.png"), right)
 
 
 def test_iter_frame_pairs_sorts_by_timestamp(tmp_path):

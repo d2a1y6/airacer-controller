@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 
@@ -24,7 +25,7 @@ def _load_module(path: Path):
 def test_normal_build_source_has_no_frame_dump_probe():
     source = build_submission.build_source("fastest")
 
-    assert "np.save" not in source
+    assert "cv2.imwrite" not in source
     assert "_DBG_FRAME_DIR" not in source
     assert "_DBG_FH" not in source
     assert "AIRACER_CONTROLLER_CONSOLE_LOG_DIR" not in source
@@ -44,12 +45,12 @@ def test_debug_build_can_dump_left_and_right_frames(tmp_path):
     right = np.full((32, 48, 3), 17, dtype=np.uint8)
     steering, speed = module.control(left, right, 12.345)
 
-    saved = sorted(dump_dir.glob("*.npy"))
+    saved = sorted(dump_dir.glob("*.png"))
     assert len(saved) == 2
-    assert "frame_000012_345_left.npy" in {path.name for path in saved}
-    assert "frame_000012_345_right.npy" in {path.name for path in saved}
-    assert np.array_equal(np.load(dump_dir / "frame_000012_345_left.npy"), left)
-    assert np.array_equal(np.load(dump_dir / "frame_000012_345_right.npy"), right)
+    assert "frame_000012_345_left.png" in {path.name for path in saved}
+    assert "frame_000012_345_right.png" in {path.name for path in saved}
+    assert np.array_equal(cv2.imread(str(dump_dir / "frame_000012_345_left.png")), left)
+    assert np.array_equal(cv2.imread(str(dump_dir / "frame_000012_345_right.png")), right)
     assert -1.0 <= steering <= 1.0
     assert 0.0 <= speed <= 1.0
 
@@ -81,10 +82,10 @@ def test_debug_frame_dump_respects_time_window(tmp_path):
     module.control(image, image, 10.5)
     module.control(image, image, 11.1)
 
-    saved_names = {path.name for path in dump_dir.glob("*.npy")}
+    saved_names = {path.name for path in dump_dir.glob("*.png")}
     assert saved_names == {
-        "frame_000010_500_left.npy",
-        "frame_000010_500_right.npy",
+        "frame_000010_500_left.png",
+        "frame_000010_500_right.png",
     }
 
 

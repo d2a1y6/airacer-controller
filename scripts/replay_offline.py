@@ -1,7 +1,7 @@
 """离线开环回放工具。
 
 功能概述：读取调试构建保存的左右相机帧，离线跑控制器感知、估计和策略接线。
-输入输出：输入 `frame_<t>_left.npy/right.npy` 成对帧，输出和 control 调试日志同 schema 的 JSONL。
+输入输出：输入 `frame_<t>_left.png/right.png` 成对帧，输出和 control 调试日志同 schema 的 JSONL。
 处理流程：按时间排序帧对 → reset 跨帧状态 → 执行 extract_observation/estimate_track/decide_control → 写逐帧 JSONL。
 
 限制：这是开环回放固定输入帧，只能用于筛同一段录制画面下感知/估计改动对丢线率、置信度和几何量的影响。
@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
+import cv2
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -30,8 +30,8 @@ import controller.policy as policy_state
 def _parse_frame_timestamp(left_path: Path) -> float:
     """从 P2.5 存帧文件名解析时间戳。
 
-    功能：把 `frame_000012_345_left.npy` 还原为 `12.345`。
-    参数：`left_path` 是左图 `.npy` 路径。
+    功能：把 `frame_000012_345_left.png` 还原为 `12.345`。
+    参数：`left_path` 是左图 `.png` 路径。
     返回：浮点时间戳。
     逻辑：文件名中的负号写成 `m`，小数点写成 `_`；解析失败时抛出 `ValueError`。
     """
@@ -51,15 +51,15 @@ def _parse_frame_timestamp(left_path: Path) -> float:
 def iter_frame_pairs(frame_dir: Path) -> list[tuple[float, Path, Path]]:
     """查找并排序左右帧对。
 
-    功能：在目录内收集 P2.5 生成的左右 `.npy` 帧。
+    功能：在目录内收集调试构建生成的左右 `.png` 帧。
     参数：`frame_dir` 是存帧目录。
     返回：`(timestamp, left_path, right_path)` 列表，按时间升序。
     逻辑：以左帧为主，要求同名右帧存在；缺右帧时直接跳过。
     """
 
     pairs: list[tuple[float, Path, Path]] = []
-    for left_path in sorted(frame_dir.glob("frame_*_left.npy")):
-        right_path = left_path.with_name(left_path.name.replace("_left.npy", "_right.npy"))
+    for left_path in sorted(frame_dir.glob("frame_*_left.png")):
+        right_path = left_path.with_name(left_path.name.replace("_left.png", "_right.png"))
         if not right_path.is_file():
             continue
         pairs.append((_parse_frame_timestamp(left_path), left_path, right_path))
@@ -87,8 +87,8 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "fastest", limit:
     with out_path.open("w", encoding="utf-8") as handle:
         for timestamp, left_path, right_path in pairs:
             try:
-                left_img = np.load(left_path)
-                right_img = np.load(right_path)
+                left_img = cv2.imread(str(left_path))
+                right_img = cv2.imread(str(right_path))
                 obs = extract_observation(left_img, right_img, timestamp)
                 track = estimate_track(obs, timestamp)
                 cmd = decide_control(track, timestamp, mode=mode)
@@ -163,7 +163,7 @@ def parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
 
     parser = argparse.ArgumentParser(description="离线开环回放 P2.5 保存的左右相机帧。")
-    parser.add_argument("frames", type=Path, help="包含 frame_<t>_left.npy/right.npy 的目录")
+    parser.add_argument("frames", type=Path, help="包含 frame_<t>_left.png/right.png 的目录")
     parser.add_argument("--out", type=Path, required=True, help="输出 control 同 schema JSONL")
     parser.add_argument("--mode", choices=("fastest", "safe"), default="fastest")
     parser.add_argument("--limit", type=int, default=None, help="最多回放多少帧，默认不限")

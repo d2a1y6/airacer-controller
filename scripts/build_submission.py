@@ -162,8 +162,8 @@ def _debug_control_block(
                     _DBG_FRAME_INDEX += 1
                 if _dbg_in_window and _DBG_FRAME_INDEX % _DBG_FRAME_STRIDE == 0:
                     _dbg_t = ("%010.3f" % float(timestamp)).replace("-", "m").replace(".", "_")
-                    np.save(_DBG_FRAME_DIR + "frame_" + _dbg_t + "_left.npy", left_img)
-                    np.save(_DBG_FRAME_DIR + "frame_" + _dbg_t + "_right.npy", right_img)
+                    cv2.imwrite(_DBG_FRAME_DIR + "frame_" + _dbg_t + "_left.png", left_img)
+                    cv2.imwrite(_DBG_FRAME_DIR + "frame_" + _dbg_t + "_right.png", right_img)
             except Exception:
                 pass
         obs = extract_observation(left_img, right_img, timestamp)
@@ -331,7 +331,7 @@ def parse_args():
     parser.add_argument("--debug-log", type=Path, default=None,
                         help="本地调试构建：把每帧内部状态与命令写到该 JSONL（含 open/json，禁止上传）")
     parser.add_argument("--dump-frames", type=Path, default=None,
-                        help="本地调试构建：每隔 N 帧把 left/right BGR 保存为 .npy（禁止上传）")
+                        help="本地调试构建：每隔 N 帧把 left/right BGR 保存为无损 PNG（禁止上传）")
     parser.add_argument("--dump-frame-stride", type=int, default=10,
                         help="--dump-frames 的存帧间隔，默认每 10 帧保存；逐帧取证时显式传 1")
     parser.add_argument("--dump-frame-start", type=float, default=None,

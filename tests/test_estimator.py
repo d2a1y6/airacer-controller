@@ -161,11 +161,46 @@ def test_line_only_track_when_road_confidence_is_low():
     assert track.lookahead_error > 0.03
 
 
-def test_large_line_offset_is_rejected_outside_startup_window():
+def test_offcenter_line_is_accepted_outside_startup_window():
+    # Phase 2-C/R027：第一个左弯入口，车已偏到中心线左侧，真实白线 offset 会到 +0.6~+0.7。
+    # Phase 1 已用 road-context 拒绝护栏后，主几何链路必须接纳这种 off-center 白线用于回中。
     reset_estimator_state()
     obs = make_obs(lambda progress: 0.0, confidence=0.02)
     obs.debug_flags = 32
-    obs.line_offset = 0.52
+    obs.line_offset = 0.68
+    obs.line_heading = 0.22
+    obs.line_confidence = 0.90
+
+    track = estimate_track(obs, 20.0)
+
+    assert track.lost is False
+    assert track.lateral_error > 0.10
+    assert track.lookahead_error > 0.12
+
+
+def test_conflicting_line_heading_keeps_offset_recenter_priority():
+    # R027：第一个左弯里白线在右侧（offset>0，车应右回中），但虚线斜率/远处弯向为负。
+    # 主链路不能让 line_heading 把 lookahead/heading 全部拉成继续左打。
+    reset_estimator_state()
+    obs = make_obs(lambda progress: 0.0, confidence=0.02)
+    obs.debug_flags = 32
+    obs.line_offset = 0.50
+    obs.line_heading = -0.80
+    obs.line_confidence = 0.90
+
+    track = estimate_track(obs, 20.0)
+
+    assert track.lost is False
+    assert track.lateral_error > 0.10
+    assert track.lookahead_error > 0.08
+    assert track.heading_error > -0.20
+
+
+def test_too_large_line_offset_is_rejected_outside_startup_window():
+    reset_estimator_state()
+    obs = make_obs(lambda progress: 0.0, confidence=0.02)
+    obs.debug_flags = 32
+    obs.line_offset = 0.82
     obs.line_heading = 0.22
     obs.line_confidence = 0.90
 

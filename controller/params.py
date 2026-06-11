@@ -124,12 +124,28 @@ OPPONENT_PROFILE = {
 LINE_FOLLOW_PROFILE = {
     "enable": True,
     "white_min": 145.0,
-    "scan_top_ratio": 0.48,
-    "scan_bottom_ratio": 0.86,
-    "scan_count": 5,
+    # Phase 2-A（2026-06-12，实测取证）：弯道里中心虚线是稀疏短段，旧的 5 条固定扫描行大多落在
+    # 虚线"间隙"里 → 检不到线 → 车回退到道路 mask 的提前打轮 → 切内线卡路牙。实测真帧显示：
+    # 扫描行加密到 12 条、ROI 上下放宽后，弯道入口（t≈29-31）的中心线能被双目稳定召回。
+    "scan_top_ratio": 0.44,
+    "scan_bottom_ratio": 0.92,
+    "scan_count": 12,
+    "confidence_full_points": 5.0,  # 置信度 = 命中点数 / 该值（与扫描行数解耦，加密行不稀释置信度）
     "row_band": 2,
     "min_segment_width": 3.0,
     "max_segment_width": 70.0,
+    # Phase 1（2026-06-12，用户取证）：complex 弯道内侧护栏支柱和中心虚线一样亮，旧的纯亮度白
+    # 阈值（np.all(band>=white_min)）无法区分，导致护栏支柱被当成大 offset 的"线"。真正的中心虚线
+    # 有两个判别特征：① 近中性白（通道色度低，护栏偏蓝灰色度更高）；② 左右紧邻都是深灰沥青
+    # （"白线在大片路面中间"，护栏支柱外侧是路牙/红地/草而非路面）。两条同时满足才算白线候选。
+    "white_chroma_max": 40.0,       # 白线像素允许的最大通道色度（max-min）；护栏蓝灰色度更高被排除
+    "context_window": 18,           # 线段两侧各取多宽的窗口检查是否为路面（像素）
+    "context_gap": 4,               # 紧邻线段边缘跳过的像素，抗抗锯齿/白色高光外溢
+    "context_min_ratio": 0.5,       # 侧窗内属于深灰路面的列占比下限，两侧都要达标
+    "road_dark_min": 28.0,          # 路面上下文：最暗通道下限（排除纯黑阴影）
+    "road_dark_max": 110.0,         # 路面上下文：最亮通道上限（排除亮路牙≈112/护栏/红地）
+    "road_dark_chroma_max": 36.0,   # 路面上下文：最大色度（排除红地≈94、草≈84）
+    "offset_near_fraction": 0.34,   # 用最近/最远各 1/3 实测点的中位数算 offset/heading，不再直线外推
     "initial_center_max_offset": 0.40,
     "max_center_jump_ratio": 0.24,
     "min_points_per_camera": 3,
@@ -145,11 +161,20 @@ LINE_FOLLOW_PROFILE = {
     # 修正造成无意义打轮甚至抵消正常入弯舵角。骑线时 |offset| 本应很小，故：
     # 超出 trust_max 拒绝、帧间突变拒绝、连续 confirm_frames 帧有效才生效、EMA 平滑、
     # 弯中（curve_risk 接近 curve_gate）按比例压低——弯中线段不连续且直线拟合失真。
-    "offset_trust_max": 0.30,
+    # Phase 2-C（2026-06-12，实测取证）：车在弯道入口已偏到中心线左侧，白线 offset 实测涨到
+    # +0.32→+0.50。旧的 0.30 门把这些真实"偏离中心线"的检测全拒掉，车反而无法靠白线回中。
+    # 现在 Phase 1 的"两侧紧邻路面"上下文已从结构上排除护栏支柱，offset 门可以放宽用于回中。
+    # R027 显示第一个左弯真实白线会到 0.62-0.71；0.75 以上仍拒（多半是路沿/远处错线）。
+    # **这是走线改动，必须人上车终判。**
+    "offset_trust_max": 0.75,
     "offset_jump_max": 0.12,
     "confirm_frames": 3,
     "smoothing": 0.5,
     "curve_gate": 0.35,
+    # R027 取证：弯中 offset 已说明车偏离白线，但 curve_gate 会把后置白线修正压成 0。
+    # 当 offset 足够大时，保留一部分纯 offset 回中力；heading 仍可被弯中门控压低。
+    "offset_priority_min": 0.30,
+    "offset_curve_min_scale": 0.35,
     # complex 发车时车初始在白线左侧，road mask 会把右侧大块低饱和地面误当路，导致几何中心贴左。
     # 只在开头短窗口接受“白线在右侧且斜率合理”的较大 offset，用于把车捕获回白线中间；
     # 负 offset 和接近护栏的大 offset 仍拒绝。
@@ -205,12 +230,18 @@ ESTIMATOR_PROFILE = {
     "line_heading_weight": 0.55,
     "line_lookahead_weight": 0.70,
     "line_lookahead_projection": 0.55,
-    "line_target_normal_offset_max": 0.30,
+    "line_target_normal_offset_max": 0.75,  # Phase 2-C/R027：与 LINE_FOLLOW offset_trust_max 同步放宽（见该处注释）
     "line_target_normal_scale": 0.55,
     "line_target_unreliable_road_scale": 1.00,
     "line_target_startup_scale": 0.76,
     "line_target_road_confidence_max": 0.60,
     "line_target_confidence_scale": 0.75,
+    # R027 取证：第一个左弯里白线 offset 为正（线在右，车应右回中），但 line_heading 很负。
+    # 若直接融合 heading/lookahead，会继续给大左舵。offset 足够大且与 heading 反号时，白线
+    # 主要代表"回中方向"，heading 只能弱参考，lookahead 不允许被反向拉过中心。
+    "line_offset_priority_min": 0.30,
+    "line_conflict_heading_scale": 0.20,
+    "line_conflict_projected_scale": 0.65,
     "line_startup_until": 14.0,
     "line_startup_offset_min": 0.32,
     "line_startup_offset_max": 0.65,

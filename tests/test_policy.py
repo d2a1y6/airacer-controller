@@ -245,22 +245,24 @@ def test_startup_line_acquisition_allows_right_side_line():
     assert lined_cmd.steering > base_cmd.steering + 0.08
 
 
-def test_startup_line_acquisition_rejects_left_side_line():
-    # 开头误检常来自左侧护栏/边线，offset 为负；不能因此继续往左贴。
-    rail = make_track(red_environment=True)
-    rail.line_offset = -0.44
-    rail.line_heading = 0.22
-    rail.line_confidence = 0.80
+def test_trusted_offcenter_line_can_steer_left_after_phase2():
+    # Phase 2 后，可信双目线的 normal offset 门放宽到 ±0.55。
+    # 负 offset 若通过了感知层 road-context，也可能是真实偏离中心线，不能在 policy 层硬拒。
+    lined = make_track(red_environment=True)
+    lined.line_offset = -0.44
+    lined.line_heading = 0.00
+    lined.line_confidence = 0.80
 
     reset_policy_state()
     base_cmd = warm_policy(make_track(red_environment=True), mode="fastest", steps=8)
     reset_policy_state()
-    rail_cmd = warm_policy(rail, mode="fastest", steps=8)
+    lined_cmd = warm_policy(lined, mode="fastest", steps=8)
 
-    assert abs(rail_cmd.steering - base_cmd.steering) < 1e-6
+    assert lined_cmd.steering < base_cmd.steering - 0.08
 
 
-def test_startup_line_acquisition_expires():
+def test_offcenter_line_remains_valid_after_startup_window():
+    # R026 第一个左弯发生在启动窗口后；这里要保护普通帧也能使用 +0.4~+0.5 的真实白线偏移。
     lined = make_track(red_environment=True)
     lined.line_offset = 0.44
     lined.line_heading = 0.22
@@ -270,7 +272,7 @@ def test_startup_line_acquisition_expires():
     for index in range(8):
         cmd = decide_control(lined, 15.0 + index * 0.05, mode="fastest")
 
-    assert abs(cmd.steering) < 0.03
+    assert cmd.steering > 0.08
 
 
 def test_line_correction_suppressed_near_obstacle():
@@ -302,6 +304,23 @@ def test_line_correction_suppressed_in_sharp_turn():
     lined_cmd = warm_policy(lined_turn, mode="fastest")
 
     assert abs(lined_cmd.steering - base_cmd.steering) < 1e-6
+
+
+def test_large_offset_line_keeps_recenter_correction_in_left_turn():
+    # R027：第一个左弯里线在车右侧，但 line_heading/road heading 都强烈为左。
+    # 弯中门控不能把右向 offset 回中修正完全压没。
+    base = make_track(heading=-0.65, lookahead=-0.45, confidence=0.45, red_environment=True)
+    lined = make_track(heading=-0.65, lookahead=-0.45, confidence=0.45, red_environment=True)
+    lined.line_offset = 0.62
+    lined.line_heading = -0.60
+    lined.line_confidence = 0.80
+
+    reset_policy_state()
+    base_cmd = warm_policy(base, mode="fastest", steps=8)
+    reset_policy_state()
+    lined_cmd = warm_policy(lined, mode="fastest", steps=8)
+
+    assert lined_cmd.steering > base_cmd.steering + 0.05
 
 
 def test_geometry_escape_requires_low_speed():

@@ -6,7 +6,9 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-11（R025 后；控制策略回到 `313e882` 行为，新增跳点取证工具；跳点/存帧默认改为每 10 帧取一次；R024 证明 complex 旧 `x≈169,y≈111` 低速/内切问题仍会复现，不能合 main）。
+最后更新：2026-06-12（白线感知 **Phase 2.1 候选已实现并完成 AI 短测 R028**：R027 复跑显示白线已大量召回，但第一次左弯仍撞/擦左边。根因变成 line_heading/road heading 强左压过 offset 回中，且 `0.55` offset 门拒掉 `0.62-0.71` 的真实弯中白线。当前候选改为 offset 优先：offset 与 heading 反号且 offset 足够大时削弱 line_heading，lookahead 不允许被拉过中心；policy 弯中保留部分纯 offset 后置修正；offset trust 放宽到 `0.75`。R028 只跑到当前问题窗口之后，显示第一个左弯无长爬行、无 telemetry 事件，`t≈42` 已回到直道中央；但仍有 `t≈32→35` 低速硬左瞬态。**这是走线/驾驶改动，必须下一次人上车跑 complex 终判；R026/R027 第一个左弯 case 仍 open，未合 main。**
+
+之前（2026-06-11 仓库整理）：相机帧改无损 PNG 且 `webots_run.sh` **默认每轮存帧**，跳完不用为看某时刻重跑；删除废弃 `docs/debug_tools.md`；README 加文档地图；新增报告可视化归档 `experiments/figures/` + 生成器 `scripts/plot_run.py` / `analyze_perception_dump.py --at`。上一轮实验结论：R024 证明 complex 旧 `x≈169,y≈111` 低速/内切问题仍会复现，不能合 main。
 
 ## 阅读路径
 
@@ -46,6 +48,44 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 
 修复（全部已实现，待上车）：line 融合权重归零（仅诊断）、margin guard 参数置 no-op（仅诊断）、policy 末端恢复 R011 后置 ±0.34 有界修正（不进 risk/mode/速度/门控，跨帧状态记修正前舵角）、lost 帧透传本帧白线状态、感知白线检测不再被道路观测质量门控。
 
+## 白线感知 Phase 1/2（2026-06-12，已实现候选，待上车）
+
+**诊断（结合 R025 实测）**：complex 切内线撞栏的根因**不是策略权重**——estimator 在白线可信时已用 0.85 权重压过道路 mask。根因是**弯道里几乎拿不到可信白线**：全程仅 14.7% 帧有线，弯道窗口（120-180s）仅 4%，且检出的线 **48% 因 |offset|>0.30 被信任门拒**。用户取证进一步指出：弯道内侧**亮白护栏支柱**和中心虚线一样亮，旧的纯亮度白阈值 `np.all(band>=145)` 无法区分，会把支柱当成大 offset 的"线"。
+
+**Phase 1 改动**（`perception._camera_line_state` + `params.LINE_FOLLOW_PROFILE`）：
+1. 白段判定 = 亮（最暗通道≥`white_min`）**且近中性**（色度≤`white_chroma_max=40`，排除偏蓝灰护栏）。
+2. 白段**两侧紧邻必须都是深灰路面**（`_neighbors_are_road`，"白线在大片路面中间"），护栏支柱外侧是路牙/红地/草 → 拒绝。
+3. offset/heading 用**最近/最远各 1/3 实测点中位数**，不再直线外推（修掉弯道 offset 被放大误拒）。
+
+**验证**：`pytest` 106 passed（新增 4 个合成帧单测：护栏支柱外侧红地→拒绝、同条但两侧路面→接受、偏蓝亮条按色度拒绝、弯道中心线被召回且 offset 不放大）；官方 validator 通过（p95 25.18ms，旧有 perf warning 未恶化）。
+
+**用唯一一张真帧（t=144 stereo preview）离线抽查**，结论很关键：
+- Phase 1 **不会误伤真白线**：真虚线像素色度仅 18-34（全部≤40），真沥青 BGR≈(83,75,65) 落在 `road_dark` 范围内，road context 成立。**无召回回退**（旧纯亮度阈值在该帧同样检不到中线）。
+- 但该帧中线确实没被召回，原因是**采样问题**：虚线集中在 y≈148-303、稀疏成簇，而 5 条固定扫描行（230/275/321/366/412）大多落在虚线**间隙**里，近处行又在虚线图案下方。
+- **→ Phase 2 的真正杠杆是"扫描行密度/自适应行位置 + 单目线"，不是继续放宽颜色阈值。** 这条结论已用真帧坐实，下一步直接照做。
+
+**R026 进一步取证**：Phase 1 后起步居中顺、整场 lost 仅 `19/2925≈1%`，但第一个左转仍有 `14.1s` 爬行（`t=33.8→47.8, x≈188.6,y≈-27.1`）。入弯时 `lateral≈0`，但 `heading/lookahead/target_steering` 强负，说明 road-mask 远处弯道预判提前左打；旧控制日志在 `t≈31.36` 主问题帧 `line_conf=0`，没有白线把车拉回中心。保存帧用当前代码回放可在同一时刻得到 `line_offset≈+0.43,line_heading≈-0.54,line_conf≈0.8`。
+
+**Phase 2 候选改动**（已实现，待上车）：
+1. `LINE_FOLLOW_PROFILE` 扫描窗口上沿放到 `0.44`，扫描行从 `5` 加到 `12`，覆盖稀疏虚线簇。
+2. 白线置信度改成 `len(points)/confidence_full_points`，与扫描行总数解耦，避免加密扫描反而稀释置信度。
+3. `offset_trust_max` 和 `line_target_normal_offset_max` 从 `0.30` 放宽到 `0.55`。Phase 1 已用 road-context 结构性拒绝护栏，因此这里允许真实 off-center 白线进入主几何链路，用于回中。
+4. 暂未放开普通单目白线，也暂未继续调 turn-in gate / curve gate；这些留给下一轮实跑后再决定。
+
+**R027 复跑诊断与 Phase 2.1 候选**（2026-06-12，已实现，待上车）：
+- 复跑结果：用户观察第一次左弯仍撞/擦左边；telemetry 无 collision event，未长时间卡死，`t=46.02` 手动停止。
+- 机制：白线已大量召回（`t=27→37` 窗口 `191/313` 帧 `line_conf>0`），但 `line_heading` 很负，road heading/lookahead 也很负；当 `line_offset>0` 表示应右回中时，heading 仍把目标舵角推向左。另有 `line_offset≈0.62-0.71` 的真实弯中白线被旧 `0.55` 门拒掉。
+- 已改：新增 `line_offset_priority_min` / `line_conflict_heading_scale` / `line_conflict_projected_scale`，让 estimator 在 offset-heading 冲突时削弱 heading 并保持 lookahead 同侧；新增 `offset_curve_min_scale`，让 policy 弯中保留部分纯 offset 回中修正；`offset_trust_max` / `line_target_normal_offset_max` 调到 `0.75`。
+- 开环回放：同一批 R027 帧上，`32.64/32.96/34.88/35.20` 这些大 offset 帧能进入链路，左舵明显收小或转成右向回中。仍不能替代闭环 Webots。
+
+**R028 AI 自主短测**（2026-06-12，已完成，只测当前问题窗口）：
+- 配置：`bash scripts/webots_run.sh complex --frames 2`，AI 在 `t≈64.6s` 主动停止，没有跑完整场。
+- 结果：第一个左弯窗口通过。telemetry `t=27→43` 从 `x≈170.2,y≈-29.5` 到 `x≈198.9,y≈-0.55`，状态一直 `normal`，无 collision event；全段 supervisor 近停占比 `<0.3=0.00`。
+- 控制日志：`t=27→43` 中 `348/500` 帧 `line_conf>0`，`line_offset` 最高 `0.70`；残留是 `t≈32→35` 一段短暂 line/trust 降级，最小命令速度 `0.223`、最大左舵约 `-0.65`，但随后恢复，`t≈42` 已居中加速。
+- 判断：当前候选不再复现 R026 的 14 秒爬行，也没有 R027 那种持续撞/擦左侧；先不盲调。case 保持 open，等待人眼/完整 run 终判。
+
+**回归门槛**：下一次人跑 `bash scripts/webots_run.sh complex` 必须确认第一个左转不再出现 R026 的 `14.1s` 爬行，也不能重新锁白色护栏。若肉眼仍见擦左，优先复盘 R028 的残留窗口 `t≈32→35`。case：`experiments/cases/R026_first_left_tight_radius/`（open）。
+
 ## 未解问题（用户视角，按优先级）
 
 > 2026-06-11 更新：下面 P1–P3 在 R013/R014 上的恶化部分已有候选修复（见"R013/R014 退化机制"），
@@ -53,6 +93,7 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 
 ### P1 转弯半径太小 / 切内线贴内侧栏杆
 - R014/R021/R024 的典型表现都是入弯半径太小，切到内圈栏杆后长时间爬行。R022 曾短跑通过旧 `x≈169,y≈111`，但 R024 长跑复现了同一区域 37.4s 近停，说明它不是稳定修好。
+- R026 显示 Phase 1 后早段已有改善，但第一个左转仍出现 `14.1s` 爬行；已归档 open case `experiments/cases/R026_first_left_tight_radius/` 和报告图 `experiments/figures/R026_first_left_tight_radius/`。
 - R024 的“更早触发 boundary escape”失败并已撤回；继续堆 escape 不是主线。优先查为什么常规驾驶没有把白线保持在车身中心。
 - 已明确不要重开普通 margin guard：R014 证明它会受 road-mask 噪声影响。边界余量只用于 escape 中的贴边方向判断。
 
@@ -71,11 +112,14 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 
 - R021 颜色采样证据保留在 `.tmp/color_sample/color_samples.json`、`complex_sample.png`、`sample.png`。
 - R024 static-car 小窗口只保留 3 张 stereo preview：`.tmp/r024_static_grid_case/preview/`。
-- R025 证据保留在 `.tmp/r025_line_priority_run/`：控制日志、telemetry、trajectory 图、live_view，以及 7 组 `130-185s` overlay/stereo PNG。原始 `.npy` 帧已删。
+- R025 证据保留在 `.tmp/r025_line_priority_run/`：控制日志、telemetry、trajectory 图、live_view，以及 7 组 `130-185s` overlay/stereo PNG。原始帧已删。
 - `.tmp` 已从约 700MB 清到约 18MB；当前保留的都是下一轮可能直接用到的小型证据。
 - 流程已修补：`scripts/webots_run.sh` 会自动清理孤儿进程/旧遥测并把上一轮产物轮换到 `.tmp/run.prev`，最近两轮产物不会再被立即删掉。
+- **相机帧默认每轮都存**（无损 PNG，每 10 帧一对，整场约几百 MB）：`scripts/webots_run.sh basic|complex` 不加参数就存帧；逐帧用 `--frames 1`，限窗用 `--frame-window S E`，不看画面用 `--no-frames`。再也不需要"跑完发现没存帧 → 为看一个时刻重跑一整圈"（R024→R025 的坑已堵死）。帧从 `.npy` 换成 PNG，消费脚本 `analyze_perception_dump.py`/`replay_offline.py` 已同步改读 PNG。
+- **报告可视化归档机制**（2026-06-11 新增）：精选图进 `experiments/figures/<R-id>_<slug>/`（进 git、长期保留），规则/选择标准见 `experiments/figures/README.md`。新增/扩展两个生成器：`scripts/plot_run.py`（整场轨迹+速度+事件总览图，替代过去手写 matplotlib）、`scripts/analyze_perception_dump.py --at <t...>`（为指定时刻出感知标注帧 overlay，不再只挑丢线帧）。`matplotlib` 已加入 `requirements.txt`。与 `experiments/cases/`（复现 bug 用）分工明确。
+- R026 第一个左转半径过小已按规则归档：case 在 `experiments/cases/R026_first_left_tight_radius/`，精选图在 `experiments/figures/R026_first_left_tight_radius/`。case 明确标记 open，不能当作已修复证据。
 - Console 捕获结论：默认 `run_local > file 2>&1` 抓不到 Webots GUI/controller 面板里的学生控制器输出；debug 构建现按 `AIRACER_CONTROLLER_CONSOLE_LOG_DIR` 把 controller 进程的 stdout/stderr tee 到 `.tmp/run/webots_console/*.log`。实时读用 `tail -f .tmp/run/webots_console/*.log`，跑完也能直接读。
-- 跳点取证工具：`scripts/webots_jump_run.sh` 可从已有 telemetry 的某个 `t` 近似启动 Webots 并存短窗口相机帧。默认每 10 帧存一对图，逐帧取证时显式传 `--frames 1`。它只恢复 `x/y/heading`，不恢复速度、物理状态、controller 记忆或仿真时钟；可以近似往前跑几秒看趋势，不能当真实续跑或正式验证。
+- 跳点取证工具：`scripts/webots_jump_run.sh` 可从已有 telemetry 的某个 `t` 近似启动 Webots。因为帧已默认每轮都存，它**不再用于"补存帧"**，真正用途是看**当前（已改过的）代码**从某个历史姿态出发会怎么开（上一轮录制帧只反映上一轮代码）。它只恢复 `x/y/heading`，不恢复速度、物理状态、controller 记忆或仿真时钟；可以近似往前跑几秒看趋势，不能当真实续跑或正式验证。
 
 ## R024/R025 最新结论（2026-06-11）
 
@@ -136,12 +180,16 @@ t=37.2 强制 -0.58 舵角 0.8s，是 R016 撞左栏的直接原因。
 
 ## 下一步（建议顺序）
 
-1. 从 `.tmp/r025_line_priority_run/line_window_preview/` 的 overlay 入手，定位 `130-185s` 为什么 `line_conf=0`：ROI、颜色阈值、形态学、候选几何还是信任门控哪一步丢线。
-2. 修白线检测时保留误锁防护：白栏杆、白车、斑马线仍要拒绝，不能靠全局放宽阈值蒙混通过。
-3. 用 `scripts/webots_jump_run.sh complex <t> --duration 5 --telemetry <telemetry>` 快速补画面；需要逐帧时加 `--frames 1`。正式结论仍必须从头跑 `bash scripts/webots_run.sh complex`。
-4. complex 新窗口修完后跑 basic 回归，确认没有破坏 R023 的短跑状态。
+1. 请人用当前 Phase 2.1 候选从头跑 `bash scripts/webots_run.sh complex`。重点看 R026/R027 case 窗口：`t≈29→36` 第一个左转是否还撞/擦左边，是否还出现低速爬行。AI 自主短测 R028 已通过这个窗口，但不能替代人眼终判。
+2. 若仍失败，先对比 R028 控制日志：确认是 `t≈32→35` 的短暂 `line_conf=0` / `track_conf` 降级，还是线已进入但 `heading/lookahead` 仍压过 offset。前者继续调扫描/信任门，后者再动 turn-in gate 或降低弯中 heading 权重。
+3. 修白线检测时继续保留误锁防护：白栏杆、白车、斑马线仍要拒绝，不能靠全局放宽阈值蒙混通过。
+4. complex 新窗口修完后跑 basic 回归，确认没有破坏 R023/R026 的起步居中和 basic 通过状态。
 5. complex 稳定跑通前不要合 main；跑通后再做提速和正式提交。
 
 ## 验证状态
 
-最近一次（2026-06-11 R025 文档/工具整理后）：`git diff --check` 通过；`py_compile` + `bash -n` 通过；`pytest -q` 为 99 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但仍有性能 warning（本轮 p95 26.99ms，软上限 20ms）。`submissions/final/team_controller.py` 低于 100KB。
+最近一次（2026-06-12 Phase 2.1 候选后）：`pytest -q` 为 **110 passed**；`python -m py_compile controller/*.py scripts/*.py tests/*.py` 通过；`bash -n scripts/webots_run.sh scripts/webots_jump_run.sh` 通过；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但有软性能 warning（p95 `32.29ms` > 20ms）。正常构建 md5：fastest/final=`c85e845cddfbd072daf17150688b9782`，safe=`bca1f6f4a494b3e160f5c6fa598dfb2e`。这是驾驶行为改动，必须人上车跑 complex 终判。
+
+上一次（2026-06-12 Phase 2 候选 + R026 case/figures 归档后）：`pytest -q` 为 **108 passed**；`python -m py_compile controller/*.py scripts/*.py tests/*.py` 通过；`bash -n scripts/webots_run.sh scripts/webots_jump_run.sh` 通过；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但有软性能 warning（p95 `40.57ms` > 20ms）。正常构建 md5：fastest/final=`1ee8ae55e1ec142710ba63e09b9435d8`，safe=`c4aa823bcde0d52d5b52437b6d43c4df`。这是驾驶行为改动，必须人上车跑 complex 终判。
+
+最近一次（2026-06-11 仓库整理：帧改 PNG + 默认存帧 + 文档去重后）：`py_compile` + `bash -n` 通过；`pytest -q` 为 99 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过。**正常构建 `fastest`/`safe` 的 md5 与整理前完全一致**（`d76e84..` / `784f4d..`），即上传文件和驾驶行为字节不变，官方 `validate_controller.py` 结论与上一轮相同（通过，p95 性能 warning 不变）。`submissions/final/team_controller.py` 低于 100KB。

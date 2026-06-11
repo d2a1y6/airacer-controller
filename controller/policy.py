@@ -698,11 +698,22 @@ def _lane_line_correction(
     target = 0.0
     confirm_frames = int(profile["startup_confirm_frames"] if startup_valid and not normal_valid else profile["confirm_frames"])
     if valid and _LINE_STREAK >= confirm_frames:
-        target = track.line_offset * profile["offset_gain"] + track.line_heading * profile["heading_gain"]
         max_correction = profile["startup_max_correction"] if startup_valid and not normal_valid else profile["max_correction"]
         curve_gate = profile["startup_curve_gate"] if startup_valid and not normal_valid else profile["curve_gate"]
-        target = clamp(target, -max_correction, max_correction)
-        target *= 1.0 - clamp(signals["curve_risk"] / curve_gate, 0.0, 1.0)
+        offset_target = track.line_offset * profile["offset_gain"]
+        mixed_target = offset_target + track.line_heading * profile["heading_gain"]
+        curve_scale = 1.0 - clamp(signals["curve_risk"] / curve_gate, 0.0, 1.0)
+        target = clamp(mixed_target, -max_correction, max_correction) * curve_scale
+        if abs(track.line_offset) >= profile["offset_priority_min"]:
+            # R027：弯中 line_heading 可与 offset 回中方向相反。弯很急时仍至少保留一部分
+            # 纯 offset 修正，让车先回到白线附近，再相信斜率。
+            offset_floor = clamp(
+                offset_target * profile["offset_curve_min_scale"],
+                -max_correction,
+                max_correction,
+            )
+            if offset_floor * target <= 0.0 or abs(offset_floor) > abs(target):
+                target = offset_floor
 
     if startup_valid and not normal_valid:
         alpha = profile["startup_smoothing"]

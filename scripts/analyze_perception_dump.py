@@ -1,7 +1,7 @@
 """dump 帧感知丢线分析工具。
 
 功能概述：对 P2.5 保存的左右相机帧逐帧重跑 perception，验证与实车控制日志对齐，并产出丢线指标。
-输入输出：输入 `frame_<t>_left/right.npy` 和 control JSONL，输出指标 JSON、终端摘要和可选 overlay 图。
+输入输出：输入 `frame_<t>_left/right.png` 和 control JSONL，输出指标 JSON、终端摘要和可选 overlay 图。
 处理流程：按时间戳配对帧 → join 控制日志 → 重算 extract_observation → 统计复现误差、丢线率和中心漂移。
 """
 
@@ -37,8 +37,8 @@ def _time_key(timestamp: float) -> int:
 
 def _frame_pairs(frame_dir: Path) -> list[tuple[float, Path, Path]]:
     pairs = []
-    for left_path in sorted(frame_dir.glob("frame_*_left.npy")):
-        right_path = left_path.with_name(left_path.name.replace("_left.npy", "_right.npy"))
+    for left_path in sorted(frame_dir.glob("frame_*_left.png")):
+        right_path = left_path.with_name(left_path.name.replace("_left.png", "_right.png"))
         if right_path.is_file():
             pairs.append((_parse_frame_timestamp(left_path), left_path, right_path))
     pairs.sort(key=lambda item: item[0])
@@ -131,17 +131,25 @@ def analyze_dump(
     overlay_dir: Path | None = None,
     overlay_limit: int = 12,
     baseline_json: Path | None = None,
+    overlay_at: list[float] | None = None,
 ) -> dict:
     """分析 dump 帧感知结果。
 
     功能：重算每帧 perception，统计对齐可信度、感知丢线率和相对 baseline 的中心漂移。
-    参数：`frame_dir` 是帧目录，`control_log` 是实车日志，`overlay_dir` 可保存丢线例图。
+    参数：`frame_dir` 是帧目录，`control_log` 是实车日志，`overlay_dir` 可保存例图；
+        `overlay_at` 给定时只为这些时间戳最近的帧出 overlay（不论是否丢线），用于报告取证；
+        为 None 时退回默认行为：自动挑前 `overlay_limit` 个丢线帧出 overlay。
     返回：可写入 JSON 的指标字典。
     逻辑：对齐字段先和日志比，再按 obs_points / confidence 判断感知丢线。
     """
 
     pairs = _frame_pairs(frame_dir)
     control_rows = _load_control_log(control_log)
+    forced_keys: set[int] = set()
+    if overlay_at and pairs:
+        for req in overlay_at:
+            nearest = min(pairs, key=lambda item: abs(item[0] - req))
+            forced_keys.add(_time_key(nearest[0]))
     baseline = None
     if baseline_json is not None and baseline_json.is_file():
         baseline = json.loads(baseline_json.read_text(encoding="utf-8"))
@@ -157,8 +165,8 @@ def analyze_dump(
     for timestamp, left_path, right_path in pairs:
         key = _time_key(timestamp)
         row = control_rows.get(key)
-        left_img = np.load(left_path)
-        right_img = np.load(right_path)
+        left_img = cv2.imread(str(left_path))
+        right_img = cv2.imread(str(right_path))
         obs = extract_observation(left_img, right_img, timestamp)
         obs_points = int(len(obs.center_points))
         obs_conf = _round4(obs.confidence)
@@ -185,7 +193,11 @@ def analyze_dump(
             if not baseline_frame.get("perception_lost") and perception_lost:
                 normal_regressions += 1
 
-        if perception_lost and overlay_dir is not None and len(overlay_paths) < overlay_limit:
+        if overlay_at is not None:
+            want_overlay = key in forced_keys
+        else:
+            want_overlay = perception_lost and len(overlay_paths) < overlay_limit
+        if want_overlay and overlay_dir is not None:
             left_debug = _scan_debug(left_img, timestamp)
             right_debug = _scan_debug(right_img, timestamp)
             overlay_paths.append(_write_overlay(overlay_dir, timestamp, left_img, right_img, left_debug, right_debug, row))
@@ -244,12 +256,16 @@ def _print_summary(metrics: dict) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="分析 dump 帧 perception 复现度与丢线率。")
-    parser.add_argument("frames", type=Path, help="frame_<t>_left/right.npy 所在目录")
+    parser.add_argument("frames", type=Path, help="frame_<t>_left/right.png 所在目录")
     parser.add_argument("--control-log", type=Path, required=True, help="同一次 run 的 control JSONL")
     parser.add_argument("--out", type=Path, default=None, help="输出指标 JSON")
     parser.add_argument("--baseline", type=Path, default=None, help="before 指标 JSON，用于中心漂移对比")
-    parser.add_argument("--overlay-dir", type=Path, default=None, help="保存丢线帧 overlay 的目录")
-    parser.add_argument("--overlay-limit", type=int, default=12)
+    parser.add_argument("--overlay-dir", type=Path, default=None, help="保存 overlay 的目录")
+    parser.add_argument("--overlay-limit", type=int, default=12,
+                        help="默认模式下最多自动出多少张丢线帧 overlay")
+    parser.add_argument("--at", type=str, default=None,
+                        help="逗号分隔的时间戳，如 145.7,177.4：只为这些时刻最近的帧出 overlay "
+                             "（不论是否丢线），用于挑报告里要讲的关键画面")
     return parser.parse_args()
 
 
@@ -261,12 +277,16 @@ def main() -> int:
     if not args.control_log.is_file():
         print(f"[error] 找不到控制日志: {args.control_log}")
         return 1
+    overlay_at = None
+    if args.at:
+        overlay_at = [float(tok) for tok in args.at.split(",") if tok.strip()]
     metrics = analyze_dump(
         args.frames,
         args.control_log,
         overlay_dir=args.overlay_dir,
         overlay_limit=max(args.overlay_limit, 0),
         baseline_json=args.baseline,
+        overlay_at=overlay_at,
     )
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)

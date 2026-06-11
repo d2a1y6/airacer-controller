@@ -208,19 +208,49 @@ def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
     return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
 
 
+def _neighbors_are_road(road_cols: np.ndarray, left: int, right: int, profile: dict) -> bool:
+    """判断白线段左右紧邻是否都是深灰路面。
+
+    功能：实现"真中心虚线在大片路面中间"的判别——护栏支柱外侧是路牙/红地/草而非路面。
+    参数：`road_cols` 是本扫描带内每列是否为深灰路面的布尔数组，`left/right` 是白段列区间。
+    返回：两侧侧窗内路面占比都达标时为 True。
+    逻辑：紧邻边缘跳过 `context_gap` 像素（抗白色高光外溢），再各取 `context_window` 宽侧窗统计路面占比。
+    """
+
+    gap = int(profile["context_gap"])
+    window = int(profile["context_window"])
+    min_ratio = float(profile["context_min_ratio"])
+    width = int(road_cols.shape[0])
+
+    def _side_ratio(start: int, stop: int) -> float:
+        start = max(int(start), 0)
+        stop = min(int(stop), width)
+        if stop - start < 1:
+            return 0.0
+        return float(np.count_nonzero(road_cols[start:stop])) / float(stop - start)
+
+    left_ratio = _side_ratio(left - gap - window, left - gap)
+    right_ratio = _side_ratio(right + gap + 1, right + gap + 1 + window)
+    return left_ratio >= min_ratio and right_ratio >= min_ratio
+
+
 def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, float] | None:
     """估计单个相机里的白色中心线。
 
     功能：找连续的窄白色虚线，输出近处偏移、线方向和置信度。
     参数：`image` 是 BGR 图像，`profile` 是白线跟踪参数。
     返回：`(offset, heading, confidence)`；白线不足时返回 None。
-    逻辑：逐行找短白段并按连续性串起来，排除车身大白块和孤立噪声。
+    逻辑：逐行找近中性、两侧紧邻深灰路面的短白段，按连续性串起来；排除护栏支柱、车身大白块和孤立噪声。
     """
 
     if not _valid_image(image):
         return None
     height, width = image.shape[:2]
     lower = int(profile["white_min"])
+    chroma_max = float(profile["white_chroma_max"])
+    road_dark_min = float(profile["road_dark_min"])
+    road_dark_max = float(profile["road_dark_max"])
+    road_dark_chroma_max = float(profile["road_dark_chroma_max"])
     y_top = int(height * profile["scan_top_ratio"])
     y_bottom = int(height * profile["scan_bottom_ratio"])
     rows = np.linspace(y_bottom, y_top, int(profile["scan_count"]), dtype=np.int32)
@@ -237,13 +267,26 @@ def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, 
     for y in rows:
         y0 = max(int(y) - row_band, 0)
         y1 = min(int(y) + row_band + 1, height)
-        band = image[y0:y1, :, :]
-        white = np.all(band >= lower, axis=2)
+        band = image[y0:y1, :, :].astype(np.int16)
+        band_min = band.min(axis=2)
+        band_max = band.max(axis=2)
+        band_chroma = band_max - band_min
+        # 白线：亮（最暗通道也够亮）且近中性（色度低）；护栏蓝灰色度更高被排除。
+        white = (band_min >= lower) & (band_chroma <= chroma_max)
         active = np.count_nonzero(white, axis=0) >= 2
+        # 深灰路面上下文：暗灰、不太亮、低色度（排除亮路牙/红地/草），用于判断白段是否被路面包夹。
+        road_dark = (
+            (band_min >= road_dark_min)
+            & (band_max <= road_dark_max)
+            & (band_chroma <= road_dark_chroma_max)
+        )
+        road_cols = np.count_nonzero(road_dark, axis=0) >= 1
         candidates = []
         for left, right in _segments_from_active(active):
             segment_width = float(right - left + 1)
             if not (min_width <= segment_width <= max_width):
+                continue
+            if not _neighbors_are_road(road_cols, left, right, profile):
                 continue
             center = (float(left) + float(right)) * 0.5
             if not has_previous and abs(center - image_center) <= initial_limit:
@@ -260,17 +303,21 @@ def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, 
     if len(points) < int(profile["min_points_per_camera"]):
         return None
     point_arr = np.array(points, dtype=np.float32)
-    y = point_arr[:, 1]
-    x = point_arr[:, 0]
-    y_span = float(np.max(y) - np.min(y))
+    point_y = point_arr[:, 1]
+    point_x = point_arr[:, 0]
+    y_span = float(np.max(point_y) - np.min(point_y))
     if y_span < float(profile["min_y_span"]):
         return None
-    coeffs = np.polyfit(y, x, deg=1)
-    near_x = float(np.polyval(coeffs, height * profile["near_y_ratio"]))
-    far_x = float(np.polyval(coeffs, height * profile["far_y_ratio"]))
+    # 用最近/最远各约 1/3 实测点的中位数算近处中心和远处中心，不再用直线拟合外推：
+    # 弯道里直线外推会把近处 offset 放大，过 trust 门被误拒（实测约一半检出因此被丢）。
+    order = np.argsort(-point_y)  # y 大（近处）在前
+    k = max(1, int(round(len(points) * profile["offset_near_fraction"])))
+    near_x = float(np.median(point_x[order[:k]]))
+    far_x = float(np.median(point_x[order[-k:]]))
     offset = (near_x - image_center) / max(image_center, 1.0)
     heading = (far_x - near_x) / max(image_center, 1.0)
-    confidence = clamp(len(points) / float(profile["scan_count"]), 0.0, 1.0)
+    # 置信度与扫描行数解耦：加密扫描行不应稀释置信度（弯道里命中 3-5 个点已是可信线）。
+    confidence = clamp(len(points) / float(profile["confidence_full_points"]), 0.0, 1.0)
     return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
 
 

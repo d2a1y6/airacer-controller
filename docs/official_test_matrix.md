@@ -2,7 +2,7 @@
 
 本文基于本机官方仓库 `/Users/day/Desktop/Github/pkudsa.airacer`，日期为 2026-06-10。这里的官方，指该仓库当前提供的 SDK、Webots 资产、后端接口文档和赛事规则。
 
-结论先写清楚：官方 SDK 登记了 3 个 Webots world，其中 `basic` 和 `complex` 是当前应重点测试的赛道；`airacer` 是旧版演示赛道。我们当前 baseline 只在 `basic` 上完成过实跑；`complex` 已测试但 300 秒内没有完赛。
+结论先写清楚：官方 SDK 登记了 3 个 Webots world，其中 `basic` 和 `complex` 是当前应重点测试的赛道；`airacer` 是旧版演示赛道。各赛道的实跑进度（跑通/超时/未跑）以 `experiments/STATUS.md` 为准，本文不重复维护。
 
 ## 1. 官方登记的赛道
 
@@ -120,24 +120,13 @@ pytest /Users/day/Desktop/Github/pkudsa.airacer/sdk/tests
 
 ## 6. 当前项目已覆盖情况
 
-截至 2026-06-10，本项目已经完成：
+本文是**赛道和测试入口的静态清单**，不维护"当前跑到哪一步"——那会和 `experiments/STATUS.md` 漂移。
+本仓库的实时状态（哪些赛道跑通、最新 baseline、未解问题、下一步、最近一次校验/`pytest` 结果）**只看 `experiments/STATUS.md`**，历次结果看 `experiments/runs.csv` 和 `experiments/notes.md`。
 
-| 项目 | 状态 |
-|---|---|
-| 本仓库 `pytest` | 已通过，24 个测试。 |
-| 本仓库提交文件静态校验 | `fastest`、`safe`、`final` 已通过。 |
-| 官方 `validate_controller.py` | `submissions/final/team_controller.py` 已通过。 |
-| Webots `basic` 单车实跑 | 已物理完成一圈。telemetry 显示 `t=288.187s` 穿过起点区域，重大碰撞 0。 |
-| Webots `complex` 单车实跑 | 已测试，300 秒超时，`laps=0`，重大碰撞 0。 |
-| Webots `airacer` 实跑 | 未记录。 |
-| 线上单车测试队列 | 未记录。 |
-| 线上多队测试赛 | 未记录。 |
+固定不变的事实：
 
-建议下一步：
-
-1. 跑 `complex` 单车 1 圈，记录 `experiments/runs.csv` 和 `experiments/notes.md`。
-2. 如果 `complex` 不能完赛，保留当前 baseline 为 `basic-only`，另起一套更稳的参数。
-3. 至少跑一次线上单车测试队列。若能发起测试赛，再跑 2 到 4 队、`complex`、3 圈。
+- 本地可直接跑的官方测试见本文第 2 节；本仓库自己的校验链是 `scripts/validate_submission.py` + `pytest` + 官方 `validate_controller.py`（命令见 `docs/official_testing.md`）。
+- 正式比赛主要按 `complex` 准备，`basic` 是默认和基础验证赛道，`airacer` 不作为正式目标（见第 5 节）。
 
 ## 7. 信息来源
 

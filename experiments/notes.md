@@ -34,6 +34,30 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R028 — Phase 2.1 候选自主短测：第一个左弯窗口通过，仍有低速瞬态 (2026-06-12, complex)
+- **构建**: working-tree；包含 R027 后的 Phase 2.1 offset 优先候选（offset trust 0.75、heading/offset 冲突时保留回中优先级）。
+- **配置**: AI 自主运行 `bash scripts/webots_run.sh complex --frames 2`，world=complex, car_1, practice；按用户要求没有跑完整场，只跑到当前问题窗口之后，约 `t=64.6s` 主动停止。
+- **记录完整性**: 控制日志 clean，`2018` 帧，`t=0.03→64.58`；保存 `1009` 对 stereo PNG。telemetry 时间单调、可读，但因主动 kill，metadata 未正常收尾，脚本标为 suspect（`2019` 帧 vs `metadata.total_frames=1280`），本轮只用它判断窗口内位置、速度和事件。
+- **结果**: 第一个左弯窗口已通过。telemetry 在 `t=27→43` 从 `x≈170.2,y≈-29.5` 走到 `x≈198.9,y≈-0.55`，状态一直 `normal`，无碰撞事件，supervisor 速度最低约 `1.26`；全段 `t=0.03→64.61` 近停占比 `<0.3=0.00`，末帧 `x=199.08,y=124.56,speed=5.79,status=normal`。
+- **现象**: 控制日志里 `t=27→43` 有 `348/500` 帧 `line_conf>0`，`line_offset` 最高 `0.70`，说明弯中白线召回和大 offset 信任都在生效。残留在 `t≈32→35`：一小段 `line_conf=0` / `track_conf≈0.09-0.16`，`heading/lookahead` 很负，最小命令速度 `0.223`，最大左舵约 `-0.65`；但随后 `t≈36` 白线恢复，`t≈42` 已回到直道中央并加速到 `0.95`。关键 overlay 也显示白线候选没有锁到护栏。
+- **结论/下一步**: 当前候选已经解决 R026 的 14 秒爬行问题，也没有复现 R027 的持续左侧撞/擦；本轮不继续盲调驾驶参数。case 仍保持 open，因为这是 AI 短测，不是完整场，也没有人眼终判。若下一次人跑仍看到左侧擦碰，优先查 `t≈32→35` 这段短暂 line/trust 降级，而不是回退 offset trust 或继续堆 escape。
+
+### R027 — Phase 2 后第一左弯仍撞左，定位为 heading 压过 offset 回中 (2026-06-12, complex)
+- **构建**: working-tree；包含 Phase 2 候选（12 行扫描、offset trust 0.55）。
+- **配置**: `bash scripts/webots_run.sh complex`，world=complex, car_1, practice；调试构建，默认保存帧。用户观察：第一次拐弯仍撞左边，随后手动停止。
+- **记录完整性**: clean。控制日志 `1438` 帧，telemetry `1438` 帧，保存 `143` 对 stereo PNG。
+- **结果**: telemetry 无 collision event，末帧 `t=46.02,x=198.97,y=10.63,speed=5.79,status=normal`；没有 R026 的 14s 长爬行（`<0.3` 近停占比 `0.00`），但肉眼仍见第一次左弯撞/擦左边。
+- **现象**: 白线不再是全程缺失。`t=27→37` 窗口 `line_conf>0` 为 `191/313` 帧，`line_offset` 最高到 `0.71`。关键帧 `t≈31.36` 有 `line_offset=+0.214,line_heading=-0.652`，车应向右回中，但 `heading/lookahead` 强负，最终仍 `steering≈-0.38`；`t≈33.8→35.2` 多帧 `line_offset≈0.62→0.71` 又超过旧 `0.55` 信任门，被主链路拒绝。
+- **结论/下一步**: 问题从“看不见线”变成“看见线但弯中 heading 压过 offset 回中”。本轮已实现新候选：offset 与 heading 反号且 offset 足够大时，estimator 削弱 line_heading、lookahead 不允许被拉过中心；policy 在弯中保留一部分纯 offset 后置修正；offset trust 放宽到 `0.75`，`0.75+` 仍拒。开环回放显示 `32.64/32.96/34.88/35.20` 这类大 offset 帧能进链路并明显收左舵。下一步需重新跑 complex 终判。
+
+### R026 — Phase 1 后第一个左转仍半径过小，Phase 2 修法取证 (2026-06-12, complex)
+- **构建**: working-tree；包含白线感知 Phase 1（近中性白 + 两侧深灰路面 + 近处实测 offset），尚未完成本轮 Phase 2 回归验证。
+- **配置**: `bash scripts/webots_run.sh complex`，world=complex, car_1, practice；调试构建，默认保存帧。手动停止于 `t=93.60s`。
+- **记录完整性**: clean。控制日志 `2925` 帧，telemetry `2925` 帧，默认保存 `292` 对 stereo PNG。
+- **结果**: lost 从此前约 19% 级别降到 `19/2925≈1%`，起步居中明显改善；但 telemetry 最长爬行段仍为 `14.1s`，`t=33.8→47.8`，位置约 `x=188.6,y=-27.1 → x=188.9,y=-26.9`。
+- **现象**: 第一个左转仍半径过小。控制日志显示 `t≈31.36` 时 `lateral≈-0.04`，road-mask 口径几乎居中，但 `heading≈-0.56`、`lookahead≈-0.37`、`target_steering≈-0.42`，车在还没充分靠白线回中前就按远处左弯预判大幅左打。
+- **结论/下一步**: 保存帧用当前代码离线回放，`t=31.36` 已可得到 `line_offset≈+0.43,line_conf≈0.8`；旧日志此刻为 `line_conf=0`。这说明 Phase 2 的两个旋钮成立：加密扫描行找回稀疏弯中虚线，并把白线信任门从 0.30 放宽到 0.55，让真实 off-center 白线能进入主链路。case 已归档为 `experiments/cases/R026_first_left_tight_radius/`，报告图已归档为 `experiments/figures/R026_first_left_tight_radius/`。case 保持 open，需下一次 complex 实跑回归。
+
 ### R025 — 白线优先失效取证：关键窗口没有可用白线信号 (2026-06-11, complex)
 - **构建**: working-tree；R024 的 boundary escape 加强已撤回，控制策略回到 `313e882` 同等行为。本轮只为取证加相机帧窗口。
 - **配置**: `bash scripts/webots_run.sh complex --frames 6 --frame-window 130 185`，world=complex, car_1, 单车, practice；调试构建。跑到 `t≈190.34s` 后手动停止。

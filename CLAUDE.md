@@ -58,7 +58,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 
 1. 实车（人类 Webots + 肉眼）是唯一裁判；离线指标只用来提假设，不能否决实车结论。`lost` 率尤其不是质量指标。
 2. policy/速度/走线类改动没有可信离线指标，必须人上车验证，不要 autonomous 盲调；感知类改动可先离线筛，仍需人上车终判。
-3. 调试构建（含 `open/json/np.save`）禁止上传；提交只用通过全部校验的 `submissions/final/team_controller.py`。
+3. 调试构建（含 `open/json/cv2.imwrite` 等 I/O）禁止上传；提交只用通过全部校验的 `submissions/final/team_controller.py`。
 4. 清 `.tmp` 前先确认 notes 的"下一步"不依赖其中的帧/日志；依赖的窗口先裁进 `experiments/cases/`。
 
 ## 控制流水线
@@ -105,3 +105,5 @@ left_img, right_img
 `baselines/` 保存已实跑确认的策略快照（单文件 + 参数摘要 + 证据说明），供对比和回退。
 
 平台或 Webots 测试后，结构化结果写入 `experiments/runs.csv`（`date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finish_reason,notes`），较长观察写入 `experiments/notes.md`。人类肉眼观察先按 `docs/human_webots_testing.md` 记录；AI 追加机制分析时按 `docs/ai_offline_review.md` 取证。
+
+可视化产物分两类归档：复现某个 bug 的最小失败窗口进 `experiments/cases/`；要放进最终报告或回查的精选图（整场轨迹/速度图用 `scripts/plot_run.py`，关键感知标注帧用 `scripts/analyze_perception_dump.py --at`）进 `experiments/figures/`。规则见两个目录各自的 `README.md`。

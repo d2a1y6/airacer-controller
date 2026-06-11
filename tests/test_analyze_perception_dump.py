@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 
@@ -22,8 +23,8 @@ def _lane_image() -> np.ndarray:
 
 
 def _save_pair(frame_dir: Path, timestamp_token: str, image: np.ndarray) -> None:
-    np.save(frame_dir / f"frame_{timestamp_token}_left.npy", image)
-    np.save(frame_dir / f"frame_{timestamp_token}_right.npy", image)
+    cv2.imwrite(str(frame_dir / f"frame_{timestamp_token}_left.png"), image)
+    cv2.imwrite(str(frame_dir / f"frame_{timestamp_token}_right.png"), image)
 
 
 def test_analyze_dump_reproduces_control_log_fields(tmp_path):
@@ -49,3 +50,23 @@ def test_analyze_dump_reproduces_control_log_fields(tmp_path):
     assert metrics["joined_frames"] == 1
     assert metrics["mismatch_count"] == 0
     assert metrics["perception_lost_frames"] == 0
+
+
+def test_overlay_at_forces_overlay_on_non_lost_frame(tmp_path):
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    image = _lane_image()
+    _save_pair(frame_dir, "000000_096", image)
+    control_log = tmp_path / "control.jsonl"
+    control_log.write_text(json.dumps({"t": 0.096}) + "\n", encoding="utf-8")
+    overlay_dir = tmp_path / "overlays"
+
+    # 这是一帧正常（未丢线）画面：默认模式不会出 overlay，但 --at 指定后必须强制出图。
+    default_metrics = analyze_dump(frame_dir, control_log, overlay_dir=overlay_dir)
+    assert default_metrics["overlay_paths"] == []
+
+    forced_metrics = analyze_dump(
+        frame_dir, control_log, overlay_dir=overlay_dir, overlay_at=[0.1]
+    )
+    assert len(forced_metrics["overlay_paths"]) == 1
+    assert Path(forced_metrics["overlay_paths"][0]).is_file()

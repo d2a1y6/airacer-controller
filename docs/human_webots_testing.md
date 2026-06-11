@@ -7,18 +7,23 @@
 ## 1. 一键启动（推荐）
 
 ```bash
-# 只带控制日志
+# 默认：控制日志 + 相机帧 PNG（每 10 帧一对，整场约几百 MB）
 bash scripts/webots_run.sh basic
 bash scripts/webots_run.sh complex
 
-# 这轮要分析白线、撞栏、视觉误判时，加相机帧（很大，仅取证时用；撞栏短窗口用 --frames 1）
-bash scripts/webots_run.sh complex --frames 3
+# 精确取证撞栏/内切窗口时改成逐帧
+bash scripts/webots_run.sh complex --frames 1
 
-# 已知问题窗口可限制存帧时间，避免一次 run 写出几 GB
-bash scripts/webots_run.sh complex --frames 3 --frame-window 410 430
+# 只在某个时间窗存帧（其余时间不写盘）
+bash scripts/webots_run.sh complex --frame-window 410 430
+
+# 确定这轮不看画面、只要控制日志时可关存帧
+bash scripts/webots_run.sh basic --no-frames
 ```
 
-脚本会自动：清理孤儿 Webots / run_local 进程和旧遥测（避免 telemetry 交错）、把上一轮 `.tmp/run` 轮换成 `.tmp/run.prev`、构建带控制日志的调试控制器、用 `--skip-validate` 启动 Webots。
+**默认就保存相机帧**：这样跑完后想看任意时间点都不用重跑。过去 codex 反复栽在「跑的时候没存帧 → 想看某个时刻只能开着帧再跑一整圈」上（R024→R025 就是这样浪费了一次 complex 实跑）。帧现在是无损 PNG，比旧的 `.npy` 小约 10 倍，整场默认保留也不会撑爆 `.tmp`。
+
+脚本会自动：清理孤儿 Webots / run_local 进程和旧遥测（避免 telemetry 交错）、把上一轮 `.tmp/run` 轮换成 `.tmp/run.prev`、构建带控制日志和帧存储的调试控制器、用 `--skip-validate` 启动 Webots。
 
 启动后终端会打印 Webots controller console 日志位置，例如：
 

@@ -13,11 +13,11 @@
 | 人类反馈 | 用户消息、截图、`experiments/notes.md` | 判断真实现象，确定优先级 | 写进 notes.md 对应 R-id |
 | telemetry | `/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl` | 位置、速度、爬行段、事件 | 整场复制件只临时留存；长期写摘要或裁剪窗口 |
 | 控制日志 | `.tmp/run/control_*.jsonl` | 每帧内部状态、mode、目标控制量、最终输出 | 摘要写 notes；窗口可裁进 case |
-| 相机帧 | `.tmp/run/frames_*/*.npy` | 逐帧看白线、道路 mask、障碍物、栏杆 | 整场 `.npy` 不进 git；关键帧渲染成 overlay 后裁进 case |
+| 相机帧 | `.tmp/run/frames_*/*.png` | 逐帧看白线、道路 mask、障碍物、栏杆 | 整场 PNG 不进 git；关键帧渲染成 overlay 后裁进 case |
 | overlay | `.tmp/run/*overlay*` | 画面、mask、中心线、白线、边界证据 | 批量图看完即删；最多裁 1-3 张进 case |
 | debug 控制器 | `.tmp/run/team_controller_debug.py` | 本地带日志/存帧构建 | 可重建，不归档 |
 
-没有帧也能先分析 telemetry 和控制日志；涉及白线、撞栏、视觉误判时，应要求下一轮 dump 帧，或使用已有帧生成 overlay。
+`scripts/webots_run.sh` 默认就保存相机帧，所以正常情况下**每一轮都有整场帧可看，不需要为了看某个时刻重跑**。只有人类显式用 `--no-frames` 跑、或要看的窗口在 `--frame-window` 之外时才会缺帧。
 
 调试构建命令（含 `open/json/np.save`，**禁上传**，跑 `run_local` 时配 `--skip-validate`）：
 
@@ -28,15 +28,23 @@ python scripts/build_submission.py --mode fastest \
   --out .tmp/run/team_controller_debug.py
 ```
 
-控制日志体积小，应默认开启；dump 帧一圈数 GB，只在定位视觉/走线问题时开。`--dump-frame-stride` 默认是 10，约每 0.3s 留一对图，适合整场回看；精确撞栏窗口或短跳点才显式传 `--dump-frame-stride 1`。人类实跑推荐直接用 `bash scripts/webots_run.sh <basic|complex> [--frames N]`，它会自动做跑前清理、构建和启动。
+帧保存为无损 PNG（不是旧的 `.npy`），整场约几百 MB，所以可以默认每轮都存。`--dump-frame-stride` 默认是 10，约每 0.3s 留一对图，适合整场回看；精确撞栏窗口才显式传 `--dump-frame-stride 1`。人类实跑直接用 `bash scripts/webots_run.sh <basic|complex>` 即可（帧默认开启，自动做跑前清理、构建和启动）；只在确定不看画面时加 `--no-frames`。
 
 ## 2. 全局摘要
 
-先看真实轨迹和速度：
+先看真实轨迹和速度（文字汇总）：
 
 ```bash
 python scripts/analyze_telemetry.py --no-archive
 ```
+
+要一张能直接看的总览图（顶视轨迹按速度着色 + 速度-时间 + 卡住/事件标注），用：
+
+```bash
+python scripts/plot_run.py --telemetry <telemetry.jsonl> --out .tmp/run/trajectory.png --title "<R-id> <track>"
+```
+
+这张图也是报告里讲每个版本的总览图；要留进报告时按 `experiments/figures/README.md` 归档。
 
 记录：
 
@@ -97,7 +105,7 @@ python scripts/analyze_perception_dump.py .tmp/run/frames_basic \
 
 ## 5. 跳点取证 / 近似续跑
 
-如果 telemetry 有目标时间点，但原始相机帧没存下来，可以用跳点工具补短窗口画面：
+帧默认每轮都存，所以这个工具**不再用于"补存帧"**。它的用途是：拿一个 telemetry 里的历史姿态当起点，看**当前（已改过的）代码**从那里出发会怎么开——上一轮的录制帧只能反映上一轮的代码行为，不能回答"我这次的改动在那个弯会不会好转"。
 
 ```bash
 bash scripts/webots_jump_run.sh complex 144 --duration 5 \
@@ -139,6 +147,7 @@ extract_observation → estimate_track → decide_control → clamp_cmd
 - `experiments/notes.md`：肉眼现象、数据摘要、看过的关键窗口、结论、下一步。
 - `experiments/analysis_*.md`：有机制解释价值的长分析。
 - `experiments/cases/<R-id>_<slug>/`：只保存会反复用于回归的小型失败窗口。
+- `experiments/figures/<R-id>_<slug>/`：报告要用或之后会回查的**精选可视化**（整场轨迹图、关键感知标注帧、对比图），规则和生成命令见 `experiments/figures/README.md`。和 `cases/` 区分：`cases/` 是为复现 bug，`figures/` 是为报告叙事。
 
 `analyze_telemetry.py --archive <label>` 只把当前原始 telemetry 临时复制到 `.tmp/recordings/<label>/`，方便本轮分析。它不是长期归档。
 
@@ -158,7 +167,7 @@ find . -name '.DS_Store' -delete
 
 长期不要保存：
 
-- 整场 `.npy` 左右相机帧。
+- 整场左右相机帧 PNG。
 - 整场 Webots 录像或批量截图。
 - 整场原始 telemetry 复制件。
 - 临时 debug controller。
