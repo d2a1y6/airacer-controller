@@ -34,6 +34,14 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R036 — 正式 final 单文件 complex 冒烟：关键风险窗行为与 debug 证据一致 (2026-06-12, complex)
+- **构建**: commit `35b96a1`，直接使用 `submissions/final/team_controller.py`，不使用 debug 构建；md5 与 fastest 相同，为 `f4b79c09f6811580817ecfe04d1fb11a`。
+- **配置**: 官方 `run_local.py --code-path submissions/final/team_controller.py --world complex --car-slot car_1`，通过官方 validator 后启动 Webots；AI 监控旧风险坐标，跑过旧起点前窗口后主动停止，实际到 `t≈360.32s`。
+- **记录完整性**: telemetry 时间单调且可读，但因主动 kill，metadata 仍带旧总帧数，脚本标为 suspect。本轮没有控制日志和相机帧，只用于确认最终上传单文件的物理行驶没有偏离 R035 debug 证据。
+- **结果**: telemetry 无事件、无近停，末帧 `x≈197.25,y≈-17.89,speed≈3.00,status=normal`。最近旧 `x≈169,y≈111` 距离约 `0.72`，最近旧 `x≈-42,y≈124` 距离约 `1.98`，最近旧起点前 `x≈-10,y≈-27` 距离约 `0.68`，最近 `x≈28,y≈-28` 距离约 `1.24`，均以 `normal` 和非近停速度通过。
+- **现象**: 第一个左弯 `t=27→43` 真实速度最低约 `1.36`；旧 `130→185s` 最低约 `1.74`；旧 `x≈-42,y≈124` 核心窗口 `t=248→256` 最低约 `2.04`；旧起点前 `t=310→333` 最低约 `1.55`，无长爬行。
+- **结论/下一步**: R036 证明实际上传的 final 单文件在 Webots 物理仿真中复现了 R035 的通过状态。它不替代 R035/R034 的视觉 overlay，也不替代人眼终判；下一步仍是人跑当前 final，确认视觉上是否稳定沿中间白色虚线。
+
 ### R035 — Phase 2.2 候选长跑通过旧终点前卡点并进入下一轮 (2026-06-12, complex)
 - **构建**: commit `9e4ce5e`，即 R034 记录后的 Phase 2.2 候选；控制代码仍等同 `95740ed`。
 - **配置**: AI 自主运行 `bash scripts/webots_run.sh complex --frames 12`，world=complex, car_1, practice；不追求完整官方 lap，跑过 R034 之后的后段并进入下一轮早段后主动停止，实际到 `t≈399.74s`。
