@@ -25,11 +25,10 @@
 python scripts/build_submission.py --mode fastest \
   --debug-log .tmp/run/control_basic.jsonl \
   --dump-frames .tmp/run/frames_basic \
-  --dump-frame-stride 3 \
   --out .tmp/run/team_controller_debug.py
 ```
 
-控制日志体积小，应默认开启；dump 帧一圈数 GB，只在定位视觉/走线问题时开。`--dump-frame-stride 3` 适合整场回看，精确撞栏窗口对短跑用 stride 1。人类实跑推荐直接用 `bash scripts/webots_run.sh <basic|complex> [--frames N]`，它会自动做跑前清理、构建和启动。
+控制日志体积小，应默认开启；dump 帧一圈数 GB，只在定位视觉/走线问题时开。`--dump-frame-stride` 默认是 10，约每 0.3s 留一对图，适合整场回看；精确撞栏窗口或短跳点才显式传 `--dump-frame-stride 1`。人类实跑推荐直接用 `bash scripts/webots_run.sh <basic|complex> [--frames N]`，它会自动做跑前清理、构建和启动。
 
 ## 2. 全局摘要
 
@@ -96,18 +95,18 @@ python scripts/analyze_perception_dump.py .tmp/run/frames_basic \
 
 结论必须写清楚证据来源，例如“看了 t=92.4-96.0 的 overlay，白线在车身左侧，但 `target_steering` 仍为右打”。不要只凭一组均值推断。
 
-## 5. 跳点取证
+## 5. 跳点取证 / 近似续跑
 
 如果 telemetry 有目标时间点，但原始相机帧没存下来，可以用跳点工具补短窗口画面：
 
 ```bash
-bash scripts/webots_jump_run.sh complex 144 --duration 5 --frames 1 \
+bash scripts/webots_jump_run.sh complex 144 --duration 5 \
   --telemetry .tmp/r025_line_priority_run/telemetry.jsonl
 ```
 
-脚本会生成临时 Webots world，把 `car_1` 放到 telemetry 最近帧的 `x/y/heading`，再跑几秒并保存相机帧到 `.tmp/jump_run/frames/`。临时 world 放在 SDK 的 `webots/worlds/` 下，跑完自动删除。
+脚本会生成临时 Webots world，把 `car_1` 放到 telemetry 最近帧的 `x/y/heading`，再跑几秒并保存相机帧到 `.tmp/jump_run/frames/`。临时 world 放在 SDK 的 `webots/worlds/` 下，跑完自动删除。默认每 10 帧存一对图；如果要逐帧看画面，显式加 `--frames 1`。
 
-这个工具只恢复位置和朝向，不恢复速度、轮胎/悬挂状态、controller 内部记忆或仿真时钟。它适合回答“这个姿态下白线是否在视野里、mask 是否把栏杆当路面”，不能证明策略能从该状态真实脱困。策略验证仍要从头跑正式 world。
+它可以从跳点继续往前跑几秒，适合看“从这个姿态出发，当前代码大概会怎么打轮、画面里有没有白线、mask 是否把栏杆当路面”。但这不是严格续跑：它只恢复位置和朝向，不恢复线速度/角速度、轮胎/悬挂/接触状态、controller 内部记忆、Webots 物理随机状态、checkpoint/赛事计时和其它车辆的真实历史状态。长时间续跑会很快偏离原 run，不能证明策略能从该状态真实脱困。策略验证仍要从头跑正式 world。
 
 ## 6. 开环回放
 

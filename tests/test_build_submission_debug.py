@@ -54,6 +54,12 @@ def test_debug_build_can_dump_left_and_right_frames(tmp_path):
     assert 0.0 <= speed <= 1.0
 
 
+def test_debug_frame_dump_defaults_to_stride_ten():
+    source = build_submission.build_source("fastest", dump_frames="/tmp/frames")
+
+    assert "_DBG_FRAME_STRIDE = 10" in source
+
+
 def test_debug_frame_dump_respects_time_window(tmp_path):
     dump_dir = tmp_path / "frames"
     dump_dir.mkdir()

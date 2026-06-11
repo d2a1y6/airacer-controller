@@ -138,7 +138,7 @@ def _debug_console_tee_header() -> list[str]:
 def _debug_control_block(
     log_path: str | None = None,
     dump_frames: str | None = None,
-    dump_frame_stride: int = 1,
+    dump_frame_stride: int = 10,
     dump_frame_start: float | None = None,
     dump_frame_end: float | None = None,
 ) -> str:
@@ -215,7 +215,7 @@ def read_module(
     mode: str,
     debug_log: str | None = None,
     dump_frames: str | None = None,
-    dump_frame_stride: int = 1,
+    dump_frame_stride: int = 10,
     dump_frame_start: float | None = None,
     dump_frame_end: float | None = None,
 ) -> str:
@@ -279,7 +279,7 @@ def build_source(
     mode: str,
     debug_log: str | None = None,
     dump_frames: str | None = None,
-    dump_frame_stride: int = 1,
+    dump_frame_stride: int = 10,
     dump_frame_start: float | None = None,
     dump_frame_end: float | None = None,
 ) -> str:
@@ -332,8 +332,8 @@ def parse_args():
                         help="本地调试构建：把每帧内部状态与命令写到该 JSONL（含 open/json，禁止上传）")
     parser.add_argument("--dump-frames", type=Path, default=None,
                         help="本地调试构建：每隔 N 帧把 left/right BGR 保存为 .npy（禁止上传）")
-    parser.add_argument("--dump-frame-stride", type=int, default=1,
-                        help="--dump-frames 的存帧间隔，默认每帧保存")
+    parser.add_argument("--dump-frame-stride", type=int, default=10,
+                        help="--dump-frames 的存帧间隔，默认每 10 帧保存；逐帧取证时显式传 1")
     parser.add_argument("--dump-frame-start", type=float, default=None,
                         help="只在该时间戳之后保存帧，默认从开始保存")
     parser.add_argument("--dump-frame-end", type=float, default=None,

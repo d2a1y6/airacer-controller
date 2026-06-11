@@ -5,7 +5,8 @@
 # 不恢复速度、轮胎/悬挂物理状态、controller 内部记忆和仿真时钟。
 #
 # 用法：
-#   scripts/webots_jump_run.sh complex 144 --duration 8 --frames 1
+#   scripts/webots_jump_run.sh complex 144 --duration 8
+#   scripts/webots_jump_run.sh complex 144 --duration 8 --frames 1  # 逐帧存图
 set -euo pipefail
 
 SDK=/Users/day/Desktop/Github/pkudsa.airacer/sdk
@@ -14,7 +15,7 @@ TARGET_TIME=${2:?用法: scripts/webots_jump_run.sh <basic|complex> <telemetry_t
 shift 2
 
 DURATION=8
-FRAME_STRIDE=1
+FRAME_STRIDE=10
 TELEMETRY="$SDK/.local/recordings/telemetry.jsonl"
 
 while [[ $# -gt 0 ]]; do

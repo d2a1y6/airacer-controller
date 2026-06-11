@@ -6,7 +6,7 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-11（R025 后；控制策略回到 `313e882` 行为，新增跳点取证工具；R024 证明 complex 旧 `x≈169,y≈111` 低速/内切问题仍会复现，不能合 main）。
+最后更新：2026-06-11（R025 后；控制策略回到 `313e882` 行为，新增跳点取证工具；跳点/存帧默认改为每 10 帧取一次；R024 证明 complex 旧 `x≈169,y≈111` 低速/内切问题仍会复现，不能合 main）。
 
 ## 阅读路径
 
@@ -29,7 +29,7 @@
 
 | 版本 | 位置 | 实车结论 |
 |---|---|---|
-| **当前分支最新状态** | `codex/perception-dropout` | 控制策略等同 `313e882`；本轮只新增跳点取证工具、R024/R025 日志和文档。R024 的 boundary escape 加强已撤回。**整条 complex 未跑通，不能合 main。** |
+| **当前分支最新状态** | `codex/perception-dropout` | 控制策略等同 `313e882`；本轮新增跳点取证工具、R024/R025 日志和文档，并把跳点/调试存帧默认改为每 10 帧一次。R024 的 boundary escape 加强已撤回。**整条 complex 未跑通，不能合 main。** |
 | **上一提交** | `313e882` | 已有 Webots controller console 捕获和限时存帧调试开关。控制策略包含 R021 采样色卡与 R022/R023 半径/escape 分离修复，但 R024 证明 complex 旧低速窗口仍会复现。 |
 | **R011/R012 版**（白线位置优先后置修正） | commit `16ae3f3`，已快照 `baselines/R011_line_posfirst_2026-06-11/` | basic 用户验证最佳：≈259.8s 高速通过车阵不撞 car5；complex 能过第一左弯但后段 `x≈-10,y≈-27` 近停。 |
 | **C004**（曲率可信度门控） | commit `0fc367e` | 更早的实车验证可靠基线（无白线逻辑），过弯不再反向打轮。 |
@@ -75,7 +75,7 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 - `.tmp` 已从约 700MB 清到约 18MB；当前保留的都是下一轮可能直接用到的小型证据。
 - 流程已修补：`scripts/webots_run.sh` 会自动清理孤儿进程/旧遥测并把上一轮产物轮换到 `.tmp/run.prev`，最近两轮产物不会再被立即删掉。
 - Console 捕获结论：默认 `run_local > file 2>&1` 抓不到 Webots GUI/controller 面板里的学生控制器输出；debug 构建现按 `AIRACER_CONTROLLER_CONSOLE_LOG_DIR` 把 controller 进程的 stdout/stderr tee 到 `.tmp/run/webots_console/*.log`。实时读用 `tail -f .tmp/run/webots_console/*.log`，跑完也能直接读。
-- 跳点取证工具：`scripts/webots_jump_run.sh` 可从已有 telemetry 的某个 `t` 近似启动 Webots 并存短窗口相机帧。它只恢复 `x/y/heading`，不恢复速度、物理状态、controller 记忆或仿真时钟，只能看画面，不能当正式验证。
+- 跳点取证工具：`scripts/webots_jump_run.sh` 可从已有 telemetry 的某个 `t` 近似启动 Webots 并存短窗口相机帧。默认每 10 帧存一对图，逐帧取证时显式传 `--frames 1`。它只恢复 `x/y/heading`，不恢复速度、物理状态、controller 记忆或仿真时钟；可以近似往前跑几秒看趋势，不能当真实续跑或正式验证。
 
 ## R024/R025 最新结论（2026-06-11）
 
@@ -138,10 +138,10 @@ t=37.2 强制 -0.58 舵角 0.8s，是 R016 撞左栏的直接原因。
 
 1. 从 `.tmp/r025_line_priority_run/line_window_preview/` 的 overlay 入手，定位 `130-185s` 为什么 `line_conf=0`：ROI、颜色阈值、形态学、候选几何还是信任门控哪一步丢线。
 2. 修白线检测时保留误锁防护：白栏杆、白车、斑马线仍要拒绝，不能靠全局放宽阈值蒙混通过。
-3. 用 `scripts/webots_jump_run.sh complex <t> --duration 5 --frames 1 --telemetry <telemetry>` 快速补画面；正式结论仍必须从头跑 `bash scripts/webots_run.sh complex`。
+3. 用 `scripts/webots_jump_run.sh complex <t> --duration 5 --telemetry <telemetry>` 快速补画面；需要逐帧时加 `--frames 1`。正式结论仍必须从头跑 `bash scripts/webots_run.sh complex`。
 4. complex 新窗口修完后跑 basic 回归，确认没有破坏 R023 的短跑状态。
 5. complex 稳定跑通前不要合 main；跑通后再做提速和正式提交。
 
 ## 验证状态
 
-最近一次（2026-06-11 R025 文档/工具整理后）：`git diff --check` 通过；`py_compile` + `bash -n` 通过；`pytest -q` 为 98 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但仍有性能 warning（本轮 p95 51.63ms，软上限 20ms）。`submissions/final/team_controller.py` 低于 100KB。
+最近一次（2026-06-11 R025 文档/工具整理后）：`git diff --check` 通过；`py_compile` + `bash -n` 通过；`pytest -q` 为 99 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但仍有性能 warning（本轮 p95 26.99ms，软上限 20ms）。`submissions/final/team_controller.py` 低于 100KB。
