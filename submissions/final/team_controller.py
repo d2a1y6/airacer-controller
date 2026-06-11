@@ -117,6 +117,11 @@ VISION_PROFILE = {
     "grass_hue_max": 95.0,
     "grass_sat_min": 60.0,
     "grass_value_min": 40.0,
+    "barrier_hue_min": 92.0,
+    "barrier_hue_max": 118.0,
+    "barrier_sat_min": 60.0,
+    "barrier_value_min": 80.0,
+    "barrier_value_max": 210.0,
     "dark_mask_min_fill": 0.04,
     "texture_gray_std_scale": 35.0,
     "min_segment_width": 24.0,
@@ -497,6 +502,20 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
 
     # 统一扣除草地：无论用哪条 mask，草都不算路。偏出赛道正对草地时 mask 会塌到近空 → 低置信 → lost。
     road_roi[grass_roi] = 0
+
+    # checkpoint 蓝色门是半透明、横跨在赛道上的——门后就是可行驶路面。把门并入道路 mask，
+    # 避免它把走廊在中段截断（弯道里只剩近处点 → edge fallback → 朝栏杆打/剐蹭）。
+    # 注意：这会让部分含天空的帧 mask 饱和 → 被判 lost，离线 per-frame lost 率会明显升高。
+    # 但 lost 时车是直线滑行（不停车、不偏出），这是良性的——实车验证（R005/C003）是迄今最好
+    # 的一版：蓝门前大拐弯和过弯剐蹭都消失。**不要用离线 lost 率否决这版**（详见 notes.md R005）。
+    barrier_roi = (
+        (hsv_roi[:, :, 0] >= VISION_PROFILE["barrier_hue_min"])
+        & (hsv_roi[:, :, 0] <= VISION_PROFILE["barrier_hue_max"])
+        & (hsv_roi[:, :, 1] >= VISION_PROFILE["barrier_sat_min"])
+        & (hsv_roi[:, :, 2] >= VISION_PROFILE["barrier_value_min"])
+        & (hsv_roi[:, :, 2] <= VISION_PROFILE["barrier_value_max"])
+    )
+    road_roi[barrier_roi] = 255
 
     kernel = np.ones((5, 5), dtype=np.uint8)
     road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_OPEN, kernel, iterations=1)

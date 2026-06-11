@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 
@@ -54,6 +55,18 @@ def test_grass_is_excluded_from_road_mask():
     # 中间灰条应被保留为道路。
     strip_cols = road_mask[top:, 290:350]
     assert strip_cols.mean() > 50.0
+
+
+def test_blue_checkpoint_barrier_is_bridged_as_road():
+    # 半透明蓝色 checkpoint 门横跨道路：门后是可行驶路面，应被并入道路 mask，避免把走廊在门处截断。
+    # 实车验证（R005）此修复是迄今最好版本——离线 lost 率升高是良性的，不要据此移除。
+    image = _grass_with_center_strip()
+    barrier_bgr = cv2.cvtColor(np.uint8([[[102, 111, 149]]]), cv2.COLOR_HSV2BGR)[0, 0]
+    image[250:300, :] = barrier_bgr  # 横跨整幅的蓝门带
+
+    road_mask, _edge, _tex, _fill, _near = _build_masks(image)
+    bridged = road_mask[255:295, 295:345]
+    assert bridged.mean() > 50.0
 
 
 def test_full_grass_view_collapses_mask():
