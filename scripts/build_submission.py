@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import argparse
+import io
+import tokenize
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +54,35 @@ def strip_local_imports(source: str) -> str:
             continue
         kept_lines.append(line)
     return "\n".join(kept_lines).strip()
+
+
+def strip_submission_text(source: str) -> str:
+    """压缩提交源码里的说明文本。
+
+    功能：删除注释和独立字符串 docstring，降低最终单文件大小。
+    参数：`source` 是已经拼好的提交源码。
+    返回：保留可执行代码后的源码。
+    逻辑：用 tokenizer 处理，避免误删字符串字面量里的 `#` 或中文内容。
+    """
+
+    kept_tokens = []
+    previous_type = tokenize.INDENT
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        token_type, token_text, start, end, line = token
+        if token_type == tokenize.COMMENT and not token_text.startswith("# ----"):
+            continue
+        if token_type == tokenize.STRING and previous_type in {
+            tokenize.INDENT,
+            tokenize.NEWLINE,
+            tokenize.NL,
+        }:
+            previous_type = token_type
+            continue
+        kept_tokens.append((token_type, token_text, start, end, line))
+        if token_type not in {tokenize.NL, tokenize.COMMENT}:
+            previous_type = token_type
+    stripped = tokenize.untokenize(kept_tokens)
+    return "\n".join(line.rstrip() for line in stripped.splitlines())
 
 
 _DEBUG_CONTROL_BLOCK = '''    try:
@@ -219,7 +250,10 @@ def build_source(
             dump_frame_stride=dump_frame_stride,
         ))
         parts.append("\n")
-    return "\n".join(parts).strip() + "\n"
+    source = "\n".join(parts).strip() + "\n"
+    if not (debug_log or dump_frames):
+        source = strip_submission_text(source)
+    return source.strip() + "\n"
 
 
 def parse_args():

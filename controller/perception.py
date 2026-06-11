@@ -12,7 +12,7 @@ import numpy as np
 
 from controller.common import PerceptionObs, clamp
 from controller.opponent import detect_near_vehicle_obstacle
-from controller.params import LINE_FOLLOW_PROFILE, OPPONENT_PROFILE, VISION_PROFILE
+from controller.params import COLOR_PROFILE, LINE_FOLLOW_PROFILE, OPPONENT_PROFILE, VISION_PROFILE
 
 _RED_ENVIRONMENT_FLAG = 32
 
@@ -56,25 +56,6 @@ def _valid_image(image) -> bool:
     return image is not None and hasattr(image, "shape") and len(image.shape) == 3 and image.shape[2] == 3
 
 
-def _road_color_from_patch(lab_roi: np.ndarray) -> np.ndarray:
-    """估计道路表面 Lab 颜色。
-
-    功能：从 ROI 底部中心 patch 估计道路颜色。
-    参数：`lab_roi` 是中下部 ROI 的 Lab 图像。
-    返回：三通道 Lab 中位数颜色。
-    逻辑：中位数能降低车道线、阴影和零星高光对颜色估计的影响。
-    """
-
-    height, width = lab_roi.shape[:2]
-    y0 = int(height * 0.72)
-    y1 = max(y0 + 1, int(height * 0.96))
-    x_margin = int(width * 0.18)
-    x0 = max(width // 2 - x_margin, 0)
-    x1 = min(width // 2 + x_margin, width)
-    patch = lab_roi[y0:y1, x0:x1]
-    return np.median(patch.reshape(-1, 3).astype(np.float32), axis=0)
-
-
 def _is_red_environment(image: np.ndarray) -> bool:
     """判断当前摄像头是否处在 complex 的红色场地环境。"""
 
@@ -89,6 +70,40 @@ def _is_red_environment(image: np.ndarray) -> bool:
     red = ((hue < 12) | (hue > 168)) & (saturation > 80) & (value > 50)
     red_ratio = float(np.count_nonzero(red)) / max(float(red.size), 1.0)
     return red_ratio >= VISION_PROFILE["red_world_min_ratio"]
+
+
+def _hue_delta(hue: np.ndarray, center: float) -> np.ndarray:
+    """计算 OpenCV HSV hue 的环形距离。"""
+
+    delta = np.abs(hue.astype(np.float32) - float(center))
+    return np.minimum(delta, 180.0 - delta)
+
+
+def _sampled_color_mask(hsv: np.ndarray, lab: np.ndarray, color_name: str) -> np.ndarray:
+    """按采样色卡生成颜色 mask。
+
+    功能：把 Webots 原始帧采样得到的 HSV/Lab 中位数和容差转换成布尔 mask。
+    参数：`hsv`、`lab` 是同一 ROI 的 OpenCV 颜色空间图，`color_name` 是 `COLOR_PROFILE` 键。
+    返回：命中该颜色类别的布尔数组。
+    逻辑：hue 用环形距离；Lab 同时约束亮度和色度，避免浅灰路牙/栏杆混进深灰沥青。
+    """
+
+    profile = COLOR_PROFILE[color_name]
+    hsv_center = profile["hsv_median"]
+    hsv_tol = profile["hsv_tolerance"]
+    lab_center = profile["lab_median"]
+    lab_tol = profile["lab_tolerance"]
+    hsv_match = (
+        (_hue_delta(hsv[:, :, 0], hsv_center[0]) <= hsv_tol[0])
+        & (np.abs(hsv[:, :, 1].astype(np.float32) - hsv_center[1]) <= hsv_tol[1])
+        & (np.abs(hsv[:, :, 2].astype(np.float32) - hsv_center[2]) <= hsv_tol[2])
+    )
+    lab_match = (
+        (np.abs(lab[:, :, 0] - lab_center[0]) <= lab_tol[0])
+        & (np.abs(lab[:, :, 1] - lab_center[1]) <= lab_tol[1])
+        & (np.abs(lab[:, :, 2] - lab_center[2]) <= lab_tol[2])
+    )
+    return hsv_match & lab_match
 
 
 def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndarray, float, float, bool]:
@@ -107,48 +122,53 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
 
     gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    dark_road_roi = (
-        (gray_roi >= VISION_PROFILE["road_gray_min"])
-        & (gray_roi <= VISION_PROFILE["road_gray_max"])
-        & (hsv_roi[:, :, 1] <= VISION_PROFILE["road_sat_max"])
-    ).astype(np.uint8) * 255
-
-    # 草地 mask：高饱和绿。沥青是低饱和灰，必不落在此区间；用于从道路 mask 中扣除草地。
-    grass_roi = (
-        (hsv_roi[:, :, 0] >= VISION_PROFILE["grass_hue_min"])
-        & (hsv_roi[:, :, 0] <= VISION_PROFILE["grass_hue_max"])
-        & (hsv_roi[:, :, 1] >= VISION_PROFILE["grass_sat_min"])
-        & (hsv_roi[:, :, 2] >= VISION_PROFILE["grass_value_min"])
-    )
-
     lab_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
-    road_lab = _road_color_from_patch(lab_roi)
-    distance = np.sqrt(np.sum((lab_roi - road_lab) ** 2, axis=2))
-    color_roi = (distance <= VISION_PROFILE["road_lab_threshold"]).astype(np.uint8) * 255
+    bgr_roi = roi.astype(np.float32)
+    road_color = COLOR_PROFILE["road_asphalt_dark_gray"]
+    b_minus_g = bgr_roi[:, :, 0] - bgr_roi[:, :, 1]
+    g_minus_r = bgr_roi[:, :, 1] - bgr_roi[:, :, 2]
+    road_core = (
+        _sampled_color_mask(hsv_roi, lab_roi, "road_asphalt_dark_gray")
+        & (gray_roi >= VISION_PROFILE["road_gray_min"])
+        & (gray_roi <= VISION_PROFILE["road_gray_max"])
+        & (b_minus_g >= road_color["b_minus_g_min"])
+        & (b_minus_g <= road_color["b_minus_g_max"])
+        & (g_minus_r >= road_color["g_minus_r_min"])
+        & (g_minus_r <= road_color["g_minus_r_max"])
+    )
+    non_road_roi = (
+        _sampled_color_mask(hsv_roi, lab_roi, "green_grass")
+        | _sampled_color_mask(hsv_roi, lab_roi, "red_ground")
+        | _sampled_color_mask(hsv_roi, lab_roi, "blue_sky")
+    )
+    # 路牙/路肩与沥青色相接近，但采样显示 Lab 亮度明显更高；只扣高亮部分，避免阴影污染真路面。
+    curb_roi = _sampled_color_mask(hsv_roi, lab_roi, "curb_shoulder_light_gray") & (
+        lab_roi[:, :, 0] > COLOR_PROFILE["road_asphalt_dark_gray"]["lab_median"][0] + 10.0
+    )
+    dark_road_roi = (road_core & ~non_road_roi & ~curb_roi).astype(np.uint8) * 255
 
-    dark_fill_ratio = float(np.count_nonzero(dark_road_roi)) / max(float(dark_road_roi.size), 1.0)
-    if dark_fill_ratio >= VISION_PROFILE["dark_mask_min_fill"]:
-        road_roi = dark_road_roi.copy()
-    else:
-        # 暗沥青 mask 稀疏（远处只剩细条路面）才回退颜色 mask；并入暗 mask 保住那条沥青，
-        # 颜色种子可能落在草上，靠下一步扣草兜底。
-        road_roi = color_roi | dark_road_roi
+    road_roi = dark_road_roi.copy()
 
-    # 统一扣除草地：无论用哪条 mask，草都不算路。偏出赛道正对草地时 mask 会塌到近空 → 低置信 → lost。
-    road_roi[grass_roi] = 0
+    # 统一扣除已采样的非路面颜色：草地、红地、天空、栏杆、亮路肩都不算路。
+    road_roi[non_road_roi | curb_roi] = 0
 
     # checkpoint 蓝色门是半透明、横跨在赛道上的——门后就是可行驶路面。把门并入道路 mask，
     # 避免它把走廊在中段截断（弯道里只剩近处点 → edge fallback → 朝栏杆打/剐蹭）。
     # 注意：这会让部分含天空的帧 mask 饱和 → 被判 lost，离线 per-frame lost 率会明显升高。
     # 但 lost 时车是直线滑行（不停车、不偏出），这是良性的——实车验证（R005/C003）是迄今最好
     # 的一版：蓝门前大拐弯和过弯剐蹭都消失。**不要用离线 lost 率否决这版**（详见 notes.md R005）。
-    barrier_roi = (
+    barrier_candidate = (
         (hsv_roi[:, :, 0] >= VISION_PROFILE["barrier_hue_min"])
         & (hsv_roi[:, :, 0] <= VISION_PROFILE["barrier_hue_max"])
         & (hsv_roi[:, :, 1] >= VISION_PROFILE["barrier_sat_min"])
         & (hsv_roi[:, :, 2] >= VISION_PROFILE["barrier_value_min"])
         & (hsv_roi[:, :, 2] <= VISION_PROFILE["barrier_value_max"])
     )
+    # 蓝色 checkpoint 门是横跨道路的宽水平带；侧边蓝灰栏杆也是同色系，但只出现在边缘细长区域。
+    # 只桥接行内蓝色覆盖足够宽的候选，避免把侧边栏杆直接并入 road mask。
+    row_ratio = np.count_nonzero(barrier_candidate, axis=1) / max(float(barrier_candidate.shape[1]), 1.0)
+    barrier_rows = row_ratio >= VISION_PROFILE["barrier_bridge_row_ratio"]
+    barrier_roi = barrier_candidate & barrier_rows[:, None]
     road_roi[barrier_roi] = 255
 
     kernel = np.ones((5, 5), dtype=np.uint8)
@@ -254,13 +274,46 @@ def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, 
     return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
 
 
-def _stereo_line_state(left_img, right_img, profile: dict) -> tuple[float, float, float]:
+def _startup_single_line_candidate(
+    line: tuple[float, float, float] | None,
+    profile: dict,
+    timestamp,
+) -> tuple[float, float, float] | None:
+    """判断发车阶段的单目白线是否可信。
+
+    功能：在 complex 开头白线只落进单个相机时，保留符号和斜率合理的右侧虚线。
+    参数：`line` 是单相机检测结果，`profile` 是白线参数，`timestamp` 是当前仿真时间。
+    返回：可信则返回原始 line，否则返回 None。
+    逻辑：只接受右侧中等 offset、正斜率的短窗口信号；负 offset 多来自左护栏，
+    接近 1.0 的 offset 多来自远处护栏或路边物体，继续拒绝。
+    """
+
+    if line is None:
+        return None
+    try:
+        current_time = float(timestamp)
+    except (TypeError, ValueError):
+        return None
+    offset, heading, confidence = line
+    if current_time > profile["startup_acquire_until"]:
+        return None
+    if confidence < profile["min_confidence"]:
+        return None
+    if not (profile["startup_offset_min"] <= offset <= profile["startup_offset_trust_max"]):
+        return None
+    if not (profile["startup_heading_min"] <= heading <= profile["startup_heading_max"]):
+        return None
+    return line
+
+
+def _stereo_line_state(left_img, right_img, profile: dict, timestamp=None) -> tuple[float, float, float]:
     """融合左右相机的白线状态。
 
     功能：估计白线相对车身中轴的位置和方向。
     参数：左右 BGR 图像和白线参数。
     返回：`(line_offset, line_heading, line_confidence)`。
     逻辑：双目都看到连续白线时才输出高置信，避免单目被车身、栏杆或断线误导。
+    complex 发车窗口里允许符号/斜率受限的单目右侧白线，用于把车从初始左偏捕获回中线。
     """
 
     if not profile["enable"]:
@@ -268,6 +321,9 @@ def _stereo_line_state(left_img, right_img, profile: dict) -> tuple[float, float
     left = _camera_line_state(left_img, profile)
     right = _camera_line_state(right_img, profile)
     if left is None or right is None:
+        single = _startup_single_line_candidate(left or right, profile, timestamp)
+        if single is not None:
+            return single
         return 0.0, 0.0, 0.0
     confidence = min(left[2], right[2])
     if confidence < profile["min_confidence"]:
@@ -474,6 +530,7 @@ def _score_scan(
     texture_score: float,
     mask_fill_ratio: float,
     fallback_count: int,
+    red_environment: bool = False,
 ) -> tuple[float, int]:
     """计算单侧摄像头置信度。
 
@@ -520,6 +577,9 @@ def _score_scan(
         debug_flags |= 4
     elif mask_fill_ratio > 0.92:
         confidence *= VISION_PROFILE["saturated_mask_confidence_scale"]
+        debug_flags |= 4
+    elif red_environment and mask_fill_ratio > VISION_PROFILE["red_mask_fill_warning"]:
+        confidence *= VISION_PROFILE["red_mask_fill_confidence_scale"]
         debug_flags |= 4
     if fallback_count:
         confidence *= max(0.55, 1.0 - 0.06 * fallback_count)
@@ -589,7 +649,14 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
         scan.near_obstacle = bool(near_obstacle)
         return scan
 
-    confidence, debug_flags = _score_scan(centers, widths, texture_score, mask_fill_ratio, fallback_count)
+    confidence, debug_flags = _score_scan(
+        centers,
+        widths,
+        texture_score,
+        mask_fill_ratio,
+        fallback_count,
+        red_environment=red_environment,
+    )
     if red_environment:
         debug_flags |= _RED_ENVIRONMENT_FLAG
     return _CameraScan(
@@ -688,7 +755,7 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
     )
 
 
-def _with_line_state(obs: PerceptionObs, left_img, right_img) -> PerceptionObs:
+def _with_line_state(obs: PerceptionObs, left_img, right_img, timestamp=None) -> PerceptionObs:
     """把双目白线状态写入观测结果。
 
     不依赖道路观测质量：道路 mask 饱和（蓝门/天空）或丢线时白线往往仍可见，
@@ -699,6 +766,7 @@ def _with_line_state(obs: PerceptionObs, left_img, right_img) -> PerceptionObs:
         left_img,
         right_img,
         LINE_FOLLOW_PROFILE,
+        timestamp,
     )
     obs.line_offset = line_offset
     obs.line_heading = line_heading
@@ -718,4 +786,4 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
     left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
     right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
     obs = _fuse_scans(left_scan, right_scan)
-    return _with_line_state(obs, left_img, right_img)
+    return _with_line_state(obs, left_img, right_img, timestamp)

@@ -16,6 +16,10 @@ _LAST_RED_ENVIRONMENT = False
 _RED_ENVIRONMENT_STREAK = 0
 _RED_ENVIRONMENT_FLAG = 32
 _RED_ENVIRONMENT_LATCH_FRAMES = 3
+_LINE_MEMORY_FRAMES = 0
+_LINE_MEMORY_OFFSET = 0.0
+_LINE_MEMORY_HEADING = 0.0
+_LINE_MEMORY_CONFIDENCE = 0.0
 
 
 def _lost_track(
@@ -132,20 +136,100 @@ def _line_weight(line_confidence: float) -> float:
     return clamp(usable, 0.0, 1.0)
 
 
+def _line_target_trust(obs: PerceptionObs, timestamp: float, red_environment: bool) -> float:
+    """计算白线目标是否足以进入主几何链路。
+
+    功能：把白线置信度、offset 形态和 road mask 质量合成融合权重。
+    参数：`obs` 是感知结果，`timestamp` 是当前时间，`red_environment` 表示 complex 红色场地。
+    返回：`[0, 1]` 的融合强度。
+    逻辑：普通帧只接收小 offset 白线；发车短窗口接收右侧中等 offset 白线。
+    road mask 过宽/低置信时白线权重更高，避免假 road center 压过真实虚线。
+    """
+
+    base = _line_weight(obs.line_confidence)
+    if base <= 0.0:
+        return 0.0
+
+    startup_valid = (
+        red_environment
+        and timestamp <= ESTIMATOR_PROFILE["line_startup_until"]
+        and ESTIMATOR_PROFILE["line_startup_offset_min"]
+        <= obs.line_offset
+        <= ESTIMATOR_PROFILE["line_startup_offset_max"]
+        and ESTIMATOR_PROFILE["line_startup_heading_min"]
+        <= obs.line_heading
+        <= ESTIMATOR_PROFILE["line_startup_heading_max"]
+    )
+    normal_valid = abs(obs.line_offset) <= ESTIMATOR_PROFILE["line_target_normal_offset_max"]
+    if not startup_valid and not normal_valid:
+        return 0.0
+
+    if startup_valid:
+        scale = ESTIMATOR_PROFILE["line_target_startup_scale"]
+    elif obs.confidence <= ESTIMATOR_PROFILE["line_target_road_confidence_max"] or obs.debug_flags & 4:
+        scale = ESTIMATOR_PROFILE["line_target_unreliable_road_scale"]
+    else:
+        scale = ESTIMATOR_PROFILE["line_target_normal_scale"]
+    return clamp(base * scale, 0.0, 1.0)
+
+
+def _update_line_memory(obs: PerceptionObs, line_trust: float, timestamp: float, red_environment: bool) -> float:
+    """维护发车阶段的可信白线记忆。
+
+    功能：白线短暂丢失时继续使用最近一次可信白线，避免 fake road center 抢回主目标。
+    参数：`obs` 是本帧观测，`line_trust` 是本帧白线融合强度，`timestamp` 和 `red_environment` 限制记忆窗口。
+    返回：可用于本帧的白线融合强度。
+    逻辑：只记住已经通过信任门控的右侧发车白线；窗口外或记忆耗尽后自动失效。
+    """
+
+    global _LINE_MEMORY_FRAMES, _LINE_MEMORY_OFFSET, _LINE_MEMORY_HEADING, _LINE_MEMORY_CONFIDENCE
+
+    in_startup = red_environment and timestamp <= ESTIMATOR_PROFILE["line_startup_until"]
+    startup_line = (
+        ESTIMATOR_PROFILE["line_startup_offset_min"]
+        <= obs.line_offset
+        <= ESTIMATOR_PROFILE["line_startup_offset_max"]
+        and ESTIMATOR_PROFILE["line_startup_heading_min"]
+        <= obs.line_heading
+        <= ESTIMATOR_PROFILE["line_startup_heading_max"]
+    )
+    if line_trust > 0.0 and in_startup and startup_line:
+        _LINE_MEMORY_FRAMES = int(ESTIMATOR_PROFILE["line_startup_memory_frames"])
+        _LINE_MEMORY_OFFSET = clamp(float(obs.line_offset), -1.0, 1.0)
+        _LINE_MEMORY_HEADING = clamp(float(obs.line_heading), -1.0, 1.0)
+        _LINE_MEMORY_CONFIDENCE = clamp(float(obs.line_confidence), 0.0, 1.0)
+        return line_trust
+
+    if not in_startup or _LINE_MEMORY_FRAMES <= 0:
+        if not in_startup:
+            _LINE_MEMORY_FRAMES = 0
+        return line_trust
+
+    _LINE_MEMORY_FRAMES -= 1
+    _LINE_MEMORY_OFFSET *= ESTIMATOR_PROFILE["line_startup_memory_value_decay"]
+    _LINE_MEMORY_HEADING *= ESTIMATOR_PROFILE["line_startup_memory_value_decay"]
+    _LINE_MEMORY_CONFIDENCE *= ESTIMATOR_PROFILE["line_startup_memory_value_decay"]
+    obs.line_offset = _LINE_MEMORY_OFFSET
+    obs.line_heading = _LINE_MEMORY_HEADING
+    obs.line_confidence = _LINE_MEMORY_CONFIDENCE
+    remembered_trust = _line_target_trust(obs, timestamp, red_environment)
+    return clamp(remembered_trust * ESTIMATOR_PROFILE["line_startup_memory_trust_scale"], 0.0, 1.0)
+
+
 def _apply_line_target(
     lateral_error: float,
     heading_error: float,
     lookahead_error: float,
     obs: PerceptionObs,
+    line_trust: float,
 ) -> tuple[float, float, float]:
     """白线可信时，把道路中心估计融合到白线目标上。"""
 
-    weight = _line_weight(obs.line_confidence)
-    if weight <= 0.0:
+    if line_trust <= 0.0:
         return lateral_error, heading_error, lookahead_error
-    lateral_weight = weight * ESTIMATOR_PROFILE["line_lateral_weight"]
-    heading_weight = weight * ESTIMATOR_PROFILE["line_heading_weight"]
-    lookahead_weight = weight * ESTIMATOR_PROFILE["line_lookahead_weight"]
+    lateral_weight = line_trust * ESTIMATOR_PROFILE["line_lateral_weight"]
+    heading_weight = line_trust * ESTIMATOR_PROFILE["line_heading_weight"]
+    lookahead_weight = line_trust * ESTIMATOR_PROFILE["line_lookahead_weight"]
     projected_lookahead = clamp(
         obs.line_offset + obs.line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"],
         -1.0,
@@ -156,6 +240,47 @@ def _apply_line_target(
         clamp(heading_error * (1.0 - heading_weight) + obs.line_heading * heading_weight, -1.0, 1.0),
         clamp(lookahead_error * (1.0 - lookahead_weight) + projected_lookahead * lookahead_weight, -1.0, 1.0),
     )
+
+
+def _line_only_track(obs: PerceptionObs, timestamp: float, red_environment: bool, line_trust: float) -> TrackState:
+    """在 road mask 不可信但白线可信时生成路线状态。
+
+    功能：避免 fake road center 把车带到路外；无可靠 road 时仍让车朝白线回中。
+    参数：`obs` 提供白线，`timestamp` 是当前时间，`red_environment` 表示场地，`line_trust` 是融合强度。
+    返回：非 lost 的 `TrackState`。
+    逻辑：只用白线 offset/heading 生成近处和前瞻目标，边界余量沿用上一帧，曲率收 0。
+    """
+
+    del timestamp
+    confidence = clamp(
+        max(ESTIMATOR_PROFILE["lost_confidence"] + 0.04, obs.line_confidence * ESTIMATOR_PROFILE["line_target_confidence_scale"]),
+        0.0,
+        1.0,
+    )
+    lateral_error = clamp(obs.line_offset * line_trust, -1.0, 1.0)
+    heading_error = clamp(obs.line_heading * line_trust, -1.0, 1.0)
+    lookahead_error = clamp(
+        (obs.line_offset + obs.line_heading * ESTIMATOR_PROFILE["line_lookahead_projection"]) * line_trust,
+        -1.0,
+        1.0,
+    )
+    alpha = _smooth_alpha(confidence)
+    track = TrackState(
+        _smooth_limited(_LAST_TRACK.lateral_error, lateral_error, alpha, ESTIMATOR_PROFILE["max_error_delta"]),
+        _smooth_limited(_LAST_TRACK.heading_error, heading_error, alpha, ESTIMATOR_PROFILE["max_heading_delta"]),
+        _smooth_limited(_LAST_TRACK.curvature, 0.0, ESTIMATOR_PROFILE["curve_smooth_alpha"], ESTIMATOR_PROFILE["max_curvature_delta"]),
+        _smooth_limited(_LAST_TRACK.lookahead_error, lookahead_error, alpha, ESTIMATOR_PROFILE["max_error_delta"]),
+        confidence,
+        False,
+        red_environment,
+        clamp(float(obs.line_offset), -1.0, 1.0),
+        clamp(float(obs.line_heading), -1.0, 1.0),
+        clamp(float(obs.line_confidence), 0.0, 1.0),
+        _LAST_TRACK.left_margin_near,
+        _LAST_TRACK.right_margin_near,
+        bool(obs.near_obstacle),
+    )
+    return track
 
 
 def _fit_centerline(progress: np.ndarray, x_norm: np.ndarray) -> tuple[np.ndarray, int]:
@@ -297,10 +422,15 @@ def reset_estimator_state() -> None:
     """
 
     global _LAST_TRACK, _LAST_TIMESTAMP, _LAST_RED_ENVIRONMENT, _RED_ENVIRONMENT_STREAK
+    global _LINE_MEMORY_FRAMES, _LINE_MEMORY_OFFSET, _LINE_MEMORY_HEADING, _LINE_MEMORY_CONFIDENCE
     _LAST_TRACK = TrackState(0.0, 0.0, 0.0, 0.0, 0.0, True)
     _LAST_TIMESTAMP = None
     _LAST_RED_ENVIRONMENT = False
     _RED_ENVIRONMENT_STREAK = 0
+    _LINE_MEMORY_FRAMES = 0
+    _LINE_MEMORY_OFFSET = 0.0
+    _LINE_MEMORY_HEADING = 0.0
+    _LINE_MEMORY_CONFIDENCE = 0.0
 
 
 def _maybe_reset_estimator_by_timestamp(timestamp: float) -> None:
@@ -335,10 +465,16 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     if _RED_ENVIRONMENT_STREAK >= _RED_ENVIRONMENT_LATCH_FRAMES:
         _LAST_RED_ENVIRONMENT = True
     red_environment = observed_red or _LAST_RED_ENVIRONMENT
+    line_trust = _line_target_trust(obs, timestamp, red_environment)
+    line_trust = _update_line_memory(obs, line_trust, timestamp, red_environment)
 
     points = _clean_points(obs.center_points)
     if len(points) < ESTIMATOR_PROFILE["min_center_points"] or obs.confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(obs.confidence, red_environment, obs)
+        track = (
+            _line_only_track(obs, timestamp, red_environment, line_trust)
+            if line_trust > 0.0
+            else _lost_track(obs.confidence, red_environment, obs)
+        )
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
@@ -379,6 +515,7 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         heading_error,
         lookahead_error,
         obs,
+        line_trust,
     )
     fit_score = _fit_error_score(progress, x_norm, coeffs)
     curvature_trust = _curvature_trust(len(points), y_span, fit_score)
@@ -387,11 +524,8 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     right_margin_near = _near_edge_margin(obs.right_edge_points, "right")
 
     confidence = _geometry_confidence(obs, points, y_span, fit_score)
-    if (
-        ESTIMATOR_PROFILE["line_lateral_weight"] > 0.0
-        and obs.line_confidence >= ESTIMATOR_PROFILE["line_target_min_confidence"]
-    ):
-        confidence = max(confidence, min(obs.confidence, obs.line_confidence) * 0.90)
+    if line_trust > 0.0:
+        confidence = max(confidence, obs.line_confidence * ESTIMATOR_PROFILE["line_target_confidence_scale"])
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
         track = _lost_track(confidence, red_environment, obs)
         _LAST_TRACK = track

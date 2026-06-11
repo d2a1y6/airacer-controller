@@ -39,12 +39,37 @@ def test_empty_and_saturated_masks_penalized_equally():
     assert abs(empty_conf - saturated_conf) < 1e-9
 
 
+def test_red_world_wide_mask_is_low_confidence():
+    # complex 开头路外低饱和地面会让 mask 大面积铺满；这种 road center 不应高置信压过白线。
+    centers, widths = _three_stable_scan_lines()
+
+    normal_conf, normal_flags = _score_scan(
+        centers,
+        widths,
+        texture_score=0.8,
+        mask_fill_ratio=0.80,
+        fallback_count=0,
+        red_environment=False,
+    )
+    red_conf, red_flags = _score_scan(
+        centers,
+        widths,
+        texture_score=0.8,
+        mask_fill_ratio=0.80,
+        fallback_count=0,
+        red_environment=True,
+    )
+
+    assert red_flags & 4
+    assert red_conf < normal_conf * 0.5
+
+
 def _grass_with_center_strip(height=480, width=640, strip=(280, 360)):
     """整片高饱和绿草，中间一条灰色沥青竖条。"""
 
     image = np.zeros((height, width, 3), dtype=np.uint8)
     image[:, :] = (0, 200, 0)  # BGR 绿，高饱和
-    image[:, strip[0]:strip[1]] = (70, 70, 70)  # 灰沥青，低饱和
+    image[:, strip[0]:strip[1]] = (82, 74, 64)  # complex 原图采样得到的深灰沥青（BGR）
     return image
 
 
@@ -71,6 +96,18 @@ def test_blue_checkpoint_barrier_is_bridged_as_road():
     road_mask, _edge, _tex, _fill, _near = _build_masks(image)
     bridged = road_mask[255:295, 295:345]
     assert bridged.mean() > 50.0
+
+
+def test_side_blue_guardrail_is_not_bridged_as_road():
+    # 蓝灰侧边栏杆与 checkpoint 门色相相近，但不是横跨道路的大水平带，不能并入 road mask。
+    image = _grass_with_center_strip()
+    barrier_bgr = cv2.cvtColor(np.uint8([[[102, 111, 149]]]), cv2.COLOR_HSV2BGR)[0, 0]
+    image[:, 0:80] = barrier_bgr
+
+    road_mask, _edge, _tex, _fill, _near = _build_masks(image)
+
+    top = int(image.shape[0] * VISION_PROFILE["roi_top_ratio"])
+    assert road_mask[top:, 0:80].mean() < 5.0
 
 
 def test_full_grass_view_collapses_mask():

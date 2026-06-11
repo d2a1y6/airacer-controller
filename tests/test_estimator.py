@@ -124,12 +124,12 @@ def test_estimator_outputs_stay_in_range_for_extreme_points():
     assert_track_range(track)
 
 
-def test_line_state_is_diagnostic_only_by_default():
-    # 默认融合权重为 0：白线只透传到 TrackState，不改写控制目标
-    # （R013/R014 实车证明目标改写会污染 offset_risk/直道判定/入弯门控）。
+def test_trusted_line_state_influences_main_target():
+    # road mask 容易把护栏外低饱和区域当路；可信白线应进入主几何目标，
+    # 不能只作为最终舵角上的小修正。
     reset_estimator_state()
     obs = make_obs(lambda progress: 0.0)
-    obs.line_offset = 0.32
+    obs.line_offset = 0.24
     obs.line_heading = 0.08
     obs.line_confidence = 0.90
 
@@ -139,27 +139,70 @@ def test_line_state_is_diagnostic_only_by_default():
     assert track.line_offset == obs.line_offset
     assert track.line_heading == obs.line_heading
     assert track.line_confidence == obs.line_confidence
-    assert abs(track.lateral_error) < 0.03
-    assert abs(track.heading_error) < 0.03
-    assert abs(track.lookahead_error) < 0.03
+    assert track.lateral_error > 0.03
+    assert track.heading_error > 0.01
+    assert track.lookahead_error > 0.03
 
 
-def test_line_fusion_mechanism_works_when_weights_enabled(monkeypatch):
+def test_line_only_track_when_road_confidence_is_low():
     from controller.estimator import ESTIMATOR_PROFILE
 
-    monkeypatch.setitem(ESTIMATOR_PROFILE, "line_lateral_weight", 0.82)
-    monkeypatch.setitem(ESTIMATOR_PROFILE, "line_heading_weight", 0.68)
-    monkeypatch.setitem(ESTIMATOR_PROFILE, "line_lookahead_weight", 0.58)
-
     reset_estimator_state()
-    obs = make_obs(lambda progress: 0.0)
-    obs.line_offset = 0.32
-    obs.line_heading = 0.08
+    obs = make_obs(lambda progress: 0.0, confidence=0.02)
+    obs.line_offset = 0.22
+    obs.line_heading = 0.06
     obs.line_confidence = 0.90
 
     track = estimate_track(obs, 0.0)
 
     assert track.lost is False
-    assert track.lateral_error > 0.12
-    assert track.heading_error > 0.02
-    assert track.lookahead_error > 0.08
+    assert track.confidence >= ESTIMATOR_PROFILE["lost_confidence"]
+    assert track.lateral_error > 0.03
+    assert track.lookahead_error > 0.03
+
+
+def test_large_line_offset_is_rejected_outside_startup_window():
+    reset_estimator_state()
+    obs = make_obs(lambda progress: 0.0, confidence=0.02)
+    obs.debug_flags = 32
+    obs.line_offset = 0.52
+    obs.line_heading = 0.22
+    obs.line_confidence = 0.90
+
+    track = estimate_track(obs, 20.0)
+
+    assert track.lost is True
+
+
+def test_startup_right_line_can_override_fake_road_center():
+    reset_estimator_state()
+    obs = make_obs(lambda progress: -0.12, confidence=0.30)
+    obs.debug_flags = 32 | 4
+    obs.line_offset = 0.48
+    obs.line_heading = 0.22
+    obs.line_confidence = 0.80
+
+    track = estimate_track(obs, 2.0)
+
+    assert track.lost is False
+    assert track.lateral_error > 0.05
+    assert track.lookahead_error > 0.06
+
+
+def test_startup_line_memory_survives_short_dropout():
+    reset_estimator_state()
+    lined = make_obs(lambda progress: -0.12, confidence=0.30)
+    lined.debug_flags = 32 | 4
+    lined.line_offset = 0.48
+    lined.line_heading = 0.22
+    lined.line_confidence = 0.80
+    first = estimate_track(lined, 2.0)
+
+    dropout = make_obs(lambda progress: -0.42, confidence=0.24)
+    dropout.debug_flags = 32 | 4
+    second = estimate_track(dropout, 2.032)
+
+    assert first.lateral_error > 0.05
+    assert second.lost is False
+    assert second.line_confidence > 0.70
+    assert second.lateral_error > -0.05

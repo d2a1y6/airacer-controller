@@ -58,3 +58,58 @@ def test_centered_frozen_view_does_not_force_pinned_escape():
         cmd = decide_control(centered, t, mode="fastest")
         max_steer = max(max_steer, abs(cmd.steering))
     assert max_steer < 0.3
+
+
+def test_boundary_obstacle_stall_escapes_toward_open_margin():
+    # complex R017 末段：近处静态车 + 右侧余量为 0，实际车速近零，但指令速度仍略高于
+    # low_speed 阈值。应按单侧余量更早脱困，并朝左侧开口打轮。
+    stuck = TrackState(
+        lateral_error=-0.23,
+        heading_error=-0.30,
+        curvature=1.0,
+        lookahead_error=-0.18,
+        confidence=0.46,
+        lost=False,
+        red_environment=True,
+    )
+    stuck.near_obstacle = True
+    stuck.left_margin_near = 0.34
+    stuck.right_margin_near = 0.0
+
+    reset_policy_state()
+    t = 0.0
+    max_speed = 0.0
+    min_steer = 0.0
+    for _ in range(40):
+        t += CONTROL["nominal_dt"]
+        cmd = decide_control(stuck, t, mode="fastest")
+        max_speed = max(max_speed, cmd.speed)
+        min_steer = min(min_steer, cmd.steering)
+
+    assert max_speed >= CONTROL["escape_boundary_speed"] - 1e-6
+    assert min_steer <= -0.70
+
+
+def test_near_obstacle_with_normal_margins_does_not_boundary_escape():
+    clear = TrackState(
+        lateral_error=0.0,
+        heading_error=0.08,
+        curvature=0.10,
+        lookahead_error=0.05,
+        confidence=0.80,
+        lost=False,
+        red_environment=True,
+    )
+    clear.near_obstacle = True
+    clear.left_margin_near = 0.34
+    clear.right_margin_near = 0.34
+
+    reset_policy_state()
+    t = 0.0
+    max_steer = 0.0
+    for _ in range(40):
+        t += CONTROL["nominal_dt"]
+        cmd = decide_control(clear, t, mode="fastest")
+        max_steer = max(max_steer, abs(cmd.steering))
+
+    assert max_steer < 0.30

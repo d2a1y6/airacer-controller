@@ -34,6 +34,46 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R021 — 采样色卡落配置：开头贴左与假丢线改善，后段仍卡 x≈169,y≈111 (2026-06-11, complex)
+- **构建**: working-tree；把 Webots 原始帧采样到的深灰路面、浅灰路牙、浅灰栏杆、绿草、红地、蓝天写入 `COLOR_PROFILE`，道路 mask 只用采样暗灰路面核心；白线作为发车和低置信道路的优先参考；提交构建新增剥离注释/docstring 以满足 100KB 限制。
+- **配置**: 先用 `bash scripts/webots_run.sh complex --frames 15` 抽稀取证，随后用 `bash scripts/webots_run.sh complex` 不存帧闭环验证，world=complex, car_1, 单车, practice。
+- **记录完整性**: 带帧 run telemetry clean，`t=0.03→97.73s`，帧分析后已删除 `.tmp/run.prev/frames_complex`，只保留小型 JSON/overlay；闭环 run 后手动停止，metadata 沿用旧 total_frames，控制日志可用。
+- **结果**: 离线同批真实帧重放从感知丢线 `194/203 (95.6%)` 降到 `0/203`。闭环 complex 前 95.8s lost 仅 `23/2995 (0.01)`，横向均值 `+0.001`，第一处左弯未撞；后续在 `x≈169.49,y≈110.91` 进入 25.3s 长爬行，仍未跑通。
+- **现象**: 关键 bug 不是通道错，`.npy` 确认是 BGR；而是采样暗灰路面被 red 环境填充率惩罚压到低置信，导致有效扫描线被融合阶段丢掉。把惩罚阈值改到接近异常饱和后，开头和 90s 窗口都恢复 24 个观测点。蓝灰侧栏杆不再通过蓝门桥接并入 road mask。
+- **结论/下一步**: 用户指出的“颜色必须真实采样”是对的，本轮已修成配置化色卡和保守暗灰路面 mask。当前目标仍未完成；下一步要针对 `x≈169,y≈111` 的低速卡点抓短窗口帧，不要再回退成宽松 road mask。
+
+### R020 — 低置信入弯门控反例：退回早段内侧栏杆卡死 (2026-06-11, complex)
+- **构建**: working-tree；在 R018 边界障碍脱困候选上，临时加入“红色环境低置信/居中入弯限舵”和“near_obstacle 几何冲突限舵”（本轮结束前已撤回）。
+- **配置**: `bash scripts/webots_run.sh complex --frames 6`，world=complex, car_1, 单车, practice；调试构建。
+- **记录完整性**: telemetry suspect（metadata 沿用旧 total_frames），控制日志可用；相机帧保存在当轮 `.tmp/run/frames_complex/`，后续 run 轮换后仅作临时证据。
+- **结果**: 未跑通。`t=0.03→153.66s`，末帧 `x=165.53,y=119.08,speed=0.000`；最长爬行 `41.8s`，`t=111.9→153.7`，`x=165.1,y=119.3 → x=165.5,y=119.1`。
+- **现象**: 试图压住后段 `t≈290s` 大右舵后，早段重新卡在 R014 附近。说明这个低置信入弯门控不是安全修法。
+- **结论/下一步**: 本改动已撤回。不要沿这个方向继续扩大“低置信限舵”，它会破坏早段通过能力。
+
+### R019 — escape 执行中翻向反例：早段卡点退化 (2026-06-11, complex)
+- **构建**: working-tree；在 R018 上尝试让执行中的 escape 根据最新单侧边界余量实时翻转方向（本轮结束前已撤回）。
+- **配置**: `bash scripts/webots_run.sh complex --frames 6`，world=complex, car_1, 单车, practice；调试构建。
+- **记录完整性**: telemetry suspect；控制日志可用；早段 overlay 见当轮 `.tmp/run/early_stuck_overlays/`。
+- **结果**: 未跑通。`t=0.03→145.02s`，末帧 `x=166.90,y=117.47,speed=0.010`；最长爬行 `34.1s`，`t=110.9→145.0`。
+- **现象/取证**: `t≈106.8` 左侧余量为 0 时右打 escape，随后 `right_margin=0` 后逻辑翻成持续左打；画面显示车已贴内侧栏杆，持续左打前进无法脱出。R018 同一区域能通过，说明“escape 中途按余量翻向”会破坏早段。
+- **结论/下一步**: 本改动已撤回。escape 方向不能在执行中直接按边界余量翻转；若要修后段，必须更早防止切内线或设计更有状态的摆脱节奏。
+
+### R018 — 边界障碍脱困候选：通过早段，后段 x≈9,y≈87 卡死 (2026-06-11, complex)
+- **构建**: working-tree；新增 `boundary_obstacle_stall`：红色环境、近障碍、单侧边界余量接近 0、画面稳定且指令速度仍高于 low_speed 时，更早触发强脱困；脱困方向按触发瞬间左右余量选择。**本轮结束时保留这部分代码。**
+- **配置**: `bash scripts/webots_run.sh complex --frames 3`，world=complex, car_1, 单车, practice；调试构建。
+- **记录完整性**: clean；telemetry `14068` 帧，`t=0.03→450.18s`；控制日志 `14069` 帧；帧保存在 `.tmp/run.prev/frames_complex/`（后续清理前不要删）。
+- **结果**: 未跑通。早段 `x≈169,y≈111` 从上一轮 31s 爬行缩短并通过；但 `t≈295.6s` 后在 `x≈8.4,y≈88.3` 进入长近停，末帧 `x=9.41,y=87.25,speed=0.010`，最长爬行 `154.6s`。
+- **现象/取证**: 入口 `t≈289.98` 有 `st≈+0.59, sp≈0.42, lat≈0, heading≈+0.64, curvature≈-0.26, near_obstacle=true, track_conf≈0.46`，大右舵把车切进内侧。卡死后 `right_margin=0`、`near_obstacle=true`，策略持续 `escaping st=-0.76, sp=0.86`，但车身实际速度约 0，说明已物理顶死，单靠顶住后 escape 太晚。
+- **结论/下一步**: 当前保留的边界障碍脱困能改善一个卡点，但不足以达成目标。下一步不要只加强脱困；应在 `t≈288-296` 入口用 overlay/感知链路修“居中低置信时突然大右舵”的来源，且必须避免 R019/R020 的早段退化。
+
+### R017 — 线信任门控复验：首弯改善，后段 x≈-10,y≈-27 仍卡 (2026-06-11, complex)
+- **构建**: `656b222` 后的工作树；线修正信任门控 + 几何脱困低速门槛。
+- **配置**: `bash scripts/webots_run.sh complex --frames 3`，world=complex, car_1, 单车, practice；调试构建。
+- **记录完整性**: clean；控制日志 `16634` 帧，telemetry `t=0.03→532.32s`，帧曾保存在 `.tmp/run/frames_complex/`，后续已被轮换。
+- **结果**: 未跑通。第一左弯和直道摆动明显改善；`x≈169,y≈111` 旧卡点能恢复通过；但最终停在 `x=-10.21,y=-27.25,speed=0.010`，最长爬行 `31.1s`（手动停止时仍在近停）。
+- **现象/取证**: 后段 `x≈-10,y≈-27` 处 `right_margin=0`、`near_obstacle=true`、指令速度仍在 `0.22-0.4`，低速脱困阈值触发不充分；开环显示边界障碍脱困可以在同一批卡死画面触发 `escaping`。
+- **结论/下一步**: R015/R016 的白线和误触发问题基本命中，但 complex 仍未跑通；据此实施 R018 的边界障碍脱困候选。
+
 ### R016 — complex 白线降级版首跑：护栏误锁致直道摆动，escape 误触发致左弯撞栏 (2026-06-11, complex)
 - **构建**: working-tree（白线降级为后置修正 + lost 帧透传白线）；`bash scripts/webots_run.sh complex --frames 3`。
 - **配置**: world=complex, car_1, 单车, practice；调试构建。

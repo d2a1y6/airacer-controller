@@ -121,6 +121,23 @@ def _road_direction_sign(track: TrackState) -> float:
     return math.copysign(1.0, reference)
 
 
+def _margin_escape_sign(track: TrackState, fallback: float) -> float:
+    """根据单侧边界余量选择脱困方向。
+
+    功能：在近障碍或贴栏卡死时，优先往余量更大的方向打轮。
+    参数：`track` 提供左右近处余量，`fallback` 是几何偏置推断出的方向。
+    返回：`+1.0` 表示右打，`-1.0` 表示左打。
+    逻辑：只有左右余量差足够明显时才覆盖几何方向，避免噪声边界点造成反复换向。
+    """
+
+    margin_gap = abs(track.left_margin_near - track.right_margin_near)
+    if margin_gap <= 0.08:
+        return fallback
+    if track.left_margin_near < track.right_margin_near:
+        return 1.0
+    return -1.0
+
+
 def _control_signals(track: TrackState, profile: dict) -> dict:
     """计算策略使用的风险分量。
 
@@ -531,6 +548,16 @@ def _escape_if_stalled(
         and abs(steering) >= profile["escape_pinned_steering_min"]
         and speed <= profile["escape_pinned_speed_max"]
     )
+    boundary_obstacle_stall = (
+        allow_geometry_escape
+        and track.near_obstacle
+        and mode in {"hard_turn", "correcting"}
+        and signals["margin_risk"] >= profile["escape_boundary_margin_risk"]
+        and min(track.left_margin_near, track.right_margin_near) <= profile["escape_boundary_margin_max"]
+        and speed <= profile["escape_boundary_speed_max"]
+        and not track.lost
+        and track.confidence >= profile["escape_boundary_min_confidence"]
+    )
     stable_view = signature_delta <= profile["escape_signature_delta"]
 
     # 统一脱困方向：朝感知到的路面一侧打，远离顶住的栏杆。
@@ -548,6 +575,16 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_offset_frames"])
         escape_steering = profile["escape_offset_steering"]
         escape_speed = profile["escape_offset_speed"]
+    elif boundary_obstacle_stall:
+        # complex 后段 R017：近处静态车和右侧边界同时进入视野，车物理近停但策略速度仍在
+        # 0.22-0.23，既没进 low_speed，也达不到 pinned 的大横向偏移。单侧余量为 0 时应更早脱困。
+        should_count_stall = True
+        require_confidence = False
+        trigger_frames = int(profile["escape_boundary_trigger_frames"])
+        escape_frames = int(profile["escape_boundary_frames"])
+        escape_steering = profile["escape_boundary_steering"]
+        escape_speed = profile["escape_boundary_speed"]
+        escape_sign = _margin_escape_sign(track, escape_sign)
     elif (
         allow_geometry_escape
         and mode == "hard_turn"
@@ -592,11 +629,18 @@ def _escape_if_stalled(
     return steering, speed, mode
 
 
-def _lane_line_correction(track: TrackState, signals: dict, mode: str, profile: dict) -> float:
+def _lane_line_correction(
+    track: TrackState,
+    signals: dict,
+    mode: str,
+    profile: dict,
+    timestamp: float,
+) -> float:
     """白线可信时计算后置舵角修正（R011 验证的形态 + 信任门控）。
 
     功能：让车身中线追向白色虚线，作为最终舵角上的有界微调。
-    参数：`track` 携带感知层的双目白线状态，`signals` 提供弯道风险，`mode` 是本帧驾驶状态。
+    参数：`track` 携带感知层的双目白线状态，`signals` 提供弯道风险，`mode` 是本帧驾驶状态，
+    `timestamp` 用于限制发车捕获窗口。
     返回：平滑后的舵角修正；白线不可信时向 0 衰减。
     逻辑：只修正最终输出，不进入 risk/mode/速度/入弯门控——R013/R014 证明
     白线一旦改写控制目标，会抬高 offset_risk、骗开入弯门控并压低直道速度。
@@ -606,13 +650,24 @@ def _lane_line_correction(track: TrackState, signals: dict, mode: str, profile: 
 
     global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION
 
-    valid = (
+    normal_valid = (
         profile["enable"]
         and track.line_confidence >= profile["min_confidence"]
         and abs(track.line_offset) <= profile["offset_trust_max"]
         and not track.near_obstacle
         and mode != "escaping"
     )
+    startup_valid = (
+        profile["enable"]
+        and track.red_environment
+        and timestamp <= profile["startup_acquire_until"]
+        and track.line_confidence >= profile["min_confidence"]
+        and profile["startup_offset_min"] <= track.line_offset <= profile["startup_offset_trust_max"]
+        and profile["startup_heading_min"] <= track.line_heading <= profile["startup_heading_max"]
+        and not track.near_obstacle
+        and mode != "escaping"
+    )
+    valid = normal_valid or startup_valid
     if valid and _LINE_STREAK > 0 and abs(track.line_offset - _LINE_LAST_OFFSET) > profile["offset_jump_max"]:
         valid = False
         _LINE_STREAK = 0
@@ -623,12 +678,20 @@ def _lane_line_correction(track: TrackState, signals: dict, mode: str, profile: 
         _LINE_STREAK = 0
 
     target = 0.0
-    if valid and _LINE_STREAK >= int(profile["confirm_frames"]):
+    confirm_frames = int(profile["startup_confirm_frames"] if startup_valid and not normal_valid else profile["confirm_frames"])
+    if valid and _LINE_STREAK >= confirm_frames:
         target = track.line_offset * profile["offset_gain"] + track.line_heading * profile["heading_gain"]
-        target = clamp(target, -profile["max_correction"], profile["max_correction"])
-        target *= 1.0 - clamp(signals["curve_risk"] / profile["curve_gate"], 0.0, 1.0)
+        max_correction = profile["startup_max_correction"] if startup_valid and not normal_valid else profile["max_correction"]
+        curve_gate = profile["startup_curve_gate"] if startup_valid and not normal_valid else profile["curve_gate"]
+        target = clamp(target, -max_correction, max_correction)
+        target *= 1.0 - clamp(signals["curve_risk"] / curve_gate, 0.0, 1.0)
 
-    alpha = profile["smoothing"]
+    if startup_valid and not normal_valid:
+        alpha = profile["startup_smoothing"]
+    elif not valid and timestamp <= profile["startup_acquire_until"] and _LINE_CORRECTION > 0.0:
+        alpha = profile["startup_decay"]
+    else:
+        alpha = profile["smoothing"]
     _LINE_CORRECTION = _LINE_CORRECTION * alpha + target * (1.0 - alpha)
     return clamp(_LINE_CORRECTION, -profile["max_correction"], profile["max_correction"])
 
@@ -709,6 +772,6 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     # 跨帧状态记录修正前的舵角：白线修正只作用于最终输出，平滑、限速和脱困
     # 判据都不感知它（与 R011 在入口层后置修正时的动力学一致）。
     _update_policy_state(track, steering, speed, drive_mode, timestamp, profile)
-    line_correction = _lane_line_correction(track, signals, drive_mode, LINE_FOLLOW_PROFILE)
+    line_correction = _lane_line_correction(track, signals, drive_mode, LINE_FOLLOW_PROFILE, timestamp)
     final_steering = clamp(steering + line_correction, -1.0, 1.0)
     return ControlCmd(final_steering, speed)

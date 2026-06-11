@@ -6,7 +6,7 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-11（R015/R016 取证之后；已实施线修正信任门控 + 几何脱困低速门槛，待上车验证）。
+最后更新：2026-06-11（R021 采样色卡修复之后；complex 开头贴左和假丢线改善，但仍未跑通）。
 
 ## 阅读路径
 
@@ -29,8 +29,8 @@
 
 | 版本 | 位置 | 实车结论 |
 |---|---|---|
-| **工作树（待验证）** | working-tree，未提交 | 2026-06-11 Claude 修复：白线/边界余量降级为纯诊断字段，恢复 R011 的后置有界白线舵角修正（详见下方"R013/R014 退化机制"）。保留 HEAD 的诊断字段和 hard_turn/recovering 连续帧防抖。**尚未实车验证。** |
-| **HEAD**（分支 `codex/perception-dropout`，未合 main） | `66f4d8b` | R013/R014 的"白线前移到 estimator/policy + 边界余量保护"重构。**用户判定为行为退化**：basic 比 R011 慢（299s vs 259s 回到起点），complex 仍切内线贴栏撞死。 |
+| **工作树（候选，未完成）** | working-tree，未提交 | 在 R018 边界障碍脱困基础上，新增真实帧采样色卡和保守暗灰路面 mask；修掉 red 环境填充率把有效路面降成低置信的问题。R021：同批真实帧离线 lost 95.6%→0%，闭环第一左弯不再撞，但后段仍在 `x≈169,y≈111` 低速卡住。**目标未完成。** |
+| **HEAD**（分支 `codex/perception-dropout`，已推） | `656b222` | R015/R016 后的线修正信任门控 + 几何脱困低速门槛。复验 R017：直道摆动和第一左弯改善，但后段 `x≈-10,y≈-27` 仍近停。 |
 | **R011/R012 版**（白线位置优先后置修正） | commit `16ae3f3`，已快照 `baselines/R011_line_posfirst_2026-06-11/` | basic 用户验证最佳：≈259.8s 高速通过车阵不撞 car5；complex 能过第一左弯但后段 `x≈-10,y≈-27` 近停。 |
 | **C004**（曲率可信度门控） | commit `0fc367e` | 更早的实车验证可靠基线（无白线逻辑），过弯不再反向打轮。 |
 
@@ -68,10 +68,32 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 
 ## 证据现状
 
-- **R014 撞栏窗口的相机帧和控制日志已被 `.tmp` 清理删除**。下一轮必须用 debug 构建重跑 complex 取证（带 `--dump-frames`，撞栏短窗口 stride 1）。
+- R021 颜色采样证据保留在 `.tmp/color_sample/color_samples.json` 和 `.tmp/run.prev/perception_*` 小文件中；抽稀 `.npy` 帧已删除，`.tmp` 已回到约 26MB。
+- R021 后段卡点没有保留帧。下一轮若继续修 complex，应对 `x≈169,y≈111` 附近做短窗口取证，不要再开长时间密集存帧。
 - 流程已修补：`scripts/webots_run.sh` 会自动清理孤儿进程/旧遥测并把上一轮产物轮换到 `.tmp/run.prev`，最近两轮产物不会再被立即删掉。
 
-## R015/R016 取证结论与第二轮修复（2026-06-11，已实施待上车）
+## R021 采样色卡修复结论（2026-06-11）
+
+用户指出之前没有真实采样颜色，这个判断是对的。当前已把深灰路面、浅灰路牙、浅灰栏杆、绿草、红地、蓝天写入 `COLOR_PROFILE`，道路 mask 只认采样暗灰路面核心；侧边蓝灰栏杆不再靠蓝门桥接逻辑混进 road mask。
+
+关键修复不是放宽 road，而是修掉误降置信：采样暗灰路面在 complex 开头和 90s 窗口能形成完整 mask，但之前被 `red_mask_fill_warning=0.34` 打成低置信，融合阶段丢成空观测。R021 把阈值提高到异常饱和区间后，同批真实帧离线重放 lost 从 `194/203` 降到 `0/203`。
+
+闭环验证：complex 前 95.8s lost 仅 `23/2995`，横向均值 `+0.001`，第一左弯未撞；但 155s 手动停止时仍在 `x≈169,y≈111` 低速卡住。目标还没完成。
+
+## R017-R020 复验结论（2026-06-11）
+
+R017 复验 `656b222`：直道左右摆动和第一左弯撞栏已明显改善，但后段仍在 `x≈-10,y≈-27` 近停。日志显示卡死画面 `right_margin=0`、`near_obstacle=true`，指令速度多在 `0.22-0.4`，低速脱困不稳定触发。
+
+R018 当前保留的候选修复：新增边界障碍脱困路径。它让 `x≈169,y≈111` 旧卡边段能通过，但后段在 `x≈9,y≈87` 卡死。关键入口是 `t≈289.98`：`lat≈0`、`heading≈+0.64`、`curvature≈-0.26`、`near_obstacle=true`、`track_conf≈0.46`，策略给了 `st≈+0.59` 大右舵，切进内侧；顶住后再 `escaping st=-0.76 sp=0.86` 已经太晚。
+
+已撤回两条反例：
+
+- R019：escape 执行中按实时边界余量翻向。会把早段重新卡在 `x≈166,y≈117`，撤回。
+- R020：低置信/居中入弯限舵和几何冲突限舵。仍卡 `x≈165,y≈119`，撤回。
+
+结论：当前问题不是“escape 不够强”，而是 **R018 后段入口的感知/几何信号让车还居中时突然大右舵切内线**。下一步必须围绕 `t≈288-296` 的帧做感知链路修复，避免重复盲调 escape。
+
+## R015/R016 取证结论与第二轮修复（2026-06-11，已实施）
 
 R015（basic）/R016（complex）首跑暴露后置白线修正的三类误锁（详见 notes.md）：
 
@@ -92,12 +114,12 @@ t=37.2 强制 -0.58 舵角 0.8s，是 R016 撞左栏的直接原因。
 
 ## 下一步（建议顺序）
 
-1. **上车复验（complex 优先）**：`bash scripts/webots_run.sh complex --frames 3`。预期：直道不再左右打轮、第一左弯正常通过不撞栏。若仍异常，优先抓 `lo/lc` 与 escape 窗口。
-2. **上车复验（basic）**：`bash scripts/webots_run.sh basic`。预期：弯中抖动减少、车阵处不再朝白车打轮；对比 R011 速度（约 260s 回起点区域）。
-3. complex 直道左毛刺取证：用已保留的 `frames_complex` 渲 3-5 张 overlay（t≈25.1/26.2/34.3 窗口），确认是 mask 噪声还是 checkpoint 门，再对症修感知。
-4. 跑通后再做提速：定位最长低速窗口逐个对症，不做全局速度盲调（iter36 教训）。
-5. 验证通过后提交，按规范记 R-id。
+1. **复盘 R021 后段卡点**：用短窗口帧抓 `x≈169,y≈111`，目标是判断是几何中心线、曲率估计、边界余量还是 policy 速度/escape 造成长近停。
+2. 保持当前采样色卡和保守 road mask；不要为了降低卡点把 road 重新放宽到栏杆/路外地面。
+3. 修完后复跑 `bash scripts/webots_run.sh complex --frames 10`，只覆盖问题窗口，分析后删除 `.npy` 帧；通过标准是至少越过 `x≈169,y≈111` 且没有恢复首弯撞栏。
+4. complex 过关键点后再跑 `bash scripts/webots_run.sh basic`，确认同一策略没有破坏 R011/R015 的 basic 行为。
+5. 跑通后再做提速和提交；不要把当前候选当作完成态。
 
 ## 验证状态
 
-最近一次（2026-06-11 整理后）：`pytest` 70 passed；`fastest/safe/final` 三个 submission 过 `validate_submission.py`。
+最近一次（2026-06-11 R021 后）：`pytest` 91 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 和 `run_local.py --validate-only` 通过，但仍有性能 warning（p95 约 26-38ms，软上限 20ms）。`submissions/final/team_controller.py` 约 85.6KB，低于 100KB。

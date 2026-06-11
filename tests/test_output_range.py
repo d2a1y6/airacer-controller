@@ -61,7 +61,7 @@ def test_extract_observation_prefers_dark_road_over_bottom_grass():
 
     image = np.zeros((480, 640, 3), dtype=np.uint8)
     image[:, :] = (35, 120, 35)
-    image[180:, :260, :] = (72, 72, 72)
+    image[180:, :260, :] = (82, 74, 64)  # 采样自 complex/basic 原始帧的深灰沥青 BGR。
 
     obs = extract_observation(image, image, 0.0)
 

@@ -1,9 +1,66 @@
 """策略参数配置。
 
-功能概述：集中保存视觉、估计和控制策略参数。
+功能概述：集中保存采样色卡、视觉、估计和控制策略参数。
 输入输出：输入任意 profile 名称，输出同一套控制参数。
-处理流程：先定义通用感知和估计参数，再定义唯一的 CONTROL 控制参数。
+处理流程：先定义从 Webots 原图采样得到的颜色配置，再定义感知、估计和控制参数。
 """
+
+COLOR_PROFILE = {
+    # 采样来源：.tmp/color_sample/color_samples.json，来自 complex/basic 原始相机帧。
+    # 数组均为 OpenCV 口径：BGR / HSV / Lab；RGB 只用于人工核对。
+    "road_asphalt_dark_gray": {
+        "rgb_median": (66.5, 77.0, 85.5),
+        "bgr_median": (85.5, 77.0, 66.5),
+        "hsv_median": (104.0, 57.5, 85.5),
+        "lab_median": (82.0, 126.0, 121.5),
+        "hsv_tolerance": (10.0, 22.0, 28.0),
+        "lab_tolerance": (10.0, 3.0, 4.0),
+        "b_minus_g_min": 6.0,
+        "b_minus_g_max": 18.0,
+        "g_minus_r_min": 6.0,
+        "g_minus_r_max": 18.0,
+    },
+    "curb_shoulder_light_gray": {
+        "rgb_median": (82.0, 92.0, 96.5),
+        "bgr_median": (96.5, 92.0, 82.0),
+        "hsv_median": (103.0, 42.0, 96.5),
+        "lab_median": (98.5, 126.0, 123.5),
+        "hsv_tolerance": (16.0, 28.0, 36.0),
+        "lab_tolerance": (20.0, 6.0, 8.0),
+    },
+    "guardrail_light_gray": {
+        "rgb_median": (93.0, 94.5, 79.5),
+        "bgr_median": (79.5, 94.5, 93.0),
+        "hsv_median": (102.5, 102.5, 140.5),
+        "lab_median": (116.5, 125.5, 133.5),
+        "hsv_tolerance": (18.0, 70.0, 70.0),
+        "lab_tolerance": (38.0, 40.0, 36.0),
+    },
+    "green_grass": {
+        "rgb_median": (86.5, 149.5, 65.5),
+        "bgr_median": (65.5, 149.5, 86.5),
+        "hsv_median": (52.5, 143.5, 149.5),
+        "lab_median": (143.5, 91.5, 165.5),
+        "hsv_tolerance": (18.0, 55.0, 70.0),
+        "lab_tolerance": (35.0, 28.0, 35.0),
+    },
+    "red_ground": {
+        "rgb_median": (168.0, 74.0, 75.0),
+        "bgr_median": (75.0, 74.0, 168.0),
+        "hsv_median": (179.0, 143.0, 168.0),
+        "lab_median": (112.0, 167.0, 146.0),
+        "hsv_tolerance": (12.0, 55.0, 70.0),
+        "lab_tolerance": (35.0, 35.0, 35.0),
+    },
+    "blue_sky": {
+        "rgb_median": (102.0, 178.0, 255.0),
+        "bgr_median": (255.0, 178.0, 102.0),
+        "hsv_median": (105.0, 153.0, 255.0),
+        "lab_median": (181.0, 127.0, 83.0),
+        "hsv_tolerance": (14.0, 45.0, 35.0),
+        "lab_tolerance": (28.0, 12.0, 25.0),
+    },
+}
 
 VISION_PROFILE = {
     "roi_top_ratio": 0.42,
@@ -11,10 +68,8 @@ VISION_PROFILE = {
     "scan_bottom_ratio": 0.92,
     "scan_count": 12,
     "row_band": 2,
-    "road_lab_threshold": 34.0,
     "road_gray_min": 35.0,
-    "road_gray_max": 105.0,
-    "road_sat_max": 80.0,
+    "road_gray_max": 115.0,
     "grass_hue_min": 35.0,
     "grass_hue_max": 95.0,
     "grass_sat_min": 60.0,
@@ -24,7 +79,7 @@ VISION_PROFILE = {
     "barrier_sat_min": 60.0,
     "barrier_value_min": 80.0,
     "barrier_value_max": 210.0,
-    "dark_mask_min_fill": 0.04,
+    "barrier_bridge_row_ratio": 0.25,
     "texture_gray_std_scale": 35.0,
     "min_segment_width": 24.0,
     "max_segment_gap": 90.0,
@@ -41,6 +96,8 @@ VISION_PROFILE = {
     "min_camera_confidence": 0.12,
     "empty_mask_confidence_scale": 0.25,
     "saturated_mask_confidence_scale": 0.25,
+    "red_mask_fill_warning": 0.78,
+    "red_mask_fill_confidence_scale": 0.45,
     "fusion_max_offset_gap": 0.18,
     "fusion_confidence_margin": 0.18,
     "fusion_merge_gap": 0.12,
@@ -55,6 +112,10 @@ OPPONENT_PROFILE = {
     "near_obstacle_roi_top_ratio": 0.48,
     "near_obstacle_roi_bottom_ratio": 0.94,
     "near_obstacle_roi_x_margin_ratio": 0.08,
+    "near_obstacle_white_gray_min": 150.0,
+    "near_obstacle_white_sat_max": 80.0,
+    "near_obstacle_black_gray_max": 30.0,
+    "near_obstacle_black_value_max": 45.0,
     "near_obstacle_min_area": 700.0,
     "near_obstacle_min_width": 28.0,
     "near_obstacle_min_height": 18.0,
@@ -89,6 +150,19 @@ LINE_FOLLOW_PROFILE = {
     "confirm_frames": 3,
     "smoothing": 0.5,
     "curve_gate": 0.35,
+    # complex 发车时车初始在白线左侧，road mask 会把右侧大块低饱和地面误当路，导致几何中心贴左。
+    # 只在开头短窗口接受“白线在右侧且斜率合理”的较大 offset，用于把车捕获回白线中间；
+    # 负 offset 和接近护栏的大 offset 仍拒绝。
+    "startup_acquire_until": 14.0,
+    "startup_offset_min": 0.32,
+    "startup_offset_trust_max": 0.65,
+    "startup_heading_min": 0.05,
+    "startup_heading_max": 0.35,
+    "startup_confirm_frames": 1,
+    "startup_curve_gate": 0.75,
+    "startup_max_correction": 0.22,
+    "startup_smoothing": 0.35,
+    "startup_decay": 0.86,
 }
 
 ESTIMATOR_PROFILE = {
@@ -124,14 +198,27 @@ ESTIMATOR_PROFILE = {
     "lost_heading_decay": 0.78,
     "lost_curvature_decay": 0.76,
     "lost_lookahead_decay": 0.82,
-    # 白线进主链路目标的融合权重。R013/R014 实车证明权重 0.82/0.68/0.58 会污染
-    # offset_risk/直道判定/入弯门控（basic 变慢、complex 仍切内线撞栏），故全部归零：
-    # 白线只作为 TrackState 诊断字段 + policy 末端的后置有界舵角修正（R011 验证的形态）。
+    # 白线进入主链路时仍受信任门控：普通帧只接收小 offset 的双目线；complex 发车短窗口
+    # 额外接收右侧中等 offset 的单目线。road mask 置信差或饱和时，提高白线权重。
     "line_target_min_confidence": 0.30,
-    "line_lateral_weight": 0.0,
-    "line_heading_weight": 0.0,
-    "line_lookahead_weight": 0.0,
+    "line_lateral_weight": 0.85,
+    "line_heading_weight": 0.55,
+    "line_lookahead_weight": 0.70,
     "line_lookahead_projection": 0.55,
+    "line_target_normal_offset_max": 0.30,
+    "line_target_normal_scale": 0.55,
+    "line_target_unreliable_road_scale": 1.00,
+    "line_target_startup_scale": 0.76,
+    "line_target_road_confidence_max": 0.60,
+    "line_target_confidence_scale": 0.75,
+    "line_startup_until": 14.0,
+    "line_startup_offset_min": 0.32,
+    "line_startup_offset_max": 0.65,
+    "line_startup_heading_min": 0.05,
+    "line_startup_heading_max": 0.35,
+    "line_startup_memory_frames": 120,
+    "line_startup_memory_trust_scale": 0.66,
+    "line_startup_memory_value_decay": 0.965,
     "timestamp_reset_gap": 2.0,
 }
 
@@ -243,6 +330,16 @@ CONTROL = {
     "escape_pinned_frames": 28,
     "escape_pinned_steering": 0.80,
     "escape_pinned_speed": 0.62,
+    # complex 后段静态车 + 单侧边界贴住时，画面冻结但指令速度可能仍高于 low_speed 阈值；
+    # 这条只在红色环境、近障碍、单侧余量为 0 附近时启用，避免普通巡弯误触发。
+    "escape_boundary_margin_risk": 0.90,
+    "escape_boundary_margin_max": 0.08,
+    "escape_boundary_speed_max": 0.46,
+    "escape_boundary_min_confidence": 0.35,
+    "escape_boundary_trigger_frames": 8,
+    "escape_boundary_frames": 72,
+    "escape_boundary_steering": 0.86,
+    "escape_boundary_speed": 0.86,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }

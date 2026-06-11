@@ -39,3 +39,25 @@ def test_stereo_line_right_of_car_steers_right():
 
     assert confidence >= LINE_FOLLOW_PROFILE["min_confidence"]
     assert offset * LINE_FOLLOW_PROFILE["offset_gain"] + heading * LINE_FOLLOW_PROFILE["heading_gain"] > 0.04
+
+
+def test_startup_single_camera_right_line_is_accepted():
+    left = _line_image([440, 450, 460, 470, 480, 490])
+    right = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    offset, heading, confidence = _stereo_line_state(left, right, LINE_FOLLOW_PROFILE, timestamp=1.5)
+
+    assert confidence >= LINE_FOLLOW_PROFILE["min_confidence"]
+    assert LINE_FOLLOW_PROFILE["startup_offset_min"] <= offset <= LINE_FOLLOW_PROFILE["startup_offset_trust_max"]
+    assert LINE_FOLLOW_PROFILE["startup_heading_min"] <= heading <= LINE_FOLLOW_PROFILE["startup_heading_max"]
+
+
+def test_startup_single_camera_left_line_is_rejected():
+    left = _line_image([180, 190, 200, 210, 220, 230])
+    right = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    offset, heading, confidence = _stereo_line_state(left, right, LINE_FOLLOW_PROFILE, timestamp=1.5)
+
+    assert offset == 0.0
+    assert heading == 0.0
+    assert confidence == 0.0

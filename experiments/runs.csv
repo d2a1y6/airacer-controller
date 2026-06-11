@@ -39,3 +39,8 @@ date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finis
 2026-06-11,local,fastest,complex,0,,214.91,0,manual_stop_stuck,"R014 | 白线前移到 estimator/policy + 边界余量保护后 complex 实跑。working-tree 正式 final，complex/car_1/practice。telemetry interleaved，脚本仅用最后一段：6716 帧 t=0.03→214.91s，归档 .tmp/recordings/complex_line_state_R014。旧第一左弯卡点 x≈186,y≈-27 只爬行约2.9s后通过；后续从 t≈121.1s 起卡在 x≈165,y≈119，末帧 x=165.23,y=119.25,speed=0.000；近停占比<0.3=0.45。用户截图/反馈：本质仍是转弯半径太小，贴内侧栏杆撞车且无法脱困，白线居中和无意义打轮/减速问题仍在。"
 2026-06-11,local,fastest,basic,0,,147.8,0,manual_stop,"R015 | 白线降级版首跑：行驶正常；弯中线闪烁与白车单帧误锁两处残留。详见 notes.md R015。"
 2026-06-11,local,fastest,complex,0,,41.9,0,manual_stop_stuck,"R016 | 白线降级版首跑：护栏误锁致直道摆动；线修正抵消入弯舵角+几何脱困误触发致第一左弯撞左栏卡死。详见 notes.md R016。"
+2026-06-11,local,fastest,complex,0,,532.3,0,manual_stop_stuck,"R017 | 线信任门控+escape 低速门槛复验：直道摆动和第一左弯改善，但后段 x≈-10,y≈-27 仍近停。详见 notes.md R017。"
+2026-06-11,local,fastest,complex,0,,450.2,0,manual_stop_stuck,"R018 | 新增边界障碍脱困候选：早段卡点通过，但后段 x≈9,y≈87 内侧栏杆近停。当前保留为工作树候选。详见 notes.md R018。"
+2026-06-11,local,fastest,complex,0,,145.0,0,manual_stop_stuck,"R019 | escape 执行中按边界翻向的反例：退化回 x≈166,y≈117 早段卡死，已撤回。详见 notes.md R019。"
+2026-06-11,local,fastest,complex,0,,153.7,0,manual_stop_stuck,"R020 | 低置信入弯门控反例：仍卡 x≈165,y≈119，已撤回。详见 notes.md R020。"
+2026-06-11,local,fastest,complex,0,,155.2,0,manual_stop_stuck,"R021 | 采样色卡落配置：真实帧重放 lost 95.6%→0%，闭环开头贴左/首弯问题明显改善，但后段仍在 x≈169,y≈111 低速卡住。详见 notes.md R021。"

@@ -228,6 +228,51 @@ def test_implausible_large_line_offset_is_rejected():
     assert abs(rail_cmd.steering - base_cmd.steering) < 1e-6
 
 
+def test_startup_line_acquisition_allows_right_side_line():
+    # complex 发车时主 road mask 会把车右侧低饱和区域当路，几何中心贴左；
+    # 白线在右侧且斜率合理时，开头短窗口应允许较大 offset 把车拉回中线。
+    base = make_track(red_environment=True)
+    lined = make_track(red_environment=True)
+    lined.line_offset = 0.44
+    lined.line_heading = 0.22
+    lined.line_confidence = 0.80
+
+    reset_policy_state()
+    base_cmd = warm_policy(base, mode="fastest", steps=8)
+    reset_policy_state()
+    lined_cmd = warm_policy(lined, mode="fastest", steps=8)
+
+    assert lined_cmd.steering > base_cmd.steering + 0.08
+
+
+def test_startup_line_acquisition_rejects_left_side_line():
+    # 开头误检常来自左侧护栏/边线，offset 为负；不能因此继续往左贴。
+    rail = make_track(red_environment=True)
+    rail.line_offset = -0.44
+    rail.line_heading = 0.22
+    rail.line_confidence = 0.80
+
+    reset_policy_state()
+    base_cmd = warm_policy(make_track(red_environment=True), mode="fastest", steps=8)
+    reset_policy_state()
+    rail_cmd = warm_policy(rail, mode="fastest", steps=8)
+
+    assert abs(rail_cmd.steering - base_cmd.steering) < 1e-6
+
+
+def test_startup_line_acquisition_expires():
+    lined = make_track(red_environment=True)
+    lined.line_offset = 0.44
+    lined.line_heading = 0.22
+    lined.line_confidence = 0.80
+
+    reset_policy_state()
+    for index in range(8):
+        cmd = decide_control(lined, 15.0 + index * 0.05, mode="fastest")
+
+    assert abs(cmd.steering) < 0.03
+
+
 def test_line_correction_suppressed_near_obstacle():
     blocked = make_track()
     blocked.line_offset = 0.25

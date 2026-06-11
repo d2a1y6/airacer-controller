@@ -27,3 +27,11 @@ def test_no_obstacle_on_plain_road():
 
 def test_detects_large_white_vehicle_block():
     assert detect_near_vehicle_obstacle(_vehicle_image()) is True
+
+
+def test_saturated_background_is_not_a_vehicle():
+    """红色场地和天空这类高饱和大块不能触发近障碍。"""
+
+    image = np.full((480, 640, 3), 85, dtype=np.uint8)
+    image[250:430, 80:560] = (255, 178, 102)
+    assert detect_near_vehicle_obstacle(image) is False
