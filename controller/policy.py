@@ -167,6 +167,17 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
         + track.heading_error * profile["gain_heading"]
         + track.curvature * profile["gain_curve"]
     )
+    # 入弯时机门控：直道上车还居中、近处还直时（lateral/heading≈0），远处的路已弯会让前瞻项
+    # 提前打轮→切内线贴栏杆。用近处弯量衡量"弯到了没"，弯没到就压制前瞻项，弯真正到了再放开，
+    # 让车跟着中心线、到弯了再转。带保守下限，避免压过头变成转太晚冲外侧。
+    corner_arrival = clamp(
+        abs(track.lateral_error) / profile["turn_in_lateral_ref"]
+        + abs(track.heading_error) / profile["turn_in_heading_ref"],
+        0.0,
+        1.0,
+    )
+    turn_in_gate = profile["turn_in_floor"] + (1.0 - profile["turn_in_floor"]) * corner_arrival
+    lookahead_term *= turn_in_gate
     near_weight = profile["near_weight_base"] + signals["offset_risk"] * profile["near_weight_offset_boost"]
     far_weight = profile["far_weight_base"] + signals["curve_risk"] * profile["far_weight_curve_boost"]
     if center_term * lookahead_term < 0.0:
@@ -268,6 +279,15 @@ def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, 
         target = min(target, profile["hard_turn_speed"] + centered_bonus)
     elif mode == "correcting":
         target = min(target, profile["correction_speed"])
+    # 直道提速：几何明确为直（弯道与偏移风险都很低）时，速度不该被偏低的 mask 置信度或
+    # recovering 限速压住——直行很安全，可以快。给一个速度下限，越过这些压制。一旦前方有弯，
+    # curve_risk（含 lookahead）会上升使该条件失效，提前退出加速。
+    straight = (
+        signals["curve_risk"] <= profile["straight_curve_max"]
+        and signals["offset_risk"] <= profile["straight_offset_max"]
+    )
+    if straight:
+        target = max(target, profile["straight_speed"])
     if timestamp < profile["start_caution_seconds"]:
         target = min(target, profile["start_speed"])
     return clamp(target, profile["min_speed"], profile["max_speed"])

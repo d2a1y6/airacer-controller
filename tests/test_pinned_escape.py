@@ -39,16 +39,22 @@ def test_pinned_against_rail_triggers_escape_on_basic():
 
 
 def test_centered_frozen_view_does_not_force_pinned_escape():
-    # 居中、几乎不打轮的冻结画面不应被当成顶栏杆。用低置信度把正常速度压在 recovery_speed
-    # 之下，这样一旦 pinned 脱困误触发把速度顶到 0.62 就会暴露出来。
+    # 居中、几乎不打轮的冻结画面不应被当成顶栏杆。pinned 脱困若误触发会强制大转向
+    # （escape_pinned_steering≈0.8），所以用"转向是否保持很小"判定，不用速度（直道提速也会抬速）。
     centered = TrackState(
         lateral_error=0.0,
         heading_error=0.0,
         curvature=0.0,
         lookahead_error=0.0,
-        confidence=0.15,
+        confidence=0.30,
         lost=False,
         red_environment=False,
     )
-    max_speed = _run_frozen(centered, frames=80)
-    assert max_speed < CONTROL["escape_pinned_speed"] - 1e-6
+    reset_policy_state()
+    t = 0.0
+    max_steer = 0.0
+    for _ in range(80):
+        t += CONTROL["nominal_dt"]
+        cmd = decide_control(centered, t, mode="fastest")
+        max_steer = max(max_steer, abs(cmd.steering))
+    assert max_steer < 0.3
