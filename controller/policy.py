@@ -138,6 +138,22 @@ def _margin_escape_sign(track: TrackState, fallback: float) -> float:
     return -1.0
 
 
+def _contact_escape_sign(track: TrackState, fallback: float, profile: dict) -> float:
+    """在推断贴边时选择远离栏杆的脱困方向。
+
+    功能：把碰撞/贴边推断和常规循线分开，只有单侧余量极小时才按边界反向。
+    参数：`track` 提供左右近处余量，`fallback` 是道路几何推断方向，`profile` 是控制参数。
+    返回：`+1.0` 表示右打，`-1.0` 表示左打。
+    逻辑：余量不够明确时保留几何方向；左侧近乎贴住就右打，右侧近乎贴住就左打。
+    """
+
+    min_margin = min(track.left_margin_near, track.right_margin_near)
+    margin_gap = abs(track.left_margin_near - track.right_margin_near)
+    if min_margin > profile["escape_boundary_margin_max"] or margin_gap <= 0.08:
+        return fallback
+    return _margin_escape_sign(track, fallback)
+
+
 def _control_signals(track: TrackState, profile: dict) -> dict:
     """计算策略使用的风险分量。
 
@@ -560,7 +576,7 @@ def _escape_if_stalled(
     )
     stable_view = signature_delta <= profile["escape_signature_delta"]
 
-    # 统一脱困方向：朝感知到的路面一侧打，远离顶住的栏杆。
+    # 统一脱困方向：先按几何判断路在哪边；若推断已贴住单侧边界，则强制远离低余量一侧。
     escape_sign = _road_direction_sign(track)
 
     should_count_stall = False
@@ -584,7 +600,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_boundary_frames"])
         escape_steering = profile["escape_boundary_steering"]
         escape_speed = profile["escape_boundary_speed"]
-        escape_sign = _margin_escape_sign(track, escape_sign)
+        escape_sign = _contact_escape_sign(track, escape_sign, profile)
     elif (
         allow_geometry_escape
         and mode == "hard_turn"
@@ -602,6 +618,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_pinned_frames"])
         escape_steering = profile["escape_pinned_steering"]
         escape_speed = profile["escape_pinned_speed"]
+        escape_sign = _contact_escape_sign(track, escape_sign, profile)
     elif low_speed_stall:
         should_count_stall = True
         # 贴墙被卡本就是低置信/丢线状态，放宽门槛，否则脱困永远进不来。
@@ -610,6 +627,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_low_speed_frames"])
         escape_steering = profile["escape_low_speed_steering"]
         escape_speed = profile["escape_low_speed_speed"]
+        escape_sign = _contact_escape_sign(track, escape_sign, profile)
 
     confidence_ok = (not require_confidence) or (
         not track.lost and track.confidence >= profile["escape_min_confidence"]

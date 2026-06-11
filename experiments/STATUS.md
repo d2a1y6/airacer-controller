@@ -6,7 +6,7 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-11（R021 采样色卡修复之后；complex 开头贴左和假丢线改善，但仍未跑通）。
+最后更新：2026-06-11（R023；complex 旧 `x≈169,y≈111` 卡点已通过，basic 短跑回归正常；整条 complex 仍未证明跑通）。
 
 ## 阅读路径
 
@@ -29,8 +29,8 @@
 
 | 版本 | 位置 | 实车结论 |
 |---|---|---|
-| **工作树（候选，未完成）** | working-tree，未提交 | 在 R018 边界障碍脱困基础上，新增真实帧采样色卡和保守暗灰路面 mask；修掉 red 环境填充率把有效路面降成低置信的问题。R021：同批真实帧离线 lost 95.6%→0%，闭环第一左弯不再撞，但后段仍在 `x≈169,y≈111` 低速卡住。**目标未完成。** |
-| **HEAD**（分支 `codex/perception-dropout`，已推） | `656b222` | R015/R016 后的线修正信任门控 + 几何脱困低速门槛。复验 R017：直道摆动和第一左弯改善，但后段 `x≈-10,y≈-27` 仍近停。 |
+| **工作树（候选，未完成）** | working-tree，未提交 | R021 的真实采样色卡和保守暗灰路面 mask 已保留；R022 按历史有效方法收远处前瞻/急弯舵角、放大入弯半径，并把 escape 方向限定为贴边后远离低余量侧。R022 已通过旧 `x≈169,y≈111` 卡点，R023 basic 短跑回归正常。**整条 complex 仍未证明跑通。** |
+| **HEAD**（分支 `codex/perception-dropout`，已推） | `677da19` | R021 采样色卡修复：同批真实帧离线 lost 95.6%→0%，闭环第一左弯不再撞，但后段仍会在 `x≈169,y≈111` 低速卡住。 |
 | **R011/R012 版**（白线位置优先后置修正） | commit `16ae3f3`，已快照 `baselines/R011_line_posfirst_2026-06-11/` | basic 用户验证最佳：≈259.8s 高速通过车阵不撞 car5；complex 能过第一左弯但后段 `x≈-10,y≈-27` 近停。 |
 | **C004**（曲率可信度门控） | commit `0fc367e` | 更早的实车验证可靠基线（无白线逻辑），过弯不再反向打轮。 |
 
@@ -52,9 +52,9 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 > 但 R011/R012 时代就存在的残留（骑线精度、complex 两处低速窗口）仍需取证后对症修。
 
 ### P1 转弯半径太小 / 切内线贴内侧栏杆
-- complex 在 `x≈165,y≈119` 贴内侧栏杆撞死且无法脱困（R014，最长爬行 93.8s）。
-- 已试无效：入弯时机门控（C005，部分见效但接缝处被骗开）、白线前移 + `left/right_margin` 边界保护（R013/R014，没拦住向内打轮）。
-- 下一步必须取证回答：撞栏前 margin 是否已变小、`margin_risk` 是否升高、`target_steering` 为何仍指向内侧、`mode_reason` 是什么、escaping 为何没触发或无效。**不要再盲调 gain/速度。**
+- R014/R021 的典型表现是入弯半径太小，切到内圈栏杆后长时间爬行。R022 用 notes 里历史有效方向修：降低远处前瞻和急弯舵角、加强速度相关收舵、让弯道更慢一点；旧 `x≈169,y≈111` 卡点已通过。
+- 当前不能写成彻底解决：R022 只跑到 `t≈197.6s` 控制日志，telemetry 证据到 `t≈177.4s`，还没覆盖整条 complex 后半程。
+- 已明确不要重开普通 margin guard：R014 证明它会受 road-mask 噪声影响。边界余量只用于 escape 中的贴边方向判断。
 
 ### P2 车没有稳定骑在白线上
 - 用户在 R011/R013 都肉眼确认：即使"看见白线"（`line_offset/line_conf` 正常），车身中心也没压住白线。
@@ -68,9 +68,20 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 
 ## 证据现状
 
-- R021 颜色采样证据保留在 `.tmp/color_sample/color_samples.json` 和 `.tmp/run.prev/perception_*` 小文件中；抽稀 `.npy` 帧已删除，`.tmp` 已回到约 26MB。
-- R021 后段卡点没有保留帧。下一轮若继续修 complex，应对 `x≈169,y≈111` 附近做短窗口取证，不要再开长时间密集存帧。
+- R021 颜色采样证据保留在 `.tmp/color_sample/color_samples.json` 和 `.tmp/run.prev/perception_*` 小文件中；抽稀 `.npy` 帧已删除。
+- R022/R023 控制日志保留在 `.tmp/run.prev/control_complex.jsonl` 和 `.tmp/run/control_basic.jsonl`；`.tmp` 约 37MB，可接受。
 - 流程已修补：`scripts/webots_run.sh` 会自动清理孤儿进程/旧遥测并把上一轮产物轮换到 `.tmp/run.prev`，最近两轮产物不会再被立即删掉。
+
+## R022/R023 半径与 escape 分离结论（2026-06-11）
+
+提交接口只有 `control(left_img, right_img, timestamp)`，没有碰撞、速度、IMU 或接触传感器；“发生碰撞”只能从图像余量、画面冻结、低速命令和持续大舵角间接推断。
+
+当前工作树把两套逻辑分开：
+
+- 常规驾驶继续由 road/白线几何决定，目标是让车身中心追白线；偏左时白线在右侧，舵角应往右。
+- escape 只在推断贴边/卡住时介入，方向先按几何兜底；若单侧近处余量接近 0，就强制远离低余量侧，避免“贴左还左打、贴右还右打”。
+
+R022 complex：旧 `x≈169,y≈111` 长爬行已消失，`t≈145.7s` 到 `x=137.25,y=90.97,status=normal`，`t≈177.4s` 到 `x=91.12,y=155.50,status=normal`；最长近停仍是早段固定 5.0s。R023 basic：短跑 `t≈130.6s` 控制日志正常，`mean|lat|=0.033`，未见新误触发。
 
 ## R021 采样色卡修复结论（2026-06-11）
 
@@ -114,12 +125,12 @@ t=37.2 强制 -0.58 舵角 0.8s，是 R016 撞左栏的直接原因。
 
 ## 下一步（建议顺序）
 
-1. **复盘 R021 后段卡点**：用短窗口帧抓 `x≈169,y≈111`，目标是判断是几何中心线、曲率估计、边界余量还是 policy 速度/escape 造成长近停。
-2. 保持当前采样色卡和保守 road mask；不要为了降低卡点把 road 重新放宽到栏杆/路外地面。
-3. 修完后复跑 `bash scripts/webots_run.sh complex --frames 10`，只覆盖问题窗口，分析后删除 `.npy` 帧；通过标准是至少越过 `x≈169,y≈111` 且没有恢复首弯撞栏。
-4. complex 过关键点后再跑 `bash scripts/webots_run.sh basic`，确认同一策略没有破坏 R011/R015 的 basic 行为。
+1. 继续跑 `bash scripts/webots_run.sh complex` 到更后段，确认 R022 之后是否还有新的内切/近停窗口；不要把“过旧卡点”误写成整条跑通。
+2. 若后段再出现贴边，先截短窗口帧和控制日志，确认 margin、白线、目标舵角和 escape 方向，再改代码。
+3. 保持当前采样色卡和保守 road mask；不要为了降低卡点把 road 重新放宽到栏杆/路外地面。
+4. complex 新窗口修完后继续跑 basic 回归，确认同一策略没有破坏 R023 的短跑状态。
 5. 跑通后再做提速和提交；不要把当前候选当作完成态。
 
 ## 验证状态
 
-最近一次（2026-06-11 R021 后）：`pytest` 91 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 和 `run_local.py --validate-only` 通过，但仍有性能 warning（p95 约 26-38ms，软上限 20ms）。`submissions/final/team_controller.py` 约 85.6KB，低于 100KB。
+最近一次（2026-06-11 R023 后）：`pytest` 94 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 和 `run_local.py --validate-only` 通过，但仍有性能 warning（本轮 p95 波动到 84-103ms，软上限 20ms）。`submissions/final/team_controller.py` 低于 100KB。

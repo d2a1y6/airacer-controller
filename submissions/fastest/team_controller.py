@@ -364,13 +364,13 @@ CONTROL = {
     "near_weight_base": 0.90,
     "near_weight_offset_boost": 0.55,
     "far_weight_base": 0.75,
-    "far_weight_curve_boost": 0.36,
+    "far_weight_curve_boost": 0.28,
     "far_conflict_offset_start": 0.18,
     "far_conflict_offset_scale": 2.00,
     "far_conflict_min_scale": 0.22,
     "gain_lateral": 0.80,
-    "gain_lookahead": 0.72,
-    "gain_heading": 0.72,
+    "gain_lookahead": 0.68,
+    "gain_heading": 0.68,
     "gain_curve": 0.12,
     "gain_lateral_nonlinear": 0.22,
     "gain_curve_nonlinear": 0.02,
@@ -379,8 +379,8 @@ CONTROL = {
     "turn_in_heading_ref": 0.45,
     "steering_deadzone": 0.015,
     "max_abs_steering": 0.76,
-    "hard_turn_steering_scale": 0.84,
-    "steering_speed_cap_scale": 0.36,
+    "hard_turn_steering_scale": 0.78,
+    "steering_speed_cap_scale": 0.42,
 
 
 
@@ -392,7 +392,7 @@ CONTROL = {
     "inside_left_heading_max": -0.24,
     "inside_left_curvature_max": -0.45,
     "inside_left_steering_limit": -0.40,
-    "curve_slowdown": 0.64,
+    "curve_slowdown": 0.70,
     "curve_power": 1.18,
     "offset_slowdown": 0.38,
     "offset_power": 1.25,
@@ -2038,6 +2038,22 @@ def _margin_escape_sign(track: TrackState, fallback: float) -> float:
     return -1.0
 
 
+def _contact_escape_sign(track: TrackState, fallback: float, profile: dict) -> float:
+\
+\
+\
+\
+\
+\
+
+
+    min_margin = min(track.left_margin_near, track.right_margin_near)
+    margin_gap = abs(track.left_margin_near - track.right_margin_near)
+    if min_margin > profile["escape_boundary_margin_max"] or margin_gap <= 0.08:
+        return fallback
+    return _margin_escape_sign(track, fallback)
+
+
 def _control_signals(track: TrackState, profile: dict) -> dict:
 \
 \
@@ -2484,7 +2500,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_boundary_frames"])
         escape_steering = profile["escape_boundary_steering"]
         escape_speed = profile["escape_boundary_speed"]
-        escape_sign = _margin_escape_sign(track, escape_sign)
+        escape_sign = _contact_escape_sign(track, escape_sign, profile)
     elif (
         allow_geometry_escape
         and mode == "hard_turn"
@@ -2502,6 +2518,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_pinned_frames"])
         escape_steering = profile["escape_pinned_steering"]
         escape_speed = profile["escape_pinned_speed"]
+        escape_sign = _contact_escape_sign(track, escape_sign, profile)
     elif low_speed_stall:
         should_count_stall = True
 
@@ -2510,6 +2527,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_low_speed_frames"])
         escape_steering = profile["escape_low_speed_steering"]
         escape_speed = profile["escape_low_speed_speed"]
+        escape_sign = _contact_escape_sign(track, escape_sign, profile)
 
     confidence_ok = (not require_confidence) or (
         not track.lost and track.confidence >= profile["escape_min_confidence"]

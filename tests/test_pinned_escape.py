@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.common import TrackState
-from controller.params import CONTROL
+from controller.params import BASIC_CONTROL_OVERRIDES, CONTROL
 from controller.policy import decide_control, reset_policy_state
 
 
@@ -36,6 +36,56 @@ def test_pinned_against_rail_triggers_escape_on_basic():
     )
     max_speed = _run_frozen(pinned, frames=80)
     assert max_speed >= CONTROL["escape_pinned_speed"] - 1e-6
+
+
+def test_pinned_left_margin_escapes_right_even_if_geometry_points_left():
+    # 贴住左侧栏杆时，escape 不能继续按几何误差往左打；单侧余量说明左边已没有空间，应右打脱离。
+    stuck_left = TrackState(
+        lateral_error=-0.62,
+        heading_error=-0.12,
+        curvature=-0.12,
+        lookahead_error=-0.52,
+        confidence=0.82,
+        lost=False,
+        red_environment=False,
+    )
+    stuck_left.left_margin_near = 0.0
+    stuck_left.right_margin_near = 0.34
+
+    reset_policy_state()
+    t = 0.0
+    max_steer = 0.0
+    for _ in range(80):
+        t += CONTROL["nominal_dt"]
+        cmd = decide_control(stuck_left, t, mode="fastest")
+        max_steer = max(max_steer, cmd.steering)
+
+    assert max_steer >= BASIC_CONTROL_OVERRIDES["max_abs_steering"] - 1e-6
+
+
+def test_pinned_right_margin_escapes_left_even_if_geometry_points_right():
+    # 对称场景：右侧贴栏时应左打脱离，不能继续向右把车顶进栏杆。
+    stuck_right = TrackState(
+        lateral_error=0.62,
+        heading_error=0.12,
+        curvature=0.12,
+        lookahead_error=0.52,
+        confidence=0.82,
+        lost=False,
+        red_environment=False,
+    )
+    stuck_right.left_margin_near = 0.34
+    stuck_right.right_margin_near = 0.0
+
+    reset_policy_state()
+    t = 0.0
+    min_steer = 0.0
+    for _ in range(80):
+        t += CONTROL["nominal_dt"]
+        cmd = decide_control(stuck_right, t, mode="fastest")
+        min_steer = min(min_steer, cmd.steering)
+
+    assert min_steer <= -BASIC_CONTROL_OVERRIDES["max_abs_steering"] + 1e-6
 
 
 def test_centered_frozen_view_does_not_force_pinned_escape():

@@ -44,3 +44,5 @@ date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finis
 2026-06-11,local,fastest,complex,0,,145.0,0,manual_stop_stuck,"R019 | escape 执行中按边界翻向的反例：退化回 x≈166,y≈117 早段卡死，已撤回。详见 notes.md R019。"
 2026-06-11,local,fastest,complex,0,,153.7,0,manual_stop_stuck,"R020 | 低置信入弯门控反例：仍卡 x≈165,y≈119，已撤回。详见 notes.md R020。"
 2026-06-11,local,fastest,complex,0,,155.2,0,manual_stop_stuck,"R021 | 采样色卡落配置：真实帧重放 lost 95.6%→0%，闭环开头贴左/首弯问题明显改善，但后段仍在 x≈169,y≈111 低速卡住。详见 notes.md R021。"
+2026-06-11,local,fastest,complex,0,,197.57,0,manual_stop,"R022 | 按历史有效方法放大入弯半径，并把 escape 限定为贴边脱困；旧 x≈169,y≈111 卡点已通过，t≈177s 仍 normal，但未证明整条 complex 跑通。详见 notes.md R022。"
+2026-06-11,local,fastest,basic,0,,130.59,0,manual_stop,"R023 | basic 短跑回归正常；mean|lat|=0.033，近停占比低，未见新贴边或误 escape。详见 notes.md R023。"

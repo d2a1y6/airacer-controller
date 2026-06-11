@@ -314,6 +314,22 @@ def test_geometry_escape_requires_low_speed():
         assert policy._LAST_MODE != "escaping"
 
 
+def test_centered_complex_turn_in_keeps_wide_radius():
+    # R021 后段入口：车身几乎居中，但远处右弯已经很明显。历史有效修法是收远处前瞻项，
+    # 让车到弯里再转，避免提前切到内圈栏杆。
+    reset_policy_state()
+    approach = make_track(
+        lateral=0.012,
+        heading=0.244,
+        curvature=0.252,
+        lookahead=0.142,
+        confidence=0.53,
+        red_environment=True,
+    )
+    cmd = warm_policy(approach, mode="fastest", steps=10)
+    assert 0.04 < cmd.steering < 0.18
+
+
 def test_hard_turn_requires_consecutive_frames():
     reset_policy_state()
     track = make_track(heading=0.28, curvature=0.35, lookahead=0.32, red_environment=True)

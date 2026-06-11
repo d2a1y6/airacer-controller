@@ -34,6 +34,22 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R023 — basic 回归：贴边 escape 方向改动未引入异常 (2026-06-11, basic)
+- **构建**: working-tree；在 R022 的保守入弯半径参数和贴边 escape 方向修复上复验 basic。
+- **配置**: `bash scripts/webots_run.sh basic`，world=basic, car_1, 单车, practice；调试构建。
+- **记录完整性**: telemetry 最后归档段 `t=0.03→119.01s`，控制日志 clean，`4081` 帧，`t=0.03→130.59s`。
+- **结果**: 手动停止时仍正常行驶；telemetry 末帧 `x=-0.80,y=-16.65,speed=6.10,status=normal`。控制日志：`mean|lat|=0.033`，`|lat|>0.3≈0.00`，`lost=0.06`，近停占比 `<0.3=0.02`。
+- **现象**: 没有出现新贴边、卡死或误 escape；横向偏置均值 `-0.004`，基本居中。
+- **结论/下一步**: 本轮 policy 改动没有破坏 basic 短跑回归。若后续继续调 complex，还要保留 basic 回归验证。
+
+### R022 — 按历史有效方法放大入弯半径，并把 escape 限定为贴边脱困 (2026-06-11, complex)
+- **构建**: working-tree；按 notes 中 R012/C004/C005 的有效方向，降低远处前瞻与急弯舵角、提高速度相关收舵和弯道降速；同时把 escape 方向改成“几何兜底 + 单侧余量极小时远离低余量一侧”，避免贴左栏还继续左打、贴右栏还继续右打。
+- **配置**: `bash scripts/webots_run.sh complex`，world=complex, car_1, 单车, practice；调试构建。
+- **记录完整性**: telemetry 归档段 `t=0.03→177.41s` 可读，控制日志 clean，`6174` 帧，`t=0.03→197.57s`；本轮无孤儿进程残留。
+- **结果**: 旧卡点已通过。R021 会在 `x≈169,y≈111` 长爬行 25.3s；本轮 `t≈145.7s` 已到 `x=137.25,y=90.97,speed=4.32,status=normal`，`t≈177.4s` 到 `x=91.12,y=155.50,status=normal`。telemetry 最长近停仍只有早段固定 5.0s，未出现 R021 的长时间贴栏爬行。
+- **现象**: 120s 后段入口不再因为远处右弯过早大舵角切进内圈；控制日志 `mean|lat|=0.056`、`|lat|>0.3=0.07`，escape 只短暂介入，不主导常规驾驶。
+- **结论/下一步**: 用户判断“常规循线”和“碰撞/贴边后 escape”应分开是对的。提交接口没有直接碰撞传感器，只能用图像余量、低速/冻结和历史舵角间接推断。当前修复证明 `x≈169,y≈111` 旧卡点已过，但还没证明整条 complex 完整跑通；下一步应继续跑到更后段，确认是否还有新的内切/低速窗口。
+
 ### R021 — 采样色卡落配置：开头贴左与假丢线改善，后段仍卡 x≈169,y≈111 (2026-06-11, complex)
 - **构建**: working-tree；把 Webots 原始帧采样到的深灰路面、浅灰路牙、浅灰栏杆、绿草、红地、蓝天写入 `COLOR_PROFILE`，道路 mask 只用采样暗灰路面核心；白线作为发车和低置信道路的优先参考；提交构建新增剥离注释/docstring 以满足 100KB 限制。
 - **配置**: 先用 `bash scripts/webots_run.sh complex --frames 15` 抽稀取证，随后用 `bash scripts/webots_run.sh complex` 不存帧闭环验证，world=complex, car_1, 单车, practice。
