@@ -48,16 +48,19 @@ def test_module_contracts_on_mock_lane():
     assert 0.0 <= speed <= 1.0
 
 
-def test_opponent_detection_is_disabled_by_default(monkeypatch):
-    assert OPPONENT_PROFILE["enable_opponent_avoidance"] is False
+def test_opponent_detection_is_enabled_for_static_cars(monkeypatch):
+    assert OPPONENT_PROFILE["enable_opponent_avoidance"] is True
     assert "near_obstacle_min_timestamp" not in VISION_PROFILE
+    called = {"value": False}
 
-    def fail_if_called(*_args, **_kwargs):
-        raise AssertionError("opponent detector should stay disabled")
+    def mark_called(*_args, **_kwargs):
+        called["value"] = True
+        return False
 
-    monkeypatch.setattr(perception, "detect_near_vehicle_obstacle", fail_if_called)
+    monkeypatch.setattr(perception, "detect_near_vehicle_obstacle", mark_called)
     image = make_lane_image()
     obs = extract_observation(image, image, 999.0)
+    assert called["value"] is True
     assert isinstance(obs, PerceptionObs)
     assert len(obs.center_points) >= 4
 

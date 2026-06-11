@@ -58,7 +58,9 @@ _DEBUG_CONTROL_BLOCK = '''    try:
         obs = extract_observation(left_img, right_img, timestamp)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
-        return clamp_cmd(cmd)
+        cmd = _apply_lane_line_correction(cmd, left_img, right_img)
+        steering, speed = clamp_cmd(cmd)
+        return steering, speed
     except Exception:
         return 0.0, 0.0'''
 
@@ -91,6 +93,7 @@ def _debug_control_block(
         obs = extract_observation(left_img, right_img, timestamp)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
+        cmd = _apply_lane_line_correction(cmd, left_img, right_img)
         steering, speed = clamp_cmd(cmd)
         if _DBG_FH is not None:
             try:

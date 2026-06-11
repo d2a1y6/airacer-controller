@@ -113,10 +113,22 @@ VISION_PROFILE = {
     "road_gray_min": 35.0,
     "road_gray_max": 105.0,
     "road_sat_max": 80.0,
+    "grass_hue_min": 35.0,
+    "grass_hue_max": 95.0,
+    "grass_sat_min": 60.0,
+    "grass_value_min": 40.0,
+    "barrier_hue_min": 92.0,
+    "barrier_hue_max": 118.0,
+    "barrier_sat_min": 60.0,
+    "barrier_value_min": 80.0,
+    "barrier_value_max": 210.0,
     "dark_mask_min_fill": 0.04,
     "texture_gray_std_scale": 35.0,
     "min_segment_width": 24.0,
     "max_segment_gap": 90.0,
+    "fallback_min_segment_width": 96.0,
+    "fallback_initial_center_max_offset": 0.22,
+    "fallback_narrow_jump_max_ratio": 0.16,
     "early_max_segment_width_ratio": 0.995,
     "red_world_min_ratio": 0.05,
     "max_segment_width_ratio": 0.90,
@@ -125,6 +137,8 @@ VISION_PROFILE = {
     "max_center_jump_ratio": 0.35,
     "min_valid_scans": 4,
     "min_camera_confidence": 0.12,
+    "empty_mask_confidence_scale": 0.25,
+    "saturated_mask_confidence_scale": 0.25,
     "fusion_max_offset_gap": 0.18,
     "fusion_confidence_margin": 0.18,
     "fusion_merge_gap": 0.12,
@@ -132,16 +146,37 @@ VISION_PROFILE = {
 }
 
 OPPONENT_PROFILE = {
-    "enable_opponent_avoidance": False,
-    "near_obstacle_segment_gap": 48.0,
-    "near_obstacle_min_timestamp": 520.0,
-    "near_obstacle_scan_y_ratio": 0.58,
-    "near_obstacle_roi_top_ratio": 0.52,
+    "enable_opponent_avoidance": True,
+    "near_obstacle_segment_gap": 28.0,
+    "near_obstacle_min_timestamp": 0.0,
+    "near_obstacle_scan_y_ratio": 0.54,
+    "near_obstacle_roi_top_ratio": 0.48,
     "near_obstacle_roi_bottom_ratio": 0.94,
     "near_obstacle_roi_x_margin_ratio": 0.08,
     "near_obstacle_min_area": 700.0,
     "near_obstacle_min_width": 28.0,
     "near_obstacle_min_height": 18.0,
+}
+
+LINE_FOLLOW_PROFILE = {
+    "enable": True,
+    "white_min": 145.0,
+    "scan_top_ratio": 0.48,
+    "scan_bottom_ratio": 0.86,
+    "scan_count": 9,
+    "row_band": 3,
+    "min_segment_width": 3.0,
+    "max_segment_width": 70.0,
+    "initial_center_max_offset": 0.40,
+    "max_center_jump_ratio": 0.24,
+    "min_points_per_camera": 3,
+    "min_y_span": 70.0,
+    "near_y_ratio": 0.78,
+    "far_y_ratio": 0.55,
+    "min_confidence": 0.30,
+    "offset_gain": 0.76,
+    "heading_gain": 0.18,
+    "max_correction": 0.34,
 }
 
 ESTIMATOR_PROFILE = {
@@ -159,6 +194,8 @@ ESTIMATOR_PROFILE = {
     "far_eval_progress": 0.75,
     "heading_eval_progress": 0.45,
     "poly2_min_points": 5,
+    "curvature_full_points": 12,
+    "curvature_min_y_span": 150.0,
     "heading_gain": 1.25,
     "curvature_gain": 1.45,
     "fallback_curvature_gain": 0.70,
@@ -182,6 +219,13 @@ CONTROL = {
     "base_speed": 0.96,
     "max_speed": 1.00,
     "min_speed": 0.16,
+    "straight_curve_max": 0.12,
+    "straight_offset_max": 0.12,
+    "straight_heading_max": 0.28,
+    "straight_lost_steering_max": 0.12,
+    "straight_memory_frames": 48,
+    "straight_speed": 0.95,
+    "straight_lost_speed": 0.92,
     "start_caution_seconds": 0.8,
     "start_speed": 0.36,
     "lost_confidence": 0.10,
@@ -205,14 +249,19 @@ CONTROL = {
     "far_conflict_offset_start": 0.18,
     "far_conflict_offset_scale": 2.00,
     "far_conflict_min_scale": 0.22,
-    "gain_lateral": 0.65,
-    "gain_lookahead": 0.90,
-    "gain_heading": 0.86,
-    "gain_curve": 0.18,
-    "gain_lateral_nonlinear": 0.18,
-    "gain_curve_nonlinear": 0.04,
+    "gain_lateral": 0.80,
+    "gain_lookahead": 0.72,
+    "gain_heading": 0.72,
+    "gain_curve": 0.12,
+    "gain_lateral_nonlinear": 0.22,
+    "gain_curve_nonlinear": 0.02,
+    "turn_in_floor": 0.55,
+    "turn_in_lateral_ref": 0.30,
+    "turn_in_heading_ref": 0.45,
     "steering_deadzone": 0.015,
-    "max_abs_steering": 0.82,
+    "max_abs_steering": 0.76,
+    "hard_turn_steering_scale": 0.84,
+    "steering_speed_cap_scale": 0.36,
     "inside_left_lateral_min": 0.05,
     "inside_left_heading_max": -0.24,
     "inside_left_curvature_max": -0.45,
@@ -253,6 +302,13 @@ CONTROL = {
     "escape_low_speed_frames": 120,
     "escape_low_speed_steering": 0.74,
     "escape_low_speed_speed": 0.90,
+    "escape_pinned_lateral_min": 0.45,
+    "escape_pinned_steering_min": 0.55,
+    "escape_pinned_speed_max": 0.55,
+    "escape_pinned_trigger_frames": 20,
+    "escape_pinned_frames": 28,
+    "escape_pinned_steering": 0.80,
+    "escape_pinned_speed": 0.62,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }
@@ -260,17 +316,24 @@ CONTROL = {
 BASIC_CONTROL_OVERRIDES = {
     "lost_speed": 0.24,
     "recovery_speed": 0.38,
+    "straight_speed": 1.00,
+    "straight_lost_speed": 1.00,
     "hard_turn_speed": 0.30,
     "hard_turn_center_speed_bonus": 0.30,
     "correction_speed": 0.50,
-    "far_weight_curve_boost": 0.45,
     "far_conflict_offset_start": 0.00,
     "far_conflict_offset_scale": 3.20,
     "far_conflict_min_scale": 0.05,
-    "gain_heading": 0.98,
-    "gain_curve": 0.25,
-    "max_abs_steering": 1.00,
-    "curve_slowdown": 0.66,
+    "gain_lateral": 0.86,
+    "gain_lookahead": 0.68,
+    "gain_heading": 0.68,
+    "gain_curve": 0.10,
+    "near_weight_offset_boost": 0.58,
+    "far_weight_curve_boost": 0.28,
+    "max_abs_steering": 0.74,
+    "hard_turn_steering_scale": 0.78,
+    "steering_speed_cap_scale": 0.42,
+    "curve_slowdown": 0.70,
     "curve_power": 1.35,
     "steering_slowdown": 0.28,
     "max_speed_increase_per_sec": 1.60,
@@ -440,8 +503,8 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
     功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
     参数：`image` 是单张 BGR 图像。
     返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数、主 mask 命中率和近处障碍标记。
-    逻辑：暗灰 mask 可避免偏离赛道时把底部中心的草地当道路；边缘不混入主 mask，
-    避免把背景强边缘误当成道路表面。
+    逻辑：暗灰 mask 分割低饱和灰色沥青；草地是高饱和绿，统一从道路 mask 扣除，
+    避免颜色种子落在草上时把整片草当成路；边缘不混入主 mask，避免把背景强边缘误当成道路表面。
     """
 
     height = image.shape[0]
@@ -456,6 +519,14 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
         & (hsv_roi[:, :, 1] <= VISION_PROFILE["road_sat_max"])
     ).astype(np.uint8) * 255
 
+    # 草地 mask：高饱和绿。沥青是低饱和灰，必不落在此区间；用于从道路 mask 中扣除草地。
+    grass_roi = (
+        (hsv_roi[:, :, 0] >= VISION_PROFILE["grass_hue_min"])
+        & (hsv_roi[:, :, 0] <= VISION_PROFILE["grass_hue_max"])
+        & (hsv_roi[:, :, 1] >= VISION_PROFILE["grass_sat_min"])
+        & (hsv_roi[:, :, 2] >= VISION_PROFILE["grass_value_min"])
+    )
+
     lab_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
     road_lab = _road_color_from_patch(lab_roi)
     distance = np.sqrt(np.sum((lab_roi - road_lab) ** 2, axis=2))
@@ -463,9 +534,28 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
 
     dark_fill_ratio = float(np.count_nonzero(dark_road_roi)) / max(float(dark_road_roi.size), 1.0)
     if dark_fill_ratio >= VISION_PROFILE["dark_mask_min_fill"]:
-        road_roi = dark_road_roi
+        road_roi = dark_road_roi.copy()
     else:
-        road_roi = color_roi
+        # 暗沥青 mask 稀疏（远处只剩细条路面）才回退颜色 mask；并入暗 mask 保住那条沥青，
+        # 颜色种子可能落在草上，靠下一步扣草兜底。
+        road_roi = color_roi | dark_road_roi
+
+    # 统一扣除草地：无论用哪条 mask，草都不算路。偏出赛道正对草地时 mask 会塌到近空 → 低置信 → lost。
+    road_roi[grass_roi] = 0
+
+    # checkpoint 蓝色门是半透明、横跨在赛道上的——门后就是可行驶路面。把门并入道路 mask，
+    # 避免它把走廊在中段截断（弯道里只剩近处点 → edge fallback → 朝栏杆打/剐蹭）。
+    # 注意：这会让部分含天空的帧 mask 饱和 → 被判 lost，离线 per-frame lost 率会明显升高。
+    # 但 lost 时车是直线滑行（不停车、不偏出），这是良性的——实车验证（R005/C003）是迄今最好
+    # 的一版：蓝门前大拐弯和过弯剐蹭都消失。**不要用离线 lost 率否决这版**（详见 notes.md R005）。
+    barrier_roi = (
+        (hsv_roi[:, :, 0] >= VISION_PROFILE["barrier_hue_min"])
+        & (hsv_roi[:, :, 0] <= VISION_PROFILE["barrier_hue_max"])
+        & (hsv_roi[:, :, 1] >= VISION_PROFILE["barrier_sat_min"])
+        & (hsv_roi[:, :, 2] >= VISION_PROFILE["barrier_value_min"])
+        & (hsv_roi[:, :, 2] <= VISION_PROFILE["barrier_value_max"])
+    )
+    road_roi[barrier_roi] = 255
 
     kernel = np.ones((5, 5), dtype=np.uint8)
     road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_OPEN, kernel, iterations=1)
@@ -572,6 +662,41 @@ def _filter_segments(
     return filtered
 
 
+def _filter_fallback_segments(
+    segments: list[tuple[int, int]],
+    width: int,
+    previous_center: float,
+    has_previous: bool,
+) -> list[tuple[int, int]]:
+    """过滤容易由白线碎片生成的窄 fallback 走廊。
+
+    功能：避免近处孤立车道线/接缝小段把扫描 seed 拉到内侧。
+    参数：`segments` 是边缘 fallback 候选，`previous_center` 是上一条中心。
+    返回：过滤后的候选区间。
+    逻辑：宽 fallback 正常保留；窄 fallback 只有在靠近画面中心或延续上一中心时才可用。
+    """
+
+    if not segments:
+        return []
+
+    min_width = float(VISION_PROFILE["fallback_min_segment_width"])
+    initial_center_limit = float(width) * VISION_PROFILE["fallback_initial_center_max_offset"]
+    narrow_jump_limit = float(width) * VISION_PROFILE["fallback_narrow_jump_max_ratio"]
+    image_center = float(width) * 0.5
+
+    filtered = []
+    for left, right in segments:
+        segment_width = float(right - left + 1)
+        center = (float(left) + float(right)) * 0.5
+        if segment_width >= min_width:
+            filtered.append((left, right))
+        elif not has_previous and abs(center - image_center) <= initial_center_limit:
+            filtered.append((left, right))
+        elif has_previous and abs(center - previous_center) <= narrow_jump_limit:
+            filtered.append((left, right))
+    return filtered
+
+
 def _localize_wide_segment(
     segment: tuple[int, int],
     previous_center: float,
@@ -646,6 +771,7 @@ def _pick_segment(
             width,
             max_width_ratio=max_width_ratio,
         )
+        candidates = _filter_fallback_segments(candidates, width, previous_center, has_previous)
         used_fallback = bool(candidates)
     if not candidates:
         return None, used_fallback
@@ -671,7 +797,8 @@ def _score_scan(
     功能：综合有效扫描线、宽度稳定性、中心稳定性和纹理分数。
     参数：扫描点、宽度序列、纹理分数、mask 命中率和 fallback 次数。
     返回：置信度和调试标记。
-    逻辑：有效线太少、整图近似全命中或全不命中时显著降权。
+    逻辑：有效线太少、整图近似全不命中时重降权；饱和 mask 保留中等降权，
+    避免远处路面可见但底部草地铺满 ROI 时整段丢线。
     """
 
     debug_flags = 0
@@ -705,8 +832,11 @@ def _score_scan(
     if valid_count < min_valid:
         confidence *= valid_count / max(float(min_valid), 1.0)
         debug_flags |= 1
-    if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92:
-        confidence *= 0.25
+    if mask_fill_ratio < 0.015:
+        confidence *= VISION_PROFILE["empty_mask_confidence_scale"]
+        debug_flags |= 4
+    elif mask_fill_ratio > 0.92:
+        confidence *= VISION_PROFILE["saturated_mask_confidence_scale"]
         debug_flags |= 4
     if fallback_count:
         confidence *= max(0.55, 1.0 - 0.06 * fallback_count)
@@ -1002,25 +1132,42 @@ def _heading_from_fit(coeffs: np.ndarray, degree: int) -> float:
     return clamp(derivative * ESTIMATOR_PROFILE["heading_gain"], -1.0, 1.0)
 
 
+def _curvature_trust(n_points: int, y_span: float, fit_score: float) -> float:
+    """计算曲率可信度。
+
+    功能：当扫描点少、纵向跨度小或拟合误差大时，二次项不可信，可信度趋近 0。
+    参数：`n_points` 是中心点数，`y_span` 是纵向像素跨度，`fit_score` 是拟合质量分。
+    返回：`[0, 1]` 的可信度。
+    逻辑：远端被遮挡时只剩近处少量聚簇点，deg-2 二次系数是数值噪声（常被钳到 ±1、
+    甚至符号相反——在全程右弯的赛道上凭空出现"满信心左弯"）。三项必须同时达标才信曲率。
+    """
+
+    span = max(ESTIMATOR_PROFILE["curvature_full_points"] - ESTIMATOR_PROFILE["poly2_min_points"], 1.0)
+    n_score = clamp((float(n_points) - ESTIMATOR_PROFILE["poly2_min_points"]) / span, 0.0, 1.0)
+    span_score = clamp(y_span / ESTIMATOR_PROFILE["curvature_min_y_span"], 0.0, 1.0)
+    return clamp(n_score * span_score * clamp(fit_score, 0.0, 1.0), 0.0, 1.0)
+
+
 def _curvature_from_fit(
     coeffs: np.ndarray,
     degree: int,
     lateral_error: float,
     lookahead_error: float,
+    trust: float,
 ) -> float:
     """估计中心线曲率。
 
-    功能：二次拟合时用二次项，其他情况用远近误差差值兜底。
-    参数：拟合系数、阶数、近处误差和远处误差。
+    功能：二次拟合时用二次项，其他情况用远近误差差值兜底，并按可信度收缩。
+    参数：拟合系数、阶数、近处误差、远处误差和曲率可信度 `trust`。
     返回：右弯为正、左弯为负的曲率值。
-    逻辑：所有结果裁剪到 `[-1, 1]`，保持 policy 输入稳定。
+    逻辑：用 `trust` 把不可信的二次系数收向 0，避免幻觉急弯；再裁剪到 `[-1, 1]`。
     """
 
     if degree == 2:
         value = float(coeffs[0]) * ESTIMATOR_PROFILE["curvature_gain"]
     else:
         value = (lookahead_error - lateral_error) * ESTIMATOR_PROFILE["fallback_curvature_gain"]
-    return clamp(value, -1.0, 1.0)
+    return clamp(value * trust, -1.0, 1.0)
 
 
 def _fit_error_score(progress: np.ndarray, x_norm: np.ndarray, coeffs: np.ndarray) -> float:
@@ -1162,9 +1309,11 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         1.0,
     )
     heading_error = _heading_from_fit(coeffs, degree)
-    curvature = _curvature_from_fit(coeffs, degree, lateral_error, lookahead_error)
+    fit_score = _fit_error_score(progress, x_norm, coeffs)
+    curvature_trust = _curvature_trust(len(points), y_span, fit_score)
+    curvature = _curvature_from_fit(coeffs, degree, lateral_error, lookahead_error, curvature_trust)
 
-    confidence = _geometry_confidence(obs, points, y_span, _fit_error_score(progress, x_norm, coeffs))
+    confidence = _geometry_confidence(obs, points, y_span, fit_score)
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
         track = _lost_track(confidence, red_environment)
         _LAST_TRACK = track
@@ -1217,6 +1366,7 @@ _ESCAPE_STEERING_SIGN = 1.0
 _ESCAPE_STEERING_MAGNITUDE = 0.0
 _ESCAPE_SPEED = 0.0
 _LAST_TRACK_SIGNATURE = None
+_STRAIGHT_MEMORY_FRAMES = 0
 
 
 def reset_policy_state() -> None:
@@ -1231,7 +1381,7 @@ def reset_policy_state() -> None:
     global _LAST_STEERING, _LAST_SPEED, _LAST_TIMESTAMP
     global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
-    global _LAST_TRACK_SIGNATURE
+    global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -1245,6 +1395,7 @@ def reset_policy_state() -> None:
     _ESCAPE_STEERING_MAGNITUDE = 0.0
     _ESCAPE_SPEED = 0.0
     _LAST_TRACK_SIGNATURE = None
+    _STRAIGHT_MEMORY_FRAMES = 0
 
 
 def _maybe_reset_policy_by_timestamp(timestamp: float, profile: dict) -> None:
@@ -1269,6 +1420,25 @@ def _signed_power(value: float, power: float) -> float:
     """保留符号的幂函数。"""
 
     return math.copysign(abs(value) ** power, value)
+
+
+def _road_direction_sign(track: TrackState) -> float:
+    """估计应朝哪一侧打轮才能回到路面（左负右正）。
+
+    功能：为脱困提供"路在哪边"的方向，而不是写死方向或盲目反打上一帧。
+    参数：`track` 是当前赛道状态。
+    返回：`+1.0`（向右回到路面）或 `-1.0`（向左回到路面）。
+    逻辑：优先用当前横向误差；贴墙丢线时退回最近一次可信偏置；都不可用时反打上一帧舵角脱离。
+    """
+
+    reference = track.lateral_error
+    if abs(reference) <= 0.05:
+        reference = _LAST_GOOD_BIAS
+    if abs(reference) <= 1e-3:
+        reference = -_LAST_STEERING
+    if abs(reference) <= 1e-6:
+        return 1.0
+    return math.copysign(1.0, reference)
 
 
 def _control_signals(track: TrackState, profile: dict) -> dict:
@@ -1301,6 +1471,64 @@ def _control_signals(track: TrackState, profile: dict) -> dict:
         "turn_demand": turn_demand,
         "risk": risk,
     }
+
+
+def _is_straight_candidate(track: TrackState, signals: dict, profile: dict) -> bool:
+    """判断当前几何是否足够像直道。
+
+    功能：给直道提速和 lost 惯性滑行提供稳定判据。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`profile` 是控制参数。
+    返回：当前非丢线帧是否可以视为直道。
+    逻辑：主要看曲率、前瞻和横向偏移；heading 只做宽松兜底，避免噪声把直道判坏。
+    """
+
+    if track.lost or track.confidence < profile["lost_confidence"]:
+        return False
+    stable_curve = max(abs(track.curvature), abs(track.lookahead_error)) <= profile["straight_curve_max"]
+    centered = signals["offset_risk"] <= profile["straight_offset_max"]
+    heading_ok = abs(track.heading_error) <= profile["straight_heading_max"]
+    return stable_curve and centered and heading_ok
+
+
+def _is_lost_straight_coast_candidate(track: TrackState, signals: dict, profile: dict) -> bool:
+    """判断丢线帧是否仍可按直道惯性滑行。
+
+    功能：处理蓝门/天空造成的无观测帧，避免直道速度掉回 0.24。
+    参数：`track` 是已衰减的丢线状态，`signals` 是风险分量，`profile` 是控制参数。
+    返回：当前 lost 帧是否可安全维持直道速度。
+    逻辑：只接受居中、曲率/前瞻低、heading 不大且上一帧舵角很小的 lost 帧。
+    """
+
+    if not track.lost:
+        return False
+    stable_curve = max(abs(track.curvature), abs(track.lookahead_error)) <= profile["straight_curve_max"]
+    centered = signals["offset_risk"] <= profile["straight_offset_max"]
+    heading_ok = abs(track.heading_error) <= profile["straight_heading_max"]
+    steering_ok = abs(_LAST_STEERING) <= profile["straight_lost_steering_max"]
+    return stable_curve and centered and heading_ok and steering_ok
+
+
+def _update_straight_memory(track: TrackState, signals: dict, mode: str, profile: dict) -> bool:
+    """更新直道记忆并返回本帧是否允许直道滑行。
+
+    功能：让蓝门/天空造成的短暂 lost 不再立刻砸到 `lost_speed`。
+    参数：当前赛道状态、风险信号、驾驶状态和参数表。
+    返回：是否仍处在最近确认过的直道窗口内。
+    逻辑：非 lost 直道帧刷新记忆；lost 帧可消耗记忆，或在几何和上一帧舵角都很直时直接滑行。
+    """
+
+    global _STRAIGHT_MEMORY_FRAMES
+
+    if _is_straight_candidate(track, signals, profile):
+        _STRAIGHT_MEMORY_FRAMES = int(profile["straight_memory_frames"])
+        return True
+    if _STRAIGHT_MEMORY_FRAMES > 0 and mode == "lost":
+        _STRAIGHT_MEMORY_FRAMES -= 1
+        return True
+    if _is_lost_straight_coast_candidate(track, signals, profile):
+        return True
+    _STRAIGHT_MEMORY_FRAMES = 0
+    return False
 
 
 def _select_mode(track: TrackState, signals: dict, timestamp: float, profile: dict) -> str:
@@ -1342,6 +1570,17 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
         + track.heading_error * profile["gain_heading"]
         + track.curvature * profile["gain_curve"]
     )
+    # 入弯时机门控：直道上车还居中、近处还直时（lateral/heading≈0），远处的路已弯会让前瞻项
+    # 提前打轮→切内线贴栏杆。用近处弯量衡量"弯到了没"，弯没到就压制前瞻项，弯真正到了再放开，
+    # 让车跟着中心线、到弯了再转。带保守下限，避免压过头变成转太晚冲外侧。
+    corner_arrival = clamp(
+        abs(track.lateral_error) / profile["turn_in_lateral_ref"]
+        + abs(track.heading_error) / profile["turn_in_heading_ref"],
+        0.0,
+        1.0,
+    )
+    turn_in_gate = profile["turn_in_floor"] + (1.0 - profile["turn_in_floor"]) * corner_arrival
+    lookahead_term *= turn_in_gate
     near_weight = profile["near_weight_base"] + signals["offset_risk"] * profile["near_weight_offset_boost"]
     far_weight = profile["far_weight_base"] + signals["curve_risk"] * profile["far_weight_curve_boost"]
     if center_term * lookahead_term < 0.0:
@@ -1356,13 +1595,15 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
     raw += profile["gain_curve_nonlinear"] * _signed_power(track.curvature, 1.5)
 
     if mode == "lost":
-        raw = 0.75 * _LAST_STEERING + 0.25 * _LAST_GOOD_BIAS
+        # 不再死保上一帧舵角（贴墙时那正是把车怼进墙的舵），向最近可信道路方向
+        # 偏置靠拢并整体衰减，让车松开栏杆等感知恢复，真正的反向由脱困状态机负责。
+        raw = 0.50 * _LAST_STEERING + 0.20 * _LAST_GOOD_BIAS
     elif mode == "recovering":
         raw *= 0.70
     elif mode == "correcting":
         raw += track.lateral_error * 0.25
     elif mode == "hard_turn":
-        raw *= 1.05
+        raw *= profile["hard_turn_steering_scale"]
 
     if (
         track.red_environment
@@ -1403,23 +1644,36 @@ def _smooth_steering(target: float, mode: str, timestamp: float, profile: dict) 
     alpha = _steering_smoothing_for_mode(mode, profile)
     smoothed = _LAST_STEERING * alpha + target * (1.0 - alpha)
     dt_factor = max(1.0, _dt(timestamp, profile) / profile["nominal_dt"])
-    speed_factor = 1.0 - 0.35 * clamp(_LAST_SPEED / max(profile["max_speed"], 1e-6), 0.0, 1.0)
+    speed_norm = clamp(_LAST_SPEED / max(profile["max_speed"], 1e-6), 0.0, 1.0)
+    speed_factor = 1.0 - 0.35 * speed_norm
     max_delta = profile["max_steering_delta"] * dt_factor * speed_factor
     delta = clamp(smoothed - _LAST_STEERING, -max_delta, max_delta)
-    max_abs = profile["max_abs_steering"]
+    # 速度相关的转向幅值上限：高速时收舵，避免同样舵角在高速下半径过小切内线。
+    max_abs = profile["max_abs_steering"] * (1.0 - profile["steering_speed_cap_scale"] * speed_norm)
     return clamp(_LAST_STEERING + delta, -max_abs, max_abs)
 
 
-def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, timestamp: float, profile: dict) -> float:
+def _target_speed(
+    track: TrackState,
+    signals: dict,
+    mode: str,
+    steering: float,
+    timestamp: float,
+    profile: dict,
+    straight_memory_active: bool = False,
+) -> float:
     """计算目标速度。
 
     功能：用乘法降速组合弯道、偏移、置信度和转向风险。
-    参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部状态，`steering` 是当前转向。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部状态，`steering` 是当前转向；
+        `straight_memory_active` 表示最近刚确认过直道。
     返回：目标速度比例。
     逻辑：模式只限制速度上限，正常速度由风险因子相乘得到。
     """
 
     if mode == "lost":
+        if straight_memory_active:
+            return profile["straight_lost_speed"]
         return profile["lost_speed"]
 
     curve_factor = 1.0 - profile["curve_slowdown"] * (signals["curve_risk"] ** profile["curve_power"])
@@ -1439,6 +1693,11 @@ def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, 
         target = min(target, profile["hard_turn_speed"] + centered_bonus)
     elif mode == "correcting":
         target = min(target, profile["correction_speed"])
+    # 直道提速：几何明确为直时，速度不该被偏低的 mask 置信度或 recovering 限速压住。
+    # 判断主要看 curvature/lookahead/offset，heading 只做宽松兜底，避免噪声挡住直道加速。
+    straight = straight_memory_active or _is_straight_candidate(track, signals, profile)
+    if straight:
+        target = max(target, profile["straight_speed"])
     if timestamp < profile["start_caution_seconds"]:
         target = min(target, profile["start_speed"])
     return clamp(target, profile["min_speed"], profile["max_speed"])
@@ -1481,13 +1740,16 @@ def _escape_if_stalled(
     speed: float,
     mode: str,
     profile: dict,
+    allow_geometry_escape: bool,
 ) -> tuple[float, float, str]:
-    """在顶住边界时短暂反打脱困。
+    """在顶住边界时短暂脱困。
 
     功能：检测急弯大转向卡边，或长时间低速且几何签名几乎不变的状态。
-    参数：当前赛道状态、风险信号、已平滑的转向和速度、内部模式、参数表。
+    参数：当前赛道状态、风险信号、已平滑的转向和速度、内部模式、参数表，
+        `allow_geometry_escape` 控制是否启用依赖可靠几何的急弯/大偏移脱困（仅 complex）。
     返回：可能被覆盖后的 `(steering, speed, mode)`。
-    逻辑：急弯短反打；大偏移贴边长反打；低速稳态触发更慢，并固定向右侧脱离最终卡边。
+    逻辑：脱困方向统一朝感知到的路面一侧（远离顶住的栏杆），不再写死方向或盲目反打；
+        低速贴墙本就是低置信状态，所以低速脱困放宽置信度门槛，basic 也启用。
     """
 
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
@@ -1519,7 +1781,8 @@ def _escape_if_stalled(
         and track.lateral_error * track.lookahead_error >= profile["escape_offset_lookahead_alignment"]
     )
     large_offset_stall = (
-        mode in {"hard_turn", "correcting"}
+        allow_geometry_escape
+        and mode in {"hard_turn", "correcting"}
         and signals["offset_risk"] >= profile["escape_offset_threshold"]
         and speed <= profile["escape_offset_speed_threshold"]
         and abs(track.heading_error) <= profile["escape_offset_heading_abs_max"]
@@ -1527,10 +1790,20 @@ def _escape_if_stalled(
         and track.lateral_error * track.lookahead_error >= profile["escape_offset_lookahead_alignment"]
     )
     low_speed_stall = speed <= profile["escape_low_speed_threshold"]
+    # 顶住栏杆但速度还没塌到低速阈值（落在 low_speed 覆盖空档）：几何冻结 + 大偏移 + 大反向打轮。
+    pinned_stall = (
+        abs(track.lateral_error) >= profile["escape_pinned_lateral_min"]
+        and abs(steering) >= profile["escape_pinned_steering_min"]
+        and speed <= profile["escape_pinned_speed_max"]
+    )
     stable_view = signature_delta <= profile["escape_signature_delta"]
+
+    # 统一脱困方向：朝感知到的路面一侧打，远离顶住的栏杆。
+    escape_sign = _road_direction_sign(track)
+
     should_count_stall = False
+    require_confidence = True
     trigger_frames = int(profile["escape_trigger_frames"])
-    escape_sign = 1.0
     escape_frames = int(profile["escape_turn_frames"])
     escape_steering = profile["escape_turn_steering"]
     escape_speed = profile["escape_turn_speed"]
@@ -1540,28 +1813,28 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_offset_frames"])
         escape_steering = profile["escape_offset_steering"]
         escape_speed = profile["escape_offset_speed"]
-        reference = _LAST_STEERING if abs(_LAST_STEERING) > 0.05 else steering
-        if abs(reference) <= 0.05:
-            reference = track.lateral_error
-        escape_sign = -math.copysign(1.0, reference if reference else 1.0)
-    elif mode == "hard_turn" and high_turn and not aligned_offset:
+    elif allow_geometry_escape and mode == "hard_turn" and high_turn and not aligned_offset:
         should_count_stall = True
-        reference = _LAST_STEERING if abs(_LAST_STEERING) > 0.05 else steering
-        escape_sign = -math.copysign(1.0, reference if reference else 1.0)
+    elif pinned_stall:
+        # basic/complex 都启用：几何冻结地顶住栏杆、speed 又没低到触发 low_speed 时的兜底。
+        should_count_stall = True
+        trigger_frames = int(profile["escape_pinned_trigger_frames"])
+        escape_frames = int(profile["escape_pinned_frames"])
+        escape_steering = profile["escape_pinned_steering"]
+        escape_speed = profile["escape_pinned_speed"]
     elif low_speed_stall:
         should_count_stall = True
+        # 贴墙被卡本就是低置信/丢线状态，放宽门槛，否则脱困永远进不来。
+        require_confidence = False
         trigger_frames = int(profile["escape_low_speed_trigger_frames"])
         escape_frames = int(profile["escape_low_speed_frames"])
         escape_steering = profile["escape_low_speed_steering"]
         escape_speed = profile["escape_low_speed_speed"]
-        escape_sign = -1.0
 
-    if (
-        should_count_stall
-        and stable_view
-        and not track.lost
-        and track.confidence >= profile["escape_min_confidence"]
-    ):
+    confidence_ok = (not require_confidence) or (
+        not track.lost and track.confidence >= profile["escape_min_confidence"]
+    )
+    if should_count_stall and stable_view and confidence_ok:
         _STALL_FRAMES += 1
     else:
         _STALL_FRAMES = 0
@@ -1626,12 +1899,23 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     _maybe_reset_policy_by_timestamp(timestamp, profile)
     signals = _control_signals(track, profile)
     drive_mode = _select_mode(track, signals, timestamp, profile)
+    straight_memory_active = _update_straight_memory(track, signals, drive_mode, profile)
     target_steering = _target_steering(track, signals, drive_mode, profile)
     steering = _smooth_steering(target_steering, drive_mode, timestamp, profile)
-    target_speed = _target_speed(track, signals, drive_mode, steering, timestamp, profile)
+    target_speed = _target_speed(
+        track,
+        signals,
+        drive_mode,
+        steering,
+        timestamp,
+        profile,
+        straight_memory_active=straight_memory_active,
+    )
     speed = _smooth_speed(target_speed, timestamp, profile)
-    if track.red_environment:
-        steering, speed, drive_mode = _escape_if_stalled(track, signals, steering, speed, drive_mode, profile)
+    # 低速贴墙脱困两条赛道都启用；依赖可靠几何的急弯/大偏移脱困仍只在 complex(red)。
+    steering, speed, drive_mode = _escape_if_stalled(
+        track, signals, steering, speed, drive_mode, profile, track.red_environment
+    )
     _update_policy_state(track, steering, speed, drive_mode, timestamp, profile)
     return ControlCmd(steering, speed)
 
@@ -1647,7 +1931,130 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 """
 
 
+
 PROFILE = "safe"
+
+
+def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
+    if active.size == 0:
+        return []
+    padded = np.concatenate(([False], active.astype(bool), [False]))
+    changes = np.flatnonzero(padded[1:] != padded[:-1])
+    return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
+
+
+def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, float] | None:
+    """估计单个相机里的白色中心线。
+
+    功能：找连续的窄白色虚线，输出近处偏移、线方向和置信度。
+    参数：`image` 是 BGR 图像，`profile` 是白线跟踪参数。
+    返回：`(offset, heading, confidence)`；白线不足时返回 None。
+    逻辑：逐行找短白段并按连续性串起来，排除车身大白块和孤立噪声。
+    """
+
+    if image is None or not hasattr(image, "shape") or len(image.shape) != 3:
+        return None
+    height, width = image.shape[:2]
+    lower = int(profile["white_min"])
+    mask = cv2.inRange(image, (lower, lower, lower), (255, 255, 255))
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    rows = np.linspace(
+        int(height * profile["scan_bottom_ratio"]),
+        int(height * profile["scan_top_ratio"]),
+        int(profile["scan_count"]),
+        dtype=np.int32,
+    )
+    row_band = int(profile["row_band"])
+    min_width = float(profile["min_segment_width"])
+    max_width = float(profile["max_segment_width"])
+    initial_limit = float(width) * profile["initial_center_max_offset"]
+    jump_limit = float(width) * profile["max_center_jump_ratio"]
+    image_center = float(width) * 0.5
+
+    points = []
+    previous_center = image_center
+    has_previous = False
+    for y in rows:
+        y0 = max(int(y) - row_band, 0)
+        y1 = min(int(y) + row_band + 1, height)
+        band = mask[y0:y1, :]
+        active = np.count_nonzero(band, axis=0) >= 2
+        candidates = []
+        for left, right in _segments_from_active(active):
+            segment_width = float(right - left + 1)
+            if not (min_width <= segment_width <= max_width):
+                continue
+            center = (float(left) + float(right)) * 0.5
+            if not has_previous and abs(center - image_center) <= initial_limit:
+                candidates.append(center)
+            elif has_previous and abs(center - previous_center) <= jump_limit:
+                candidates.append(center)
+        if not candidates:
+            continue
+        center = min(candidates, key=lambda value: abs(value - previous_center))
+        points.append((center, float(y)))
+        previous_center = center
+        has_previous = True
+
+    min_points = int(profile["min_points_per_camera"])
+    if len(points) < min_points:
+        return None
+    point_arr = np.array(points, dtype=np.float32)
+    y = point_arr[:, 1]
+    x = point_arr[:, 0]
+    y_span = float(np.max(y) - np.min(y))
+    if y_span < float(profile["min_y_span"]):
+        return None
+    coeffs = np.polyfit(y, x, deg=1)
+    near_x = float(np.polyval(coeffs, height * profile["near_y_ratio"]))
+    far_x = float(np.polyval(coeffs, height * profile["far_y_ratio"]))
+    offset = (near_x - image_center) / max(image_center, 1.0)
+    heading = (far_x - near_x) / max(image_center, 1.0)
+    confidence = clamp(len(points) / float(profile["scan_count"]), 0.0, 1.0)
+    return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
+
+
+def _lane_line_correction(left_img, right_img, profile: dict) -> tuple[float, float] | None:
+    """融合左右相机白线误差。
+
+    功能：估计白线相对车身中轴的位置和方向。
+    参数：左右 BGR 图像和白线参数。
+    返回：`(correction, confidence)`；不可信时返回 None。
+    逻辑：左右相机都看到连续白线时才强校正，避免单目被车身、栏杆或断线误导。
+    """
+
+    if not profile["enable"]:
+        return None
+    left = _camera_line_state(left_img, profile)
+    right = _camera_line_state(right_img, profile)
+    if left is None or right is None:
+        return None
+    offset = (left[0] + right[0]) * 0.5
+    heading = (left[1] + right[1]) * 0.5
+    confidence = min(left[2], right[2])
+    if confidence < profile["min_confidence"]:
+        return None
+    correction = offset * profile["offset_gain"] + heading * profile["heading_gain"]
+    correction = clamp(correction, -profile["max_correction"], profile["max_correction"])
+    return correction, confidence
+
+
+def _apply_lane_line_correction(cmd: ControlCmd, left_img, right_img) -> ControlCmd:
+    """用白线误差小幅修正舵角。
+
+    功能：让车身中线追向白色虚线，同时保持原道路中心控制作为兜底。
+    参数：原始控制命令和左右相机图像。
+    返回：修正后的控制命令。
+    逻辑：白线可信时只加有限幅度的舵角修正，不直接覆盖速度和状态机。
+    """
+
+    line = _lane_line_correction(left_img, right_img, LINE_FOLLOW_PROFILE)
+    if line is None:
+        return cmd
+    correction, _confidence = line
+    return ControlCmd(clamp(cmd.steering + correction, -1.0, 1.0), cmd.speed)
 
 
 def control(left_img, right_img, timestamp):
@@ -1663,6 +2070,8 @@ def control(left_img, right_img, timestamp):
         obs = extract_observation(left_img, right_img, timestamp)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
-        return clamp_cmd(cmd)
+        cmd = _apply_lane_line_correction(cmd, left_img, right_img)
+        steering, speed = clamp_cmd(cmd)
+        return steering, speed
     except Exception:
         return 0.0, 0.0

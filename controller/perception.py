@@ -255,6 +255,41 @@ def _filter_segments(
     return filtered
 
 
+def _filter_fallback_segments(
+    segments: list[tuple[int, int]],
+    width: int,
+    previous_center: float,
+    has_previous: bool,
+) -> list[tuple[int, int]]:
+    """过滤容易由白线碎片生成的窄 fallback 走廊。
+
+    功能：避免近处孤立车道线/接缝小段把扫描 seed 拉到内侧。
+    参数：`segments` 是边缘 fallback 候选，`previous_center` 是上一条中心。
+    返回：过滤后的候选区间。
+    逻辑：宽 fallback 正常保留；窄 fallback 只有在靠近画面中心或延续上一中心时才可用。
+    """
+
+    if not segments:
+        return []
+
+    min_width = float(VISION_PROFILE["fallback_min_segment_width"])
+    initial_center_limit = float(width) * VISION_PROFILE["fallback_initial_center_max_offset"]
+    narrow_jump_limit = float(width) * VISION_PROFILE["fallback_narrow_jump_max_ratio"]
+    image_center = float(width) * 0.5
+
+    filtered = []
+    for left, right in segments:
+        segment_width = float(right - left + 1)
+        center = (float(left) + float(right)) * 0.5
+        if segment_width >= min_width:
+            filtered.append((left, right))
+        elif not has_previous and abs(center - image_center) <= initial_center_limit:
+            filtered.append((left, right))
+        elif has_previous and abs(center - previous_center) <= narrow_jump_limit:
+            filtered.append((left, right))
+    return filtered
+
+
 def _localize_wide_segment(
     segment: tuple[int, int],
     previous_center: float,
@@ -329,6 +364,7 @@ def _pick_segment(
             width,
             max_width_ratio=max_width_ratio,
         )
+        candidates = _filter_fallback_segments(candidates, width, previous_center, has_previous)
         used_fallback = bool(candidates)
     if not candidates:
         return None, used_fallback

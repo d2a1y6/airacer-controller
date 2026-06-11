@@ -9,7 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.params import VISION_PROFILE
-from controller.perception import _build_masks, _score_scan
+from controller.perception import (
+    _build_masks,
+    _filter_fallback_segments,
+    _score_scan,
+)
 
 
 def _three_stable_scan_lines():
@@ -75,3 +79,15 @@ def test_full_grass_view_collapses_mask():
     image[:, :] = (0, 200, 0)
     road_mask, _edge, _tex, mask_fill_ratio, _near = _build_masks(image)
     assert mask_fill_ratio < 0.015
+
+
+def test_narrow_far_fallback_segment_is_rejected_without_history():
+    # 第二个弯白线接缝会在近处生成远离中心的窄 edge fallback 段。
+    # 没有上一条中心线时不能用它当 seed，否则后续中心线会被拉向内侧栏杆。
+    assert _filter_fallback_segments([(512, 541)], 640, 320.0, has_previous=False) == []
+
+
+def test_narrow_fallback_segment_must_continue_previous_center():
+    # 有历史中心时，窄 fallback 只能做小幅延续；大跳变通常来自孤立白线/接缝。
+    assert _filter_fallback_segments([(205, 278)], 640, 411.0, has_previous=True) == []
+    assert _filter_fallback_segments([(382, 430)], 640, 411.0, has_previous=True) == [(382, 430)]

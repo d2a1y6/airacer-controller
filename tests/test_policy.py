@@ -16,8 +16,9 @@ def make_track(
     lookahead=0.0,
     confidence=0.95,
     lost=False,
+    red_environment=False,
 ):
-    return TrackState(lateral, heading, curvature, lookahead, confidence, lost)
+    return TrackState(lateral, heading, curvature, lookahead, confidence, lost, red_environment)
 
 
 def warm_policy(track, mode="fastest", steps=24):
@@ -60,14 +61,58 @@ def test_curves_control_sign_and_reduce_speed():
 
 def test_lost_track_uses_lost_speed():
     reset_policy_state()
-    cmd = warm_policy(make_track(confidence=0.0, lost=True), mode="fastest", steps=6)
+    cmd = warm_policy(
+        make_track(
+            lateral=0.22,
+            heading=0.36,
+            curvature=0.30,
+            lookahead=0.22,
+            confidence=0.0,
+            lost=True,
+        ),
+        mode="fastest",
+        steps=6,
+    )
     assert abs(cmd.speed - BASIC_CONTROL_OVERRIDES["lost_speed"]) < 0.03
     assert -1.0 <= cmd.steering <= 1.0
 
 
+def test_recent_straight_lost_track_keeps_speed():
+    reset_policy_state()
+    straight = make_track(confidence=0.85)
+    cmd = warm_policy(straight, mode="fastest", steps=32)
+    assert cmd.speed >= 0.90
+
+    lost = make_track(confidence=0.0, lost=True)
+    coast = decide_control(lost, 1.70, mode="fastest")
+    assert coast.speed >= 0.90
+
+
+def test_centered_lost_straight_coasts_fast_without_memory():
+    reset_policy_state()
+    lost = make_track(confidence=0.0, lost=True)
+    cmd = warm_policy(lost, mode="fastest", steps=20)
+    assert cmd.speed >= 0.90
+
+
+def test_lost_corner_does_not_use_straight_coast():
+    reset_policy_state()
+    turn_lost = make_track(
+        lateral=0.24,
+        heading=0.34,
+        curvature=0.30,
+        lookahead=0.28,
+        confidence=0.0,
+        lost=True,
+    )
+    cmd = warm_policy(turn_lost, mode="fastest", steps=4)
+    assert abs(cmd.speed - BASIC_CONTROL_OVERRIDES["lost_speed"]) < 0.03
+
+
 def test_low_confidence_stays_slow():
     reset_policy_state()
-    cmd = warm_policy(make_track(confidence=0.20), mode="fastest", steps=12)
+    track = make_track(heading=0.24, curvature=0.28, lookahead=0.25, confidence=0.20)
+    cmd = warm_policy(track, mode="fastest", steps=12)
     assert cmd.speed <= get_profile("fastest")["recovery_speed"]
 
 

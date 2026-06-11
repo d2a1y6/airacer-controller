@@ -32,6 +32,46 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R012 — complex 白线位置优先修正：通过首个左弯卡点，但未完整跑通 (2026-06-11, complex)
+- **构建**: working-tree；新增白线后置校正，白线位置优先、方向辅助；开启近车检测；同时降低远处前瞻/急弯舵角以放大转弯半径。
+- **配置**: world=complex, car_1, 单车, practice；正式 `submissions/final/team_controller.py`。
+- **记录完整性**: clean；telemetry 13758 帧，`t=0.03→440.26s`，归档到 `.tmp/recordings/complex_line_follow_long_2026_06_11/`。
+- **结果**: 未完整跑通。原先第一个左弯 `x≈183,y≈-27` 会直接长时间卡死；本版通过该区域，`t≈43.9→72.8s` 从 `x=180.0,y=-29.0` 行进到 `x=198.5,y=-15.1`。后续跑到 `t≈360.7s` 后在 `x≈-10,y≈-27` 近停，手动中止于 `t≈440.26s`。
+- **现象**: 第一个左弯从“死卡”变成“短暂停顿后通过”，说明白线位置优先校正方向有效，但 complex 仍有后段卡点。速度 mean=2.889、median=3.240、p95=5.550，近停占比 `<0.3=0.22`，主要来自末段近停。
+- **结论/下一步**: complex 还不能算跑通。下一步应针对 `x≈-10,y≈-27` 后段近停抓帧，而不是继续调第一个左弯。
+
+### R011 — basic 白线位置优先修正：车阵通过且速度恢复 (2026-06-11, basic)
+- **构建**: working-tree；同 R012，但在 basic 上验证加强后的白线位置修正。
+- **配置**: world=basic, car_1, 单车, practice；正式 `submissions/final/team_controller.py`。
+- **记录完整性**: clean；telemetry 8120 帧，`t=0.03→259.84s`，归档到 `.tmp/recordings/basic_line_follow_strong_2026_06_11/`。
+- **结果**: 手动中止于 `t≈259.84s`，车仍正常行驶。速度 mean=5.469、median=6.090、p95=6.100、max=6.120，近停占比 `<0.3=0.00`。
+- **现象**: 末段静态车阵不再撞 car5；车阵窗口 `y=95→135` 的 `x=-19.64→-19.38`，明显比失败版 `x≈-18` 更靠近中心线，末段车速保持 `≈6.10m/s`。用户仍肉眼指出若干路段车身没有完全骑在白线上，但车阵处已从撞车变为通过。
+- **结论/下一步**: basic 当前可继续作为调参基线；若继续追求“车身中线完全压白线”，需要在控制日志里记录白线 correction，按画面逐段调而不是再用固定偏置。
+
+### R010 — P2 白线接缝修复：闭环抓帧复查未见同类污染 (2026-06-11, basic)
+- **构建**: working-tree；在 R008 直道提速基础上，给 edge fallback 加窄段过滤：窄 fallback 只有靠近画面中心或延续上一条中心线时才允许作为扫描走廊。
+- **配置**: world=basic, car_1, 单车, practice；调试构建 `.tmp/run/team_controller_p2_dump.py`，控制日志 `.tmp/run/control_p2_webots_dump.jsonl`，相机帧 `.tmp/run/frames_p2_webots/`（stride=2）。
+- **记录完整性**: clean；控制日志 1316 帧，`t=0.03→42.11s`。telemetry 1316 帧，归档到 `.tmp/recordings/p2_webots_short_2026_06_11/`。
+- **结果**: 手动中止于 `t≈42.11s`。控制日志 mean|lat|=0.038、`|lat|>0.3` 占比 0.01；supervisor 速度 mean=4.882、median=6.080、p95=6.100，近停占比 `<0.3=0.00`，无事件。
+- **现象**: 当前速度更快，旧 C006 的第二弯时间窗不再是 `78-80s`，对应弯区约在 `t≈22.3-22.6s`。这段有短暂 hard_turn 峰值（最大 `lat=+0.403, heading=-0.730, steering=+0.300`），但 overlay `.tmp/p2_webots_peak_overlays/montage_p2_webots_peak.png` 显示扫描中心沿可行驶走廊/车道虚线连续走，不是 R007 那种近处孤立窄白线把 seed 拉到栏杆侧。
+- **结论/下一步**: P2 的“白线接缝污染中心线”已被当前过滤切掉。残留的 `t≈22s` 峰值更像弯中低置信 + 保守降速/走线问题，若继续优化，应单独作为入弯速度或轨迹平滑任务处理，不要回退这次 fallback 过滤。
+
+### R009 — P2 白线接缝修复：闭环 100s 控制日志短跑 (2026-06-11, basic)
+- **构建**: working-tree；同 R010 的 P2 fallback 过滤版本。
+- **配置**: world=basic, car_1, 单车, practice；调试构建 `.tmp/run/team_controller_p2_debug.py`，控制日志 `.tmp/run/control_p2_webots.jsonl`。
+- **记录完整性**: clean；控制日志 3138 帧，`t=0.03→100.42s`。本次 telemetry 后续被 R010 覆盖，未归档；跑后确认无 Webots 残留进程。
+- **结果**: 手动中止于 `t≈100.42s`，覆盖旧 C006 问题弯区。控制速度 mean=0.890、median=1.000、p95=1.000；mean|lat|=0.028、`|lat|>0.3` 占比约 0.00，mean|heading|=0.052。
+- **现象**: 旧日志 `78-80s` 的异常窗口在当前更快策略下已不对应同一赛段；该窗口当前是直道/丢线滑行，几何量接近 0。最大非 lost 横向峰值转移到 `t≈22.5s`，因此追加 R010 抓帧确认。
+- **结论/下一步**: 100s 闭环日志没有复现 R007 那种持续中心线污染；用 R010 的相机 overlay 判定峰值性质。
+
+### R008 — 直道 lost 滑行提速：干净复测速度已超过 1.5 (2026-06-11, basic)
+- **构建**: working-tree；在 C006 基础上调整 policy：直道判定主要看 `curvature/lookahead/lateral`，`heading` 只做宽松兜底；新增直道记忆和居中低舵 lost 直道滑行，basic 直道目标速度为 1.00。
+- **配置**: world=basic, car_1, 单车, practice；调试构建 `.tmp/run/team_controller_straight_speed_debug.py`，控制日志 `.tmp/run/control_straight_speed_clean2.jsonl`。
+- **记录完整性**: clean；跑前清空 SDK 录制目录，telemetry 3158 帧，控制日志 3157 帧，归档到 `.tmp/recordings/straight_speed_clean2_2026_06_11/`。
+- **结果**: 手动中止于 `t≈101.06s`。控制日志速度 mean=0.889、median=1.000、p95=1.000；supervisor 速度 mean=5.231、median=6.100、p95=6.100、max=6.120，近停占比 `<0.3=0.00`。
+- **现象**: 起步后直道候选帧 2568 帧，命令速度 median=1.000，真实速度 p05=3.18、p10=4.10、median=6.10，`world_speed>=1.5` 占比 1.000。高速小舵角命令帧 2351 帧，真实速度 p05=4.31，`>=1.5` 占比 1.000。
+- **结论/下一步**: “直道慢速”已在本地 Webots 干净复测中修复，直道真实速度稳定超过 1.5。后续若继续调，应转回第二个弯贴内线问题；不要再用单纯 lost 率否决本轮速度修复。
+
 ### R007 — C006 入弯门控 + 直道提速：部分见效，交接给 Codex (2026-06-11, basic)
 - **构建**: C004 之上叠加两项（均**实验性、按下方状态**）：
   - **入弯时机门控**（C005, policy）：前瞻项 ×`turn_in_gate`，`gate=0.55+0.45×corner_arrival`，`corner_arrival=|lateral|/0.30+|heading|/0.45`。车居中近处还直时压制前瞻项，弯到了再放开。

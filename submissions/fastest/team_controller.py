@@ -126,6 +126,9 @@ VISION_PROFILE = {
     "texture_gray_std_scale": 35.0,
     "min_segment_width": 24.0,
     "max_segment_gap": 90.0,
+    "fallback_min_segment_width": 96.0,
+    "fallback_initial_center_max_offset": 0.22,
+    "fallback_narrow_jump_max_ratio": 0.16,
     "early_max_segment_width_ratio": 0.995,
     "red_world_min_ratio": 0.05,
     "max_segment_width_ratio": 0.90,
@@ -143,16 +146,37 @@ VISION_PROFILE = {
 }
 
 OPPONENT_PROFILE = {
-    "enable_opponent_avoidance": False,
-    "near_obstacle_segment_gap": 48.0,
-    "near_obstacle_min_timestamp": 520.0,
-    "near_obstacle_scan_y_ratio": 0.58,
-    "near_obstacle_roi_top_ratio": 0.52,
+    "enable_opponent_avoidance": True,
+    "near_obstacle_segment_gap": 28.0,
+    "near_obstacle_min_timestamp": 0.0,
+    "near_obstacle_scan_y_ratio": 0.54,
+    "near_obstacle_roi_top_ratio": 0.48,
     "near_obstacle_roi_bottom_ratio": 0.94,
     "near_obstacle_roi_x_margin_ratio": 0.08,
     "near_obstacle_min_area": 700.0,
     "near_obstacle_min_width": 28.0,
     "near_obstacle_min_height": 18.0,
+}
+
+LINE_FOLLOW_PROFILE = {
+    "enable": True,
+    "white_min": 145.0,
+    "scan_top_ratio": 0.48,
+    "scan_bottom_ratio": 0.86,
+    "scan_count": 9,
+    "row_band": 3,
+    "min_segment_width": 3.0,
+    "max_segment_width": 70.0,
+    "initial_center_max_offset": 0.40,
+    "max_center_jump_ratio": 0.24,
+    "min_points_per_camera": 3,
+    "min_y_span": 70.0,
+    "near_y_ratio": 0.78,
+    "far_y_ratio": 0.55,
+    "min_confidence": 0.30,
+    "offset_gain": 0.76,
+    "heading_gain": 0.18,
+    "max_correction": 0.34,
 }
 
 ESTIMATOR_PROFILE = {
@@ -197,7 +221,11 @@ CONTROL = {
     "min_speed": 0.16,
     "straight_curve_max": 0.12,
     "straight_offset_max": 0.12,
-    "straight_speed": 0.72,
+    "straight_heading_max": 0.28,
+    "straight_lost_steering_max": 0.12,
+    "straight_memory_frames": 48,
+    "straight_speed": 0.95,
+    "straight_lost_speed": 0.92,
     "start_caution_seconds": 0.8,
     "start_speed": 0.36,
     "lost_confidence": 0.10,
@@ -221,19 +249,19 @@ CONTROL = {
     "far_conflict_offset_start": 0.18,
     "far_conflict_offset_scale": 2.00,
     "far_conflict_min_scale": 0.22,
-    "gain_lateral": 0.65,
-    "gain_lookahead": 0.90,
-    "gain_heading": 0.86,
-    "gain_curve": 0.18,
-    "gain_lateral_nonlinear": 0.18,
-    "gain_curve_nonlinear": 0.04,
+    "gain_lateral": 0.80,
+    "gain_lookahead": 0.72,
+    "gain_heading": 0.72,
+    "gain_curve": 0.12,
+    "gain_lateral_nonlinear": 0.22,
+    "gain_curve_nonlinear": 0.02,
     "turn_in_floor": 0.55,
     "turn_in_lateral_ref": 0.30,
     "turn_in_heading_ref": 0.45,
     "steering_deadzone": 0.015,
-    "max_abs_steering": 0.82,
-    "hard_turn_steering_scale": 1.00,
-    "steering_speed_cap_scale": 0.22,
+    "max_abs_steering": 0.76,
+    "hard_turn_steering_scale": 0.84,
+    "steering_speed_cap_scale": 0.36,
     "inside_left_lateral_min": 0.05,
     "inside_left_heading_max": -0.24,
     "inside_left_curvature_max": -0.45,
@@ -288,20 +316,23 @@ CONTROL = {
 BASIC_CONTROL_OVERRIDES = {
     "lost_speed": 0.24,
     "recovery_speed": 0.38,
-    "straight_speed": 0.78,
+    "straight_speed": 1.00,
+    "straight_lost_speed": 1.00,
     "hard_turn_speed": 0.30,
     "hard_turn_center_speed_bonus": 0.30,
     "correction_speed": 0.50,
-    "far_weight_curve_boost": 0.45,
     "far_conflict_offset_start": 0.00,
     "far_conflict_offset_scale": 3.20,
     "far_conflict_min_scale": 0.05,
-    "gain_heading": 0.90,
-    "gain_curve": 0.25,
-    "near_weight_offset_boost": 0.45,
-    "max_abs_steering": 0.88,
-    "hard_turn_steering_scale": 0.95,
-    "steering_speed_cap_scale": 0.30,
+    "gain_lateral": 0.86,
+    "gain_lookahead": 0.68,
+    "gain_heading": 0.68,
+    "gain_curve": 0.10,
+    "near_weight_offset_boost": 0.58,
+    "far_weight_curve_boost": 0.28,
+    "max_abs_steering": 0.74,
+    "hard_turn_steering_scale": 0.78,
+    "steering_speed_cap_scale": 0.42,
     "curve_slowdown": 0.70,
     "curve_power": 1.35,
     "steering_slowdown": 0.28,
@@ -631,6 +662,41 @@ def _filter_segments(
     return filtered
 
 
+def _filter_fallback_segments(
+    segments: list[tuple[int, int]],
+    width: int,
+    previous_center: float,
+    has_previous: bool,
+) -> list[tuple[int, int]]:
+    """过滤容易由白线碎片生成的窄 fallback 走廊。
+
+    功能：避免近处孤立车道线/接缝小段把扫描 seed 拉到内侧。
+    参数：`segments` 是边缘 fallback 候选，`previous_center` 是上一条中心。
+    返回：过滤后的候选区间。
+    逻辑：宽 fallback 正常保留；窄 fallback 只有在靠近画面中心或延续上一中心时才可用。
+    """
+
+    if not segments:
+        return []
+
+    min_width = float(VISION_PROFILE["fallback_min_segment_width"])
+    initial_center_limit = float(width) * VISION_PROFILE["fallback_initial_center_max_offset"]
+    narrow_jump_limit = float(width) * VISION_PROFILE["fallback_narrow_jump_max_ratio"]
+    image_center = float(width) * 0.5
+
+    filtered = []
+    for left, right in segments:
+        segment_width = float(right - left + 1)
+        center = (float(left) + float(right)) * 0.5
+        if segment_width >= min_width:
+            filtered.append((left, right))
+        elif not has_previous and abs(center - image_center) <= initial_center_limit:
+            filtered.append((left, right))
+        elif has_previous and abs(center - previous_center) <= narrow_jump_limit:
+            filtered.append((left, right))
+    return filtered
+
+
 def _localize_wide_segment(
     segment: tuple[int, int],
     previous_center: float,
@@ -705,6 +771,7 @@ def _pick_segment(
             width,
             max_width_ratio=max_width_ratio,
         )
+        candidates = _filter_fallback_segments(candidates, width, previous_center, has_previous)
         used_fallback = bool(candidates)
     if not candidates:
         return None, used_fallback
@@ -1299,6 +1366,7 @@ _ESCAPE_STEERING_SIGN = 1.0
 _ESCAPE_STEERING_MAGNITUDE = 0.0
 _ESCAPE_SPEED = 0.0
 _LAST_TRACK_SIGNATURE = None
+_STRAIGHT_MEMORY_FRAMES = 0
 
 
 def reset_policy_state() -> None:
@@ -1313,7 +1381,7 @@ def reset_policy_state() -> None:
     global _LAST_STEERING, _LAST_SPEED, _LAST_TIMESTAMP
     global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
-    global _LAST_TRACK_SIGNATURE
+    global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -1327,6 +1395,7 @@ def reset_policy_state() -> None:
     _ESCAPE_STEERING_MAGNITUDE = 0.0
     _ESCAPE_SPEED = 0.0
     _LAST_TRACK_SIGNATURE = None
+    _STRAIGHT_MEMORY_FRAMES = 0
 
 
 def _maybe_reset_policy_by_timestamp(timestamp: float, profile: dict) -> None:
@@ -1402,6 +1471,64 @@ def _control_signals(track: TrackState, profile: dict) -> dict:
         "turn_demand": turn_demand,
         "risk": risk,
     }
+
+
+def _is_straight_candidate(track: TrackState, signals: dict, profile: dict) -> bool:
+    """判断当前几何是否足够像直道。
+
+    功能：给直道提速和 lost 惯性滑行提供稳定判据。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`profile` 是控制参数。
+    返回：当前非丢线帧是否可以视为直道。
+    逻辑：主要看曲率、前瞻和横向偏移；heading 只做宽松兜底，避免噪声把直道判坏。
+    """
+
+    if track.lost or track.confidence < profile["lost_confidence"]:
+        return False
+    stable_curve = max(abs(track.curvature), abs(track.lookahead_error)) <= profile["straight_curve_max"]
+    centered = signals["offset_risk"] <= profile["straight_offset_max"]
+    heading_ok = abs(track.heading_error) <= profile["straight_heading_max"]
+    return stable_curve and centered and heading_ok
+
+
+def _is_lost_straight_coast_candidate(track: TrackState, signals: dict, profile: dict) -> bool:
+    """判断丢线帧是否仍可按直道惯性滑行。
+
+    功能：处理蓝门/天空造成的无观测帧，避免直道速度掉回 0.24。
+    参数：`track` 是已衰减的丢线状态，`signals` 是风险分量，`profile` 是控制参数。
+    返回：当前 lost 帧是否可安全维持直道速度。
+    逻辑：只接受居中、曲率/前瞻低、heading 不大且上一帧舵角很小的 lost 帧。
+    """
+
+    if not track.lost:
+        return False
+    stable_curve = max(abs(track.curvature), abs(track.lookahead_error)) <= profile["straight_curve_max"]
+    centered = signals["offset_risk"] <= profile["straight_offset_max"]
+    heading_ok = abs(track.heading_error) <= profile["straight_heading_max"]
+    steering_ok = abs(_LAST_STEERING) <= profile["straight_lost_steering_max"]
+    return stable_curve and centered and heading_ok and steering_ok
+
+
+def _update_straight_memory(track: TrackState, signals: dict, mode: str, profile: dict) -> bool:
+    """更新直道记忆并返回本帧是否允许直道滑行。
+
+    功能：让蓝门/天空造成的短暂 lost 不再立刻砸到 `lost_speed`。
+    参数：当前赛道状态、风险信号、驾驶状态和参数表。
+    返回：是否仍处在最近确认过的直道窗口内。
+    逻辑：非 lost 直道帧刷新记忆；lost 帧可消耗记忆，或在几何和上一帧舵角都很直时直接滑行。
+    """
+
+    global _STRAIGHT_MEMORY_FRAMES
+
+    if _is_straight_candidate(track, signals, profile):
+        _STRAIGHT_MEMORY_FRAMES = int(profile["straight_memory_frames"])
+        return True
+    if _STRAIGHT_MEMORY_FRAMES > 0 and mode == "lost":
+        _STRAIGHT_MEMORY_FRAMES -= 1
+        return True
+    if _is_lost_straight_coast_candidate(track, signals, profile):
+        return True
+    _STRAIGHT_MEMORY_FRAMES = 0
+    return False
 
 
 def _select_mode(track: TrackState, signals: dict, timestamp: float, profile: dict) -> str:
@@ -1526,16 +1653,27 @@ def _smooth_steering(target: float, mode: str, timestamp: float, profile: dict) 
     return clamp(_LAST_STEERING + delta, -max_abs, max_abs)
 
 
-def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, timestamp: float, profile: dict) -> float:
+def _target_speed(
+    track: TrackState,
+    signals: dict,
+    mode: str,
+    steering: float,
+    timestamp: float,
+    profile: dict,
+    straight_memory_active: bool = False,
+) -> float:
     """计算目标速度。
 
     功能：用乘法降速组合弯道、偏移、置信度和转向风险。
-    参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部状态，`steering` 是当前转向。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部状态，`steering` 是当前转向；
+        `straight_memory_active` 表示最近刚确认过直道。
     返回：目标速度比例。
     逻辑：模式只限制速度上限，正常速度由风险因子相乘得到。
     """
 
     if mode == "lost":
+        if straight_memory_active:
+            return profile["straight_lost_speed"]
         return profile["lost_speed"]
 
     curve_factor = 1.0 - profile["curve_slowdown"] * (signals["curve_risk"] ** profile["curve_power"])
@@ -1555,13 +1693,9 @@ def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, 
         target = min(target, profile["hard_turn_speed"] + centered_bonus)
     elif mode == "correcting":
         target = min(target, profile["correction_speed"])
-    # 直道提速：几何明确为直（弯道与偏移风险都很低）时，速度不该被偏低的 mask 置信度或
-    # recovering 限速压住——直行很安全，可以快。给一个速度下限，越过这些压制。一旦前方有弯，
-    # curve_risk（含 lookahead）会上升使该条件失效，提前退出加速。
-    straight = (
-        signals["curve_risk"] <= profile["straight_curve_max"]
-        and signals["offset_risk"] <= profile["straight_offset_max"]
-    )
+    # 直道提速：几何明确为直时，速度不该被偏低的 mask 置信度或 recovering 限速压住。
+    # 判断主要看 curvature/lookahead/offset，heading 只做宽松兜底，避免噪声挡住直道加速。
+    straight = straight_memory_active or _is_straight_candidate(track, signals, profile)
     if straight:
         target = max(target, profile["straight_speed"])
     if timestamp < profile["start_caution_seconds"]:
@@ -1765,9 +1899,18 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     _maybe_reset_policy_by_timestamp(timestamp, profile)
     signals = _control_signals(track, profile)
     drive_mode = _select_mode(track, signals, timestamp, profile)
+    straight_memory_active = _update_straight_memory(track, signals, drive_mode, profile)
     target_steering = _target_steering(track, signals, drive_mode, profile)
     steering = _smooth_steering(target_steering, drive_mode, timestamp, profile)
-    target_speed = _target_speed(track, signals, drive_mode, steering, timestamp, profile)
+    target_speed = _target_speed(
+        track,
+        signals,
+        drive_mode,
+        steering,
+        timestamp,
+        profile,
+        straight_memory_active=straight_memory_active,
+    )
     speed = _smooth_speed(target_speed, timestamp, profile)
     # 低速贴墙脱困两条赛道都启用；依赖可靠几何的急弯/大偏移脱困仍只在 complex(red)。
     steering, speed, drive_mode = _escape_if_stalled(
@@ -1788,7 +1931,130 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 """
 
 
+
 PROFILE = "fastest"
+
+
+def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
+    if active.size == 0:
+        return []
+    padded = np.concatenate(([False], active.astype(bool), [False]))
+    changes = np.flatnonzero(padded[1:] != padded[:-1])
+    return [(int(changes[i]), int(changes[i + 1] - 1)) for i in range(0, len(changes), 2)]
+
+
+def _camera_line_state(image: np.ndarray, profile: dict) -> tuple[float, float, float] | None:
+    """估计单个相机里的白色中心线。
+
+    功能：找连续的窄白色虚线，输出近处偏移、线方向和置信度。
+    参数：`image` 是 BGR 图像，`profile` 是白线跟踪参数。
+    返回：`(offset, heading, confidence)`；白线不足时返回 None。
+    逻辑：逐行找短白段并按连续性串起来，排除车身大白块和孤立噪声。
+    """
+
+    if image is None or not hasattr(image, "shape") or len(image.shape) != 3:
+        return None
+    height, width = image.shape[:2]
+    lower = int(profile["white_min"])
+    mask = cv2.inRange(image, (lower, lower, lower), (255, 255, 255))
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    rows = np.linspace(
+        int(height * profile["scan_bottom_ratio"]),
+        int(height * profile["scan_top_ratio"]),
+        int(profile["scan_count"]),
+        dtype=np.int32,
+    )
+    row_band = int(profile["row_band"])
+    min_width = float(profile["min_segment_width"])
+    max_width = float(profile["max_segment_width"])
+    initial_limit = float(width) * profile["initial_center_max_offset"]
+    jump_limit = float(width) * profile["max_center_jump_ratio"]
+    image_center = float(width) * 0.5
+
+    points = []
+    previous_center = image_center
+    has_previous = False
+    for y in rows:
+        y0 = max(int(y) - row_band, 0)
+        y1 = min(int(y) + row_band + 1, height)
+        band = mask[y0:y1, :]
+        active = np.count_nonzero(band, axis=0) >= 2
+        candidates = []
+        for left, right in _segments_from_active(active):
+            segment_width = float(right - left + 1)
+            if not (min_width <= segment_width <= max_width):
+                continue
+            center = (float(left) + float(right)) * 0.5
+            if not has_previous and abs(center - image_center) <= initial_limit:
+                candidates.append(center)
+            elif has_previous and abs(center - previous_center) <= jump_limit:
+                candidates.append(center)
+        if not candidates:
+            continue
+        center = min(candidates, key=lambda value: abs(value - previous_center))
+        points.append((center, float(y)))
+        previous_center = center
+        has_previous = True
+
+    min_points = int(profile["min_points_per_camera"])
+    if len(points) < min_points:
+        return None
+    point_arr = np.array(points, dtype=np.float32)
+    y = point_arr[:, 1]
+    x = point_arr[:, 0]
+    y_span = float(np.max(y) - np.min(y))
+    if y_span < float(profile["min_y_span"]):
+        return None
+    coeffs = np.polyfit(y, x, deg=1)
+    near_x = float(np.polyval(coeffs, height * profile["near_y_ratio"]))
+    far_x = float(np.polyval(coeffs, height * profile["far_y_ratio"]))
+    offset = (near_x - image_center) / max(image_center, 1.0)
+    heading = (far_x - near_x) / max(image_center, 1.0)
+    confidence = clamp(len(points) / float(profile["scan_count"]), 0.0, 1.0)
+    return clamp(offset, -1.0, 1.0), clamp(heading, -1.0, 1.0), confidence
+
+
+def _lane_line_correction(left_img, right_img, profile: dict) -> tuple[float, float] | None:
+    """融合左右相机白线误差。
+
+    功能：估计白线相对车身中轴的位置和方向。
+    参数：左右 BGR 图像和白线参数。
+    返回：`(correction, confidence)`；不可信时返回 None。
+    逻辑：左右相机都看到连续白线时才强校正，避免单目被车身、栏杆或断线误导。
+    """
+
+    if not profile["enable"]:
+        return None
+    left = _camera_line_state(left_img, profile)
+    right = _camera_line_state(right_img, profile)
+    if left is None or right is None:
+        return None
+    offset = (left[0] + right[0]) * 0.5
+    heading = (left[1] + right[1]) * 0.5
+    confidence = min(left[2], right[2])
+    if confidence < profile["min_confidence"]:
+        return None
+    correction = offset * profile["offset_gain"] + heading * profile["heading_gain"]
+    correction = clamp(correction, -profile["max_correction"], profile["max_correction"])
+    return correction, confidence
+
+
+def _apply_lane_line_correction(cmd: ControlCmd, left_img, right_img) -> ControlCmd:
+    """用白线误差小幅修正舵角。
+
+    功能：让车身中线追向白色虚线，同时保持原道路中心控制作为兜底。
+    参数：原始控制命令和左右相机图像。
+    返回：修正后的控制命令。
+    逻辑：白线可信时只加有限幅度的舵角修正，不直接覆盖速度和状态机。
+    """
+
+    line = _lane_line_correction(left_img, right_img, LINE_FOLLOW_PROFILE)
+    if line is None:
+        return cmd
+    correction, _confidence = line
+    return ControlCmd(clamp(cmd.steering + correction, -1.0, 1.0), cmd.speed)
 
 
 def control(left_img, right_img, timestamp):
@@ -1804,6 +2070,8 @@ def control(left_img, right_img, timestamp):
         obs = extract_observation(left_img, right_img, timestamp)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
-        return clamp_cmd(cmd)
+        cmd = _apply_lane_line_correction(cmd, left_img, right_img)
+        steering, speed = clamp_cmd(cmd)
+        return steering, speed
     except Exception:
         return 0.0, 0.0

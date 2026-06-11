@@ -23,6 +23,7 @@ _ESCAPE_STEERING_SIGN = 1.0
 _ESCAPE_STEERING_MAGNITUDE = 0.0
 _ESCAPE_SPEED = 0.0
 _LAST_TRACK_SIGNATURE = None
+_STRAIGHT_MEMORY_FRAMES = 0
 
 
 def reset_policy_state() -> None:
@@ -37,7 +38,7 @@ def reset_policy_state() -> None:
     global _LAST_STEERING, _LAST_SPEED, _LAST_TIMESTAMP
     global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
-    global _LAST_TRACK_SIGNATURE
+    global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -51,6 +52,7 @@ def reset_policy_state() -> None:
     _ESCAPE_STEERING_MAGNITUDE = 0.0
     _ESCAPE_SPEED = 0.0
     _LAST_TRACK_SIGNATURE = None
+    _STRAIGHT_MEMORY_FRAMES = 0
 
 
 def _maybe_reset_policy_by_timestamp(timestamp: float, profile: dict) -> None:
@@ -126,6 +128,64 @@ def _control_signals(track: TrackState, profile: dict) -> dict:
         "turn_demand": turn_demand,
         "risk": risk,
     }
+
+
+def _is_straight_candidate(track: TrackState, signals: dict, profile: dict) -> bool:
+    """判断当前几何是否足够像直道。
+
+    功能：给直道提速和 lost 惯性滑行提供稳定判据。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`profile` 是控制参数。
+    返回：当前非丢线帧是否可以视为直道。
+    逻辑：主要看曲率、前瞻和横向偏移；heading 只做宽松兜底，避免噪声把直道判坏。
+    """
+
+    if track.lost or track.confidence < profile["lost_confidence"]:
+        return False
+    stable_curve = max(abs(track.curvature), abs(track.lookahead_error)) <= profile["straight_curve_max"]
+    centered = signals["offset_risk"] <= profile["straight_offset_max"]
+    heading_ok = abs(track.heading_error) <= profile["straight_heading_max"]
+    return stable_curve and centered and heading_ok
+
+
+def _is_lost_straight_coast_candidate(track: TrackState, signals: dict, profile: dict) -> bool:
+    """判断丢线帧是否仍可按直道惯性滑行。
+
+    功能：处理蓝门/天空造成的无观测帧，避免直道速度掉回 0.24。
+    参数：`track` 是已衰减的丢线状态，`signals` 是风险分量，`profile` 是控制参数。
+    返回：当前 lost 帧是否可安全维持直道速度。
+    逻辑：只接受居中、曲率/前瞻低、heading 不大且上一帧舵角很小的 lost 帧。
+    """
+
+    if not track.lost:
+        return False
+    stable_curve = max(abs(track.curvature), abs(track.lookahead_error)) <= profile["straight_curve_max"]
+    centered = signals["offset_risk"] <= profile["straight_offset_max"]
+    heading_ok = abs(track.heading_error) <= profile["straight_heading_max"]
+    steering_ok = abs(_LAST_STEERING) <= profile["straight_lost_steering_max"]
+    return stable_curve and centered and heading_ok and steering_ok
+
+
+def _update_straight_memory(track: TrackState, signals: dict, mode: str, profile: dict) -> bool:
+    """更新直道记忆并返回本帧是否允许直道滑行。
+
+    功能：让蓝门/天空造成的短暂 lost 不再立刻砸到 `lost_speed`。
+    参数：当前赛道状态、风险信号、驾驶状态和参数表。
+    返回：是否仍处在最近确认过的直道窗口内。
+    逻辑：非 lost 直道帧刷新记忆；lost 帧可消耗记忆，或在几何和上一帧舵角都很直时直接滑行。
+    """
+
+    global _STRAIGHT_MEMORY_FRAMES
+
+    if _is_straight_candidate(track, signals, profile):
+        _STRAIGHT_MEMORY_FRAMES = int(profile["straight_memory_frames"])
+        return True
+    if _STRAIGHT_MEMORY_FRAMES > 0 and mode == "lost":
+        _STRAIGHT_MEMORY_FRAMES -= 1
+        return True
+    if _is_lost_straight_coast_candidate(track, signals, profile):
+        return True
+    _STRAIGHT_MEMORY_FRAMES = 0
+    return False
 
 
 def _select_mode(track: TrackState, signals: dict, timestamp: float, profile: dict) -> str:
@@ -250,16 +310,27 @@ def _smooth_steering(target: float, mode: str, timestamp: float, profile: dict) 
     return clamp(_LAST_STEERING + delta, -max_abs, max_abs)
 
 
-def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, timestamp: float, profile: dict) -> float:
+def _target_speed(
+    track: TrackState,
+    signals: dict,
+    mode: str,
+    steering: float,
+    timestamp: float,
+    profile: dict,
+    straight_memory_active: bool = False,
+) -> float:
     """计算目标速度。
 
     功能：用乘法降速组合弯道、偏移、置信度和转向风险。
-    参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部状态，`steering` 是当前转向。
+    参数：`track` 是赛道状态，`signals` 是风险分量，`mode` 是内部状态，`steering` 是当前转向；
+        `straight_memory_active` 表示最近刚确认过直道。
     返回：目标速度比例。
     逻辑：模式只限制速度上限，正常速度由风险因子相乘得到。
     """
 
     if mode == "lost":
+        if straight_memory_active:
+            return profile["straight_lost_speed"]
         return profile["lost_speed"]
 
     curve_factor = 1.0 - profile["curve_slowdown"] * (signals["curve_risk"] ** profile["curve_power"])
@@ -279,13 +350,9 @@ def _target_speed(track: TrackState, signals: dict, mode: str, steering: float, 
         target = min(target, profile["hard_turn_speed"] + centered_bonus)
     elif mode == "correcting":
         target = min(target, profile["correction_speed"])
-    # 直道提速：几何明确为直（弯道与偏移风险都很低）时，速度不该被偏低的 mask 置信度或
-    # recovering 限速压住——直行很安全，可以快。给一个速度下限，越过这些压制。一旦前方有弯，
-    # curve_risk（含 lookahead）会上升使该条件失效，提前退出加速。
-    straight = (
-        signals["curve_risk"] <= profile["straight_curve_max"]
-        and signals["offset_risk"] <= profile["straight_offset_max"]
-    )
+    # 直道提速：几何明确为直时，速度不该被偏低的 mask 置信度或 recovering 限速压住。
+    # 判断主要看 curvature/lookahead/offset，heading 只做宽松兜底，避免噪声挡住直道加速。
+    straight = straight_memory_active or _is_straight_candidate(track, signals, profile)
     if straight:
         target = max(target, profile["straight_speed"])
     if timestamp < profile["start_caution_seconds"]:
@@ -489,9 +556,18 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     _maybe_reset_policy_by_timestamp(timestamp, profile)
     signals = _control_signals(track, profile)
     drive_mode = _select_mode(track, signals, timestamp, profile)
+    straight_memory_active = _update_straight_memory(track, signals, drive_mode, profile)
     target_steering = _target_steering(track, signals, drive_mode, profile)
     steering = _smooth_steering(target_steering, drive_mode, timestamp, profile)
-    target_speed = _target_speed(track, signals, drive_mode, steering, timestamp, profile)
+    target_speed = _target_speed(
+        track,
+        signals,
+        drive_mode,
+        steering,
+        timestamp,
+        profile,
+        straight_memory_active=straight_memory_active,
+    )
     speed = _smooth_speed(target_speed, timestamp, profile)
     # 低速贴墙脱困两条赛道都启用；依赖可靠几何的急弯/大偏移脱困仍只在 complex(red)。
     steering, speed, drive_mode = _escape_if_stalled(
