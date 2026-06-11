@@ -6,7 +6,7 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-11（R023；complex 旧 `x≈169,y≈111` 卡点已通过，basic 短跑回归正常；整条 complex 仍未证明跑通）。
+最后更新：2026-06-11（R023 后补充调试能力；complex 旧 `x≈169,y≈111` 卡点已通过，basic 短跑回归正常；整条 complex 仍未证明跑通）。
 
 ## 阅读路径
 
@@ -29,8 +29,8 @@
 
 | 版本 | 位置 | 实车结论 |
 |---|---|---|
-| **工作树（候选，未完成）** | working-tree，未提交 | R021 的真实采样色卡和保守暗灰路面 mask 已保留；R022 按历史有效方法收远处前瞻/急弯舵角、放大入弯半径，并把 escape 方向限定为贴边后远离低余量侧。R022 已通过旧 `x≈169,y≈111` 卡点，R023 basic 短跑回归正常。**整条 complex 仍未证明跑通。** |
-| **HEAD**（分支 `codex/perception-dropout`，已推） | `677da19` | R021 采样色卡修复：同批真实帧离线 lost 95.6%→0%，闭环第一左弯不再撞，但后段仍会在 `x≈169,y≈111` 低速卡住。 |
+| **工作树（候选，未完成）** | working-tree，未提交 | 控制策略等同 HEAD；本轮只补 Webots controller console 捕获和限时存帧调试开关。**整条 complex 仍未证明跑通。** |
+| **HEAD**（分支 `codex/perception-dropout`，已推） | `06a915f` | R021 真实采样色卡、R022/R023 半径和 escape 分离修复已提交。旧 `x≈169,y≈111` 卡点通过，basic 短跑正常；整条 complex 仍未证明跑通。 |
 | **R011/R012 版**（白线位置优先后置修正） | commit `16ae3f3`，已快照 `baselines/R011_line_posfirst_2026-06-11/` | basic 用户验证最佳：≈259.8s 高速通过车阵不撞 car5；complex 能过第一左弯但后段 `x≈-10,y≈-27` 近停。 |
 | **C004**（曲率可信度门控） | commit `0fc367e` | 更早的实车验证可靠基线（无白线逻辑），过弯不再反向打轮。 |
 
@@ -69,8 +69,9 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 ## 证据现状
 
 - R021 颜色采样证据保留在 `.tmp/color_sample/color_samples.json` 和 `.tmp/run.prev/perception_*` 小文件中；抽稀 `.npy` 帧已删除。
-- R022/R023 控制日志保留在 `.tmp/run.prev/control_complex.jsonl` 和 `.tmp/run/control_basic.jsonl`；`.tmp` 约 37MB，可接受。
+- R022/R023 控制日志保留在 `.tmp/run.prev/control_complex.jsonl` 和 `.tmp/run/control_basic.jsonl`；后续 static-car 窗口帧在 `.tmp/run.prev/frames_complex/`，`.tmp` 约 436MB，清理前先确认是否还要复盘 `t≈410-430s`。
 - 流程已修补：`scripts/webots_run.sh` 会自动清理孤儿进程/旧遥测并把上一轮产物轮换到 `.tmp/run.prev`，最近两轮产物不会再被立即删掉。
+- Console 捕获结论：默认 `run_local > file 2>&1` 抓不到 Webots GUI/controller 面板里的学生控制器输出；debug 构建现按 `AIRACER_CONTROLLER_CONSOLE_LOG_DIR` 把 controller 进程的 stdout/stderr tee 到 `.tmp/run/webots_console/*.log`。实时读用 `tail -f .tmp/run/webots_console/*.log`，跑完也能直接读。
 
 ## R022/R023 半径与 escape 分离结论（2026-06-11）
 

@@ -4,9 +4,11 @@
 # 用法：
 #   scripts/webots_run.sh basic
 #   scripts/webots_run.sh complex --frames 3   # 同时按 stride=3 保存相机帧（很大，仅取证时用）
+#   scripts/webots_run.sh complex --frames 3 --frame-window 410 430
 #
 # 产物：
 #   .tmp/run/control_<world>.jsonl       控制日志（默认开启）
+#   .tmp/run/webots_console/*.log        Webots controller console 输出
 #   .tmp/run/frames_<world>/             相机帧（仅 --frames 时）
 #   .tmp/run.prev/                       上一轮产物（自动轮换保留一轮，再上一轮删除）
 set -euo pipefail
@@ -16,10 +18,25 @@ WORLD=${1:?用法: scripts/webots_run.sh <basic|complex> [--frames N]}
 shift || true
 
 FRAMES_ARGS=()
-if [[ "${1:-}" == "--frames" ]]; then
-  STRIDE=${2:?--frames 需要 stride 数字，例如 --frames 3}
-  FRAMES_ARGS=(--dump-frames ".tmp/run/frames_${WORLD}" --dump-frame-stride "$STRIDE")
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --frames)
+      STRIDE=${2:?--frames 需要 stride 数字，例如 --frames 3}
+      FRAMES_ARGS+=(--dump-frames ".tmp/run/frames_${WORLD}" --dump-frame-stride "$STRIDE")
+      shift 2
+      ;;
+    --frame-window)
+      START=${2:?--frame-window 需要开始时间}
+      END=${3:?--frame-window 需要结束时间}
+      FRAMES_ARGS+=(--dump-frame-start "$START" --dump-frame-end "$END")
+      shift 3
+      ;;
+    *)
+      echo "未知参数: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 # 1. 清理孤儿进程和旧遥测，避免 telemetry 交错（历史上 3/14 次 run 因此不可信）
 pkill -f webots 2>/dev/null || true
@@ -33,6 +50,8 @@ if [[ -d .tmp/run ]]; then
   mv .tmp/run .tmp/run.prev
 fi
 mkdir -p .tmp/run
+mkdir -p .tmp/run/webots_console
+echo "Webots controller console → $PWD/.tmp/run/webots_console/*.log"
 
 # 3. 构建 debug 控制器（含 open/json/np.save，禁止上传）
 python scripts/build_submission.py --mode fastest \
@@ -41,6 +60,7 @@ python scripts/build_submission.py --mode fastest \
   --out .tmp/run/team_controller_debug.py
 
 # 4. 启动 Webots（debug 构建必须 --skip-validate）
+export AIRACER_CONTROLLER_CONSOLE_LOG_DIR="$PWD/.tmp/run/webots_console"
 python "$SDK/run_local.py" \
   --code-path "$PWD/.tmp/run/team_controller_debug.py" \
   --world "$WORLD" --car-slot car_1 --skip-validate

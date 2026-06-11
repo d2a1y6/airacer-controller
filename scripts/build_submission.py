@@ -95,15 +95,58 @@ _DEBUG_CONTROL_BLOCK = '''    try:
         return 0.0, 0.0'''
 
 
+def _debug_console_tee_header() -> list[str]:
+    """生成 controller console 文件镜像代码。
+
+    功能：让 Webots controller 进程里的 stdout/stderr 同步写入本地日志文件。
+    参数：无。
+    返回：可插入调试构建头部的源码行。
+    逻辑：仅在环境变量指定目录时启用；失败只打印警告，不影响控制器导入。
+    """
+
+    return [
+        "import os as _dbg_os",
+        "import pathlib as _dbg_pathlib",
+        "import sys as _dbg_sys",
+        "class _DbgConsoleTee:",
+        "    def __init__(self, primary, extra):",
+        "        self._primary = primary",
+        "        self._extra = extra",
+        "    def write(self, data):",
+        "        self._primary.write(data)",
+        "        self._extra.write(data)",
+        "        self.flush()",
+        "    def flush(self):",
+        "        self._primary.flush()",
+        "        self._extra.flush()",
+        "_DBG_CONSOLE_HANDLE = None",
+        "try:",
+        "    _DBG_CONSOLE_DIR = _dbg_os.environ.get(\"AIRACER_CONTROLLER_CONSOLE_LOG_DIR\")",
+        "    if _DBG_CONSOLE_DIR:",
+        "        _dbg_console_dir = _dbg_pathlib.Path(_DBG_CONSOLE_DIR)",
+        "        _dbg_console_dir.mkdir(parents=True, exist_ok=True)",
+        "        _dbg_console_path = _dbg_console_dir / (\"team_controller_%s.log\" % _dbg_os.getpid())",
+        "        _DBG_CONSOLE_HANDLE = _dbg_console_path.open(\"a\", encoding=\"utf-8\", buffering=1)",
+        "        _dbg_sys.stdout = _DbgConsoleTee(_dbg_sys.stdout, _DBG_CONSOLE_HANDLE)",
+        "        _dbg_sys.stderr = _DbgConsoleTee(_dbg_sys.stderr, _DBG_CONSOLE_HANDLE)",
+        "        print(\"[team_controller] console tee enabled: %s\" % _dbg_console_path)",
+        "except Exception as _dbg_console_exc:",
+        "    print(\"[team_controller][warn] failed to enable console tee: %s\" % _dbg_console_exc)",
+    ]
+
+
 def _debug_control_block(
     log_path: str | None = None,
     dump_frames: str | None = None,
     dump_frame_stride: int = 1,
+    dump_frame_start: float | None = None,
+    dump_frame_end: float | None = None,
 ) -> str:
     """生成带调试探针的 control() 实现（仅本地调试构建，禁止上传）。
 
     功能：在不改变驾驶行为的前提下，写逐帧状态日志，并可定期保存左右相机原始帧。
-    参数：`log_path` 是日志输出路径；`dump_frames` 是帧目录；`dump_frame_stride` 是存帧间隔。
+    参数：`log_path` 是日志输出路径；`dump_frames` 是帧目录；`dump_frame_stride` 是存帧间隔；
+        `dump_frame_start/end` 限制存帧时间窗。
     返回：替换 team_controller_local.control() 主体的源码块。
     逻辑：所有调试 I/O 异常都被吞掉，绝不影响 control 返回。
     """
@@ -113,8 +156,11 @@ def _debug_control_block(
         global _DBG_FRAME_INDEX
         if _DBG_FRAME_DIR is not None:
             try:
-                _DBG_FRAME_INDEX += 1
-                if _DBG_FRAME_INDEX % _DBG_FRAME_STRIDE == 0:
+                _dbg_timestamp = float(timestamp)
+                _dbg_in_window = _DBG_FRAME_START <= _dbg_timestamp <= _DBG_FRAME_END
+                if _dbg_in_window:
+                    _DBG_FRAME_INDEX += 1
+                if _dbg_in_window and _DBG_FRAME_INDEX % _DBG_FRAME_STRIDE == 0:
                     _dbg_t = ("%010.3f" % float(timestamp)).replace("-", "m").replace(".", "_")
                     np.save(_DBG_FRAME_DIR + "frame_" + _dbg_t + "_left.npy", left_img)
                     np.save(_DBG_FRAME_DIR + "frame_" + _dbg_t + "_right.npy", right_img)
@@ -170,6 +216,8 @@ def read_module(
     debug_log: str | None = None,
     dump_frames: str | None = None,
     dump_frame_stride: int = 1,
+    dump_frame_start: float | None = None,
+    dump_frame_end: float | None = None,
 ) -> str:
     """读取并清理控制器模块。
 
@@ -185,7 +233,7 @@ def read_module(
         source = source.replace('PROFILE = "fastest"', f'PROFILE = "{mode}"')
         source = source.replace('PROFILE = "safe"', f'PROFILE = "{mode}"')
         if debug_log or dump_frames:
-            header_lines = []
+            header_lines = _debug_console_tee_header()
             if debug_log:
                 header_lines.extend([
                     "import json as _dbg_json",
@@ -195,15 +243,21 @@ def read_module(
             else:
                 header_lines.append("_DBG_FH = None")
             if dump_frames:
+                frame_start_expr = "float('-inf')" if dump_frame_start is None else repr(float(dump_frame_start))
+                frame_end_expr = "float('inf')" if dump_frame_end is None else repr(float(dump_frame_end))
                 header_lines.extend([
                     f"_DBG_FRAME_DIR = {repr(str(dump_frames).rstrip('/') + '/')}",
                     f"_DBG_FRAME_STRIDE = {max(int(dump_frame_stride), 1)}",
+                    f"_DBG_FRAME_START = {frame_start_expr}",
+                    f"_DBG_FRAME_END = {frame_end_expr}",
                     "_DBG_FRAME_INDEX = 0",
                 ])
             else:
                 header_lines.extend([
                     "_DBG_FRAME_DIR = None",
                     "_DBG_FRAME_STRIDE = 1",
+                    "_DBG_FRAME_START = float('-inf')",
+                    "_DBG_FRAME_END = float('inf')",
                     "_DBG_FRAME_INDEX = 0",
                 ])
             header = "\n".join(header_lines) + "\n"
@@ -214,6 +268,8 @@ def read_module(
                     log_path=debug_log,
                     dump_frames=dump_frames,
                     dump_frame_stride=dump_frame_stride,
+                    dump_frame_start=dump_frame_start,
+                    dump_frame_end=dump_frame_end,
                 ),
             )
     return source
@@ -224,6 +280,8 @@ def build_source(
     debug_log: str | None = None,
     dump_frames: str | None = None,
     dump_frame_stride: int = 1,
+    dump_frame_start: float | None = None,
+    dump_frame_end: float | None = None,
 ) -> str:
     """构建单文件控制器源码。
 
@@ -248,6 +306,8 @@ def build_source(
             debug_log=debug_log,
             dump_frames=dump_frames,
             dump_frame_stride=dump_frame_stride,
+            dump_frame_start=dump_frame_start,
+            dump_frame_end=dump_frame_end,
         ))
         parts.append("\n")
     source = "\n".join(parts).strip() + "\n"
@@ -274,6 +334,10 @@ def parse_args():
                         help="本地调试构建：每隔 N 帧把 left/right BGR 保存为 .npy（禁止上传）")
     parser.add_argument("--dump-frame-stride", type=int, default=1,
                         help="--dump-frames 的存帧间隔，默认每帧保存")
+    parser.add_argument("--dump-frame-start", type=float, default=None,
+                        help="只在该时间戳之后保存帧，默认从开始保存")
+    parser.add_argument("--dump-frame-end", type=float, default=None,
+                        help="只在该时间戳之前保存帧，默认保存到结束")
     return parser.parse_args()
 
 
@@ -306,6 +370,8 @@ def main() -> int:
             debug_log=debug_log,
             dump_frames=dump_frames,
             dump_frame_stride=args.dump_frame_stride,
+            dump_frame_start=args.dump_frame_start,
+            dump_frame_end=args.dump_frame_end,
         ),
         encoding="utf-8",
     )
@@ -313,7 +379,12 @@ def main() -> int:
     if debug_log:
         suffix_parts.append(f"调试日志 → {debug_log}")
     if dump_frames:
-        suffix_parts.append(f"存帧目录 → {dump_frames} (stride={max(int(args.dump_frame_stride), 1)})")
+        window = ""
+        if args.dump_frame_start is not None or args.dump_frame_end is not None:
+            start = args.dump_frame_start if args.dump_frame_start is not None else "-inf"
+            end = args.dump_frame_end if args.dump_frame_end is not None else "inf"
+            window = f", window={start}..{end}"
+        suffix_parts.append(f"存帧目录 → {dump_frames} (stride={max(int(args.dump_frame_stride), 1)}{window})")
     suffix = f"  ({'; '.join(suffix_parts)})" if suffix_parts else ""
     print(f"已生成 {args.mode}: {output}{suffix}")
     return 0

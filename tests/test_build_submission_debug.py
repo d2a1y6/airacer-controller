@@ -1,4 +1,6 @@
 import importlib.util
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,6 +27,7 @@ def test_normal_build_source_has_no_frame_dump_probe():
     assert "np.save" not in source
     assert "_DBG_FRAME_DIR" not in source
     assert "_DBG_FH" not in source
+    assert "AIRACER_CONTROLLER_CONSOLE_LOG_DIR" not in source
 
 
 def test_debug_build_can_dump_left_and_right_frames(tmp_path):
@@ -49,3 +52,66 @@ def test_debug_build_can_dump_left_and_right_frames(tmp_path):
     assert np.array_equal(np.load(dump_dir / "frame_000012_345_right.npy"), right)
     assert -1.0 <= steering <= 1.0
     assert 0.0 <= speed <= 1.0
+
+
+def test_debug_frame_dump_respects_time_window(tmp_path):
+    dump_dir = tmp_path / "frames"
+    dump_dir.mkdir()
+    module_path = tmp_path / "team_controller_debug.py"
+    module_path.write_text(
+        build_submission.build_source(
+            "fastest",
+            dump_frames=str(dump_dir),
+            dump_frame_stride=1,
+            dump_frame_start=10.0,
+            dump_frame_end=11.0,
+        ),
+        encoding="utf-8",
+    )
+    module = _load_module(module_path)
+
+    image = np.zeros((32, 48, 3), dtype=np.uint8)
+    module.control(image, image, 9.9)
+    module.control(image, image, 10.5)
+    module.control(image, image, 11.1)
+
+    saved_names = {path.name for path in dump_dir.glob("*.npy")}
+    assert saved_names == {
+        "frame_000010_500_left.npy",
+        "frame_000010_500_right.npy",
+    }
+
+
+def test_debug_build_can_tee_controller_console(tmp_path):
+    console_dir = tmp_path / "console"
+    module_path = tmp_path / "team_controller_debug.py"
+    module_path.write_text(
+        build_submission.build_source("fastest", debug_log=str(tmp_path / "control.jsonl")),
+        encoding="utf-8",
+    )
+    env = {**os.environ, "AIRACER_CONTROLLER_CONSOLE_LOG_DIR": str(console_dir)}
+    script = (
+        "import importlib.util, sys\n"
+        f"spec = importlib.util.spec_from_file_location('debug_team_controller', {str(module_path)!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "print('AIRACER_CONSOLE_PROBE_STDOUT')\n"
+        "sys.stderr.write('AIRACER_CONSOLE_PROBE_STDERR\\n')\n"
+        "sys.stderr.flush()\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    logs = list(console_dir.glob("team_controller_*.log"))
+    assert len(logs) == 1
+    content = logs[0].read_text(encoding="utf-8")
+    assert "[team_controller] console tee enabled:" in content
+    assert "AIRACER_CONSOLE_PROBE_STDOUT" in content
+    assert "AIRACER_CONSOLE_PROBE_STDERR" in content

@@ -13,9 +13,26 @@ bash scripts/webots_run.sh complex
 
 # 这轮要分析白线、撞栏、视觉误判时，加相机帧（很大，仅取证时用；撞栏短窗口用 --frames 1）
 bash scripts/webots_run.sh complex --frames 3
+
+# 已知问题窗口可限制存帧时间，避免一次 run 写出几 GB
+bash scripts/webots_run.sh complex --frames 3 --frame-window 410 430
 ```
 
 脚本会自动：清理孤儿 Webots / run_local 进程和旧遥测（避免 telemetry 交错）、把上一轮 `.tmp/run` 轮换成 `.tmp/run.prev`、构建带控制日志的调试控制器、用 `--skip-validate` 启动 Webots。
+
+启动后终端会打印 Webots controller console 日志位置，例如：
+
+```bash
+Webots controller console → /.../airacer-controller/.tmp/run/webots_console/*.log
+```
+
+AI 可以实时看：
+
+```bash
+tail -f .tmp/run/webots_console/*.log
+```
+
+跑完后同一个目录也能直接读取。这里抓的是 controller 进程里的 `stdout/stderr`，包括学生控制器 `print` 和 Webots controller 侧的 Python 提示。
 
 调试构建含 `open/json/np.save`，只能本地跑。正式提交版不要带这些开关。
 
@@ -45,6 +62,7 @@ pkill -f webots; pkill -f run_local; sleep 1
 跑完后，把肉眼结论告诉 AI，并说明 `.tmp/run/` 里有哪些产物，例如：
 
 - `.tmp/run/control_basic.jsonl`
+- `.tmp/run/webots_console/*.log`
 - `.tmp/run/frames_basic/`
 - SDK telemetry：`/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl`
 
