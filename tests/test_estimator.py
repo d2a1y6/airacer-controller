@@ -124,7 +124,9 @@ def test_estimator_outputs_stay_in_range_for_extreme_points():
     assert_track_range(track)
 
 
-def test_high_confidence_line_becomes_target_lateral_error():
+def test_line_state_is_diagnostic_only_by_default():
+    # 默认融合权重为 0：白线只透传到 TrackState，不改写控制目标
+    # （R013/R014 实车证明目标改写会污染 offset_risk/直道判定/入弯门控）。
     reset_estimator_state()
     obs = make_obs(lambda progress: 0.0)
     obs.line_offset = 0.32
@@ -134,7 +136,30 @@ def test_high_confidence_line_becomes_target_lateral_error():
     track = estimate_track(obs, 0.0)
 
     assert track.lost is False
+    assert track.line_offset == obs.line_offset
+    assert track.line_heading == obs.line_heading
     assert track.line_confidence == obs.line_confidence
+    assert abs(track.lateral_error) < 0.03
+    assert abs(track.heading_error) < 0.03
+    assert abs(track.lookahead_error) < 0.03
+
+
+def test_line_fusion_mechanism_works_when_weights_enabled(monkeypatch):
+    from controller.estimator import ESTIMATOR_PROFILE
+
+    monkeypatch.setitem(ESTIMATOR_PROFILE, "line_lateral_weight", 0.82)
+    monkeypatch.setitem(ESTIMATOR_PROFILE, "line_heading_weight", 0.68)
+    monkeypatch.setitem(ESTIMATOR_PROFILE, "line_lookahead_weight", 0.58)
+
+    reset_estimator_state()
+    obs = make_obs(lambda progress: 0.0)
+    obs.line_offset = 0.32
+    obs.line_heading = 0.08
+    obs.line_confidence = 0.90
+
+    track = estimate_track(obs, 0.0)
+
+    assert track.lost is False
     assert track.lateral_error > 0.12
     assert track.heading_error > 0.02
     assert track.lookahead_error > 0.08

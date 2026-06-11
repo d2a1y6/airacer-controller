@@ -11,11 +11,12 @@ def control(left_img, right_img, timestamp):
 
 ## 先读什么
 
-- 新接手先读：`CLAUDE.md`、`docs/debug_tools.md`、`experiments/notes.md` 最新记录。
-- 要改控制行为：读 `controller/`，尤其是 `common.py`、`params.py`、`perception.py`、`estimator.py`、`policy.py`。
+- 新接手只需先读一份：**`experiments/STATUS.md`**（当前状态、铁律、未解问题、下一步，就地更新）。
+- 仓库约定与命令：`CLAUDE.md` 和本文件。
 - 人类要守着 Webots 实跑：读 `docs/human_webots_testing.md`。
 - AI 要复盘人类跑出的日志、telemetry、帧和截图：读 `docs/ai_offline_review.md`。
-- 要理解当前失败点：读 `experiments/notes.md` 的最新 R-id 和 `experiments/handoff_2026-06-11.md`。
+- 某次 run 的细节：按 R-id 查 `experiments/notes.md`，不需要通读历史。
+- 要改控制行为：读 `controller/`，尤其是 `common.py`、`params.py`、`perception.py`、`estimator.py`、`policy.py`。
 
 ## 目录约定
 
@@ -73,12 +74,13 @@ Webots 实跑分两段：
 - `.tmp/` 用来放 debug 构建、控制日志、整场 `.npy` 帧、overlay、Webots 录像和临时 SDK 克隆。
 - 人类负责实跑和肉眼现象记录；AI 负责用日志、telemetry、帧和 overlay 解释机制。
 - AI 分析时必须用关键窗口的逐帧画面或 overlay 支撑判断；不要只凭数字或猜测下结论。
-- AI 看完并把结论写进 `experiments/` 后清理 `.tmp/`。不要提交整场帧、整场录像、批量截图或临时 telemetry 复制件。
+- **最近一次 run 的 `.tmp/run` 产物保留到被下一次 run 覆盖**（`scripts/webots_run.sh` 自动轮换到 `.tmp/run.prev`）；清理前先确认 notes 里的"下一步"不依赖它。不要提交整场帧、整场录像、批量截图或临时 telemetry 复制件。
 - 如果某个失败窗口以后还会反复用来回归，裁剪成 `experiments/cases/<R-id>_<slug>/`，只保留很小的窗口和少量关键 overlay。
 
 ## 实验记录
 
-- `experiments/runs.csv`：真实 Webots/platform run 的结构化台账。
+- `experiments/STATUS.md`：唯一活动交接文档，就地更新，不再新建 handoff 文件。
+- `experiments/runs.csv`：真实 Webots/platform run 的结构化台账。`notes` 列只写一两句并以 `R0xx |` 开头，细节进 notes.md。
 - `experiments/notes.md`：肉眼现象、数据摘要、结论、下一步，最新记录在最上面。
 - `experiments/analysis_*.md`：有机制解释价值的长分析。
 - `experiments/cases/`：少量关键失败窗口，不保存整场原始数据。

@@ -18,17 +18,33 @@ _RED_ENVIRONMENT_FLAG = 32
 _RED_ENVIRONMENT_LATCH_FRAMES = 3
 
 
-def _lost_track(confidence: float, red_environment: bool | None = None) -> TrackState:
+def _lost_track(
+    confidence: float,
+    red_environment: bool | None = None,
+    obs: PerceptionObs | None = None,
+) -> TrackState:
     """生成丢线状态。
 
     功能：保留上一帧估计的衰减值，避免控制量突然归零。
-    参数：`confidence` 是当前可用的低置信度。
+    参数：`confidence` 是当前可用的低置信度，`obs` 提供本帧白线状态。
     返回：`lost=True` 的 `TrackState`。
-    逻辑：各几何量使用独立衰减参数，置信度裁剪到合法范围。
+    逻辑：各几何量使用独立衰减参数，置信度裁剪到合法范围。白线状态透传本帧
+    感知结果而不衰减：道路 mask 饱和（蓝门/天空）导致的 lost 帧白线往往仍可见，
+    是后置白线修正在这些帧上保持方向的唯一来源。
     """
 
     if red_environment is None:
         red_environment = _LAST_TRACK.red_environment
+    if obs is not None:
+        line_offset = clamp(float(obs.line_offset), -1.0, 1.0)
+        line_heading = clamp(float(obs.line_heading), -1.0, 1.0)
+        line_confidence = clamp(float(obs.line_confidence), 0.0, 1.0)
+        near_obstacle = bool(obs.near_obstacle)
+    else:
+        line_offset = _LAST_TRACK.line_offset
+        line_heading = _LAST_TRACK.line_heading
+        line_confidence = 0.0
+        near_obstacle = _LAST_TRACK.near_obstacle
     return TrackState(
         _LAST_TRACK.lateral_error * ESTIMATOR_PROFILE["lost_lateral_decay"],
         _LAST_TRACK.heading_error * ESTIMATOR_PROFILE["lost_heading_decay"],
@@ -37,12 +53,12 @@ def _lost_track(confidence: float, red_environment: bool | None = None) -> Track
         clamp(confidence, 0.0, ESTIMATOR_PROFILE["lost_confidence"]),
         True,
         red_environment,
-        _LAST_TRACK.line_offset * ESTIMATOR_PROFILE["lost_lateral_decay"],
-        _LAST_TRACK.line_heading * ESTIMATOR_PROFILE["lost_heading_decay"],
-        _LAST_TRACK.line_confidence * ESTIMATOR_PROFILE["lost_confidence"],
+        line_offset,
+        line_heading,
+        line_confidence,
         _LAST_TRACK.left_margin_near,
         _LAST_TRACK.right_margin_near,
-        _LAST_TRACK.near_obstacle,
+        near_obstacle,
     )
 
 
@@ -322,14 +338,14 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
 
     points = _clean_points(obs.center_points)
     if len(points) < ESTIMATOR_PROFILE["min_center_points"] or obs.confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(obs.confidence, red_environment)
+        track = _lost_track(obs.confidence, red_environment, obs)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
 
     x_norm, progress, y_span = _normalize_points(points)
     if y_span < ESTIMATOR_PROFILE["min_y_span"]:
-        track = _lost_track(obs.confidence, red_environment)
+        track = _lost_track(obs.confidence, red_environment, obs)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
@@ -371,10 +387,13 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     right_margin_near = _near_edge_margin(obs.right_edge_points, "right")
 
     confidence = _geometry_confidence(obs, points, y_span, fit_score)
-    if obs.line_confidence >= ESTIMATOR_PROFILE["line_target_min_confidence"]:
+    if (
+        ESTIMATOR_PROFILE["line_lateral_weight"] > 0.0
+        and obs.line_confidence >= ESTIMATOR_PROFILE["line_target_min_confidence"]
+    ):
         confidence = max(confidence, min(obs.confidence, obs.line_confidence) * 0.90)
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(confidence, red_environment)
+        track = _lost_track(confidence, red_environment, obs)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track

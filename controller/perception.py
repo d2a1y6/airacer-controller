@@ -689,13 +689,12 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
 
 
 def _with_line_state(obs: PerceptionObs, left_img, right_img) -> PerceptionObs:
-    """把双目白线状态写入观测结果。"""
+    """把双目白线状态写入观测结果。
 
-    if (
-        obs.confidence < LINE_FOLLOW_PROFILE["min_obs_confidence"]
-        or len(obs.center_points) < int(LINE_FOLLOW_PROFILE["min_obs_points"])
-    ):
-        return obs
+    不依赖道路观测质量：道路 mask 饱和（蓝门/天空）或丢线时白线往往仍可见，
+    是 R011 后置修正在这些帧上唯一的方向来源。
+    """
+
     line_offset, line_heading, line_confidence = _stereo_line_state(
         left_img,
         right_img,

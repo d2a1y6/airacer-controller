@@ -62,8 +62,6 @@ OPPONENT_PROFILE = {
 
 LINE_FOLLOW_PROFILE = {
     "enable": True,
-    "min_obs_confidence": 0.35,
-    "min_obs_points": 4,
     "white_min": 145.0,
     "scan_top_ratio": 0.48,
     "scan_bottom_ratio": 0.86,
@@ -81,6 +79,16 @@ LINE_FOLLOW_PROFILE = {
     "offset_gain": 0.76,
     "heading_gain": 0.18,
     "max_correction": 0.34,
+    # 信任门控（2026-06-11 实跑取证）：白线检测会把白色护栏（complex 直道 lo≈0.4-0.93）、
+    # 白车/斑马线（basic 终点 lo≈+0.35）、弯中错误线段（lo≈-0.64）当成车道线，单帧 ±0.34
+    # 修正造成无意义打轮甚至抵消正常入弯舵角。骑线时 |offset| 本应很小，故：
+    # 超出 trust_max 拒绝、帧间突变拒绝、连续 confirm_frames 帧有效才生效、EMA 平滑、
+    # 弯中（curve_risk 接近 curve_gate）按比例压低——弯中线段不连续且直线拟合失真。
+    "offset_trust_max": 0.30,
+    "offset_jump_max": 0.12,
+    "confirm_frames": 3,
+    "smoothing": 0.5,
+    "curve_gate": 0.35,
 }
 
 ESTIMATOR_PROFILE = {
@@ -116,10 +124,13 @@ ESTIMATOR_PROFILE = {
     "lost_heading_decay": 0.78,
     "lost_curvature_decay": 0.76,
     "lost_lookahead_decay": 0.82,
+    # 白线进主链路目标的融合权重。R013/R014 实车证明权重 0.82/0.68/0.58 会污染
+    # offset_risk/直道判定/入弯门控（basic 变慢、complex 仍切内线撞栏），故全部归零：
+    # 白线只作为 TrackState 诊断字段 + policy 末端的后置有界舵角修正（R011 验证的形态）。
     "line_target_min_confidence": 0.30,
-    "line_lateral_weight": 0.82,
-    "line_heading_weight": 0.68,
-    "line_lookahead_weight": 0.58,
+    "line_lateral_weight": 0.0,
+    "line_heading_weight": 0.0,
+    "line_lookahead_weight": 0.0,
     "line_lookahead_projection": 0.55,
     "timestamp_reset_gap": 2.0,
 }
@@ -174,10 +185,13 @@ CONTROL = {
     "max_abs_steering": 0.76,
     "hard_turn_steering_scale": 0.84,
     "steering_speed_cap_scale": 0.36,
+    # 边界余量保护默认关闭（outward_gain/slowdown=0、cap=1.0 即 no-op）：余量来自
+    # road-mask 边界点，mask 饱和或 fallback 时是噪声，R014 实车证明它既没拦住撞栏
+    # 又会产生无意义打轮/减速。margin 字段保留为诊断输出。
     "inside_margin_warning": 0.34,
-    "inside_margin_outward_gain": 0.32,
-    "inside_margin_steering_cap": 0.42,
-    "inside_margin_slowdown": 0.12,
+    "inside_margin_outward_gain": 0.0,
+    "inside_margin_steering_cap": 1.0,
+    "inside_margin_slowdown": 0.0,
     "inside_left_lateral_min": 0.05,
     "inside_left_heading_max": -0.24,
     "inside_left_curvature_max": -0.45,
@@ -208,6 +222,10 @@ CONTROL = {
     "escape_low_speed_threshold": 0.22,
     "escape_low_speed_trigger_frames": 120,
     "escape_signature_delta": 0.13,
+    # 几何（急弯卡边）脱困必须同时满足低指令速度：平稳巡弯也会出现"高弯量+签名稳定"
+    # （complex R 实跑 t≈37.2 在正常左弯中误触发 escape，直接导致撞左栏），真卡边时
+    # 指令速度必然已被弯道/转向因子压低。
+    "escape_turn_speed_max": 0.36,
     "escape_trigger_frames": 18,
     "escape_turn_frames": 24,
     "escape_turn_steering": 0.58,

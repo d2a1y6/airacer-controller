@@ -6,17 +6,30 @@
 
 ## 1. 先确认有什么数据
 
-常见输入：
+常见输入及保存策略：
 
-| 数据 | 常见路径 | 用途 |
-|---|---|---|
-| 人类反馈 | 用户消息、截图、`experiments/notes.md` | 判断真实现象，确定优先级 |
-| telemetry | `/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl` | 位置、速度、爬行段、事件 |
-| 控制日志 | `.tmp/run/control_*.jsonl` | 每帧内部状态、mode、目标控制量、最终输出 |
-| 相机帧 | `.tmp/run/frames_*/*.npy` | 逐帧看白线、道路 mask、障碍物、栏杆 |
-| 截图 | 用户附件或 `.tmp/run/*overlay*` | 证明肉眼现象和关键窗口 |
+| 数据 | 常见路径 | 用途 | 保存策略 |
+|---|---|---|---|
+| 人类反馈 | 用户消息、截图、`experiments/notes.md` | 判断真实现象，确定优先级 | 写进 notes.md 对应 R-id |
+| telemetry | `/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl` | 位置、速度、爬行段、事件 | 整场复制件只临时留存；长期写摘要或裁剪窗口 |
+| 控制日志 | `.tmp/run/control_*.jsonl` | 每帧内部状态、mode、目标控制量、最终输出 | 摘要写 notes；窗口可裁进 case |
+| 相机帧 | `.tmp/run/frames_*/*.npy` | 逐帧看白线、道路 mask、障碍物、栏杆 | 整场 `.npy` 不进 git；关键帧渲染成 overlay 后裁进 case |
+| overlay | `.tmp/run/*overlay*` | 画面、mask、中心线、白线、边界证据 | 批量图看完即删；最多裁 1-3 张进 case |
+| debug 控制器 | `.tmp/run/team_controller_debug.py` | 本地带日志/存帧构建 | 可重建，不归档 |
 
 没有帧也能先分析 telemetry 和控制日志；涉及白线、撞栏、视觉误判时，应要求下一轮 dump 帧，或使用已有帧生成 overlay。
+
+调试构建命令（含 `open/json/np.save`，**禁上传**，跑 `run_local` 时配 `--skip-validate`）：
+
+```bash
+python scripts/build_submission.py --mode fastest \
+  --debug-log .tmp/run/control_basic.jsonl \
+  --dump-frames .tmp/run/frames_basic \
+  --dump-frame-stride 3 \
+  --out .tmp/run/team_controller_debug.py
+```
+
+控制日志体积小，应默认开启；dump 帧一圈数 GB，只在定位视觉/走线问题时开。`--dump-frame-stride 3` 适合整场回看，精确撞栏窗口对短跑用 stride 1。人类实跑推荐直接用 `bash scripts/webots_run.sh <basic|complex> [--frames N]`，它会自动做跑前清理、构建和启动。
 
 ## 2. 全局摘要
 
@@ -117,9 +130,13 @@ extract_observation → estimate_track → decide_control → clamp_cmd
 
 `analyze_telemetry.py --archive <label>` 只把当前原始 telemetry 临时复制到 `.tmp/recordings/<label>/`，方便本轮分析。它不是长期归档。
 
-## 7. 清理
+## 7. 清理与保留
 
-确认有价值的信息已经写进 `experiments/` 后，删除临时产物：
+`.tmp` 的保留规则（吃过亏：R014 撞栏帧被提前清掉，下一轮只能重跑取证）：
+
+- **最近一次 run 的产物保留到被下一次 run 覆盖**。`scripts/webots_run.sh` 会自动把上一轮 `.tmp/run` 轮换成 `.tmp/run.prev`，再上一轮才删除。
+- 清理前先看 `notes.md` 最新 R-id 的"下一步"：如果它依赖某个失败窗口的帧/日志，先裁进 `experiments/cases/<R-id>_<slug>/` 再删。
+- 结论写进 `experiments/` 且确认无依赖后，才做全量清理：
 
 ```bash
 rm -rf .tmp .pytest_cache

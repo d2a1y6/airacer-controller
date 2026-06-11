@@ -172,8 +172,6 @@ OPPONENT_PROFILE = {
 
 LINE_FOLLOW_PROFILE = {
     "enable": True,
-    "min_obs_confidence": 0.35,
-    "min_obs_points": 4,
     "white_min": 145.0,
     "scan_top_ratio": 0.48,
     "scan_bottom_ratio": 0.86,
@@ -226,10 +224,13 @@ ESTIMATOR_PROFILE = {
     "lost_heading_decay": 0.78,
     "lost_curvature_decay": 0.76,
     "lost_lookahead_decay": 0.82,
+    # 白线进主链路目标的融合权重。R013/R014 实车证明权重 0.82/0.68/0.58 会污染
+    # offset_risk/直道判定/入弯门控（basic 变慢、complex 仍切内线撞栏），故全部归零：
+    # 白线只作为 TrackState 诊断字段 + policy 末端的后置有界舵角修正（R011 验证的形态）。
     "line_target_min_confidence": 0.30,
-    "line_lateral_weight": 0.82,
-    "line_heading_weight": 0.68,
-    "line_lookahead_weight": 0.58,
+    "line_lateral_weight": 0.0,
+    "line_heading_weight": 0.0,
+    "line_lookahead_weight": 0.0,
     "line_lookahead_projection": 0.55,
     "timestamp_reset_gap": 2.0,
 }
@@ -284,10 +285,13 @@ CONTROL = {
     "max_abs_steering": 0.76,
     "hard_turn_steering_scale": 0.84,
     "steering_speed_cap_scale": 0.36,
+    # 边界余量保护默认关闭（outward_gain/slowdown=0、cap=1.0 即 no-op）：余量来自
+    # road-mask 边界点，mask 饱和或 fallback 时是噪声，R014 实车证明它既没拦住撞栏
+    # 又会产生无意义打轮/减速。margin 字段保留为诊断输出。
     "inside_margin_warning": 0.34,
-    "inside_margin_outward_gain": 0.32,
-    "inside_margin_steering_cap": 0.42,
-    "inside_margin_slowdown": 0.12,
+    "inside_margin_outward_gain": 0.0,
+    "inside_margin_steering_cap": 1.0,
+    "inside_margin_slowdown": 0.0,
     "inside_left_lateral_min": 0.05,
     "inside_left_heading_max": -0.24,
     "inside_left_curvature_max": -0.45,
@@ -1122,13 +1126,12 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
 
 
 def _with_line_state(obs: PerceptionObs, left_img, right_img) -> PerceptionObs:
-    """把双目白线状态写入观测结果。"""
+    """把双目白线状态写入观测结果。
 
-    if (
-        obs.confidence < LINE_FOLLOW_PROFILE["min_obs_confidence"]
-        or len(obs.center_points) < int(LINE_FOLLOW_PROFILE["min_obs_points"])
-    ):
-        return obs
+    不依赖道路观测质量：道路 mask 饱和（蓝门/天空）或丢线时白线往往仍可见，
+    是 R011 后置修正在这些帧上唯一的方向来源。
+    """
+
     line_offset, line_heading, line_confidence = _stereo_line_state(
         left_img,
         right_img,
@@ -1175,17 +1178,33 @@ _RED_ENVIRONMENT_FLAG = 32
 _RED_ENVIRONMENT_LATCH_FRAMES = 3
 
 
-def _lost_track(confidence: float, red_environment: bool | None = None) -> TrackState:
+def _lost_track(
+    confidence: float,
+    red_environment: bool | None = None,
+    obs: PerceptionObs | None = None,
+) -> TrackState:
     """生成丢线状态。
 
     功能：保留上一帧估计的衰减值，避免控制量突然归零。
-    参数：`confidence` 是当前可用的低置信度。
+    参数：`confidence` 是当前可用的低置信度，`obs` 提供本帧白线状态。
     返回：`lost=True` 的 `TrackState`。
-    逻辑：各几何量使用独立衰减参数，置信度裁剪到合法范围。
+    逻辑：各几何量使用独立衰减参数，置信度裁剪到合法范围。白线状态透传本帧
+    感知结果而不衰减：道路 mask 饱和（蓝门/天空）导致的 lost 帧白线往往仍可见，
+    是后置白线修正在这些帧上保持方向的唯一来源。
     """
 
     if red_environment is None:
         red_environment = _LAST_TRACK.red_environment
+    if obs is not None:
+        line_offset = clamp(float(obs.line_offset), -1.0, 1.0)
+        line_heading = clamp(float(obs.line_heading), -1.0, 1.0)
+        line_confidence = clamp(float(obs.line_confidence), 0.0, 1.0)
+        near_obstacle = bool(obs.near_obstacle)
+    else:
+        line_offset = _LAST_TRACK.line_offset
+        line_heading = _LAST_TRACK.line_heading
+        line_confidence = 0.0
+        near_obstacle = _LAST_TRACK.near_obstacle
     return TrackState(
         _LAST_TRACK.lateral_error * ESTIMATOR_PROFILE["lost_lateral_decay"],
         _LAST_TRACK.heading_error * ESTIMATOR_PROFILE["lost_heading_decay"],
@@ -1194,12 +1213,12 @@ def _lost_track(confidence: float, red_environment: bool | None = None) -> Track
         clamp(confidence, 0.0, ESTIMATOR_PROFILE["lost_confidence"]),
         True,
         red_environment,
-        _LAST_TRACK.line_offset * ESTIMATOR_PROFILE["lost_lateral_decay"],
-        _LAST_TRACK.line_heading * ESTIMATOR_PROFILE["lost_heading_decay"],
-        _LAST_TRACK.line_confidence * ESTIMATOR_PROFILE["lost_confidence"],
+        line_offset,
+        line_heading,
+        line_confidence,
         _LAST_TRACK.left_margin_near,
         _LAST_TRACK.right_margin_near,
-        _LAST_TRACK.near_obstacle,
+        near_obstacle,
     )
 
 
@@ -1479,14 +1498,14 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
 
     points = _clean_points(obs.center_points)
     if len(points) < ESTIMATOR_PROFILE["min_center_points"] or obs.confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(obs.confidence, red_environment)
+        track = _lost_track(obs.confidence, red_environment, obs)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
 
     x_norm, progress, y_span = _normalize_points(points)
     if y_span < ESTIMATOR_PROFILE["min_y_span"]:
-        track = _lost_track(obs.confidence, red_environment)
+        track = _lost_track(obs.confidence, red_environment, obs)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
@@ -1528,10 +1547,13 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     right_margin_near = _near_edge_margin(obs.right_edge_points, "right")
 
     confidence = _geometry_confidence(obs, points, y_span, fit_score)
-    if obs.line_confidence >= ESTIMATOR_PROFILE["line_target_min_confidence"]:
+    if (
+        ESTIMATOR_PROFILE["line_lateral_weight"] > 0.0
+        and obs.line_confidence >= ESTIMATOR_PROFILE["line_target_min_confidence"]
+    ):
         confidence = max(confidence, min(obs.confidence, obs.line_confidence) * 0.90)
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
-        track = _lost_track(confidence, red_environment)
+        track = _lost_track(confidence, red_environment, obs)
         _LAST_TRACK = track
         _LAST_TIMESTAMP = timestamp
         return track
@@ -2142,6 +2164,24 @@ def _escape_if_stalled(
     return steering, speed, mode
 
 
+def _lane_line_correction(track: TrackState, profile: dict) -> float:
+    """白线可信时计算后置舵角修正（R011 验证的形态）。
+
+    功能：让车身中线追向白色虚线，作为最终舵角上的有界微调。
+    参数：`track` 携带感知层的双目白线状态，`profile` 是白线参数。
+    返回：裁剪到 `±max_correction` 的舵角修正；白线不可信时为 0。
+    逻辑：只修正最终输出，不进入 risk/mode/速度/入弯门控——R013/R014 证明
+    白线一旦改写控制目标，会抬高 offset_risk、骗开入弯门控并压低直道速度。
+    """
+
+    if not profile["enable"]:
+        return 0.0
+    if track.line_confidence < profile["min_confidence"]:
+        return 0.0
+    correction = track.line_offset * profile["offset_gain"] + track.line_heading * profile["heading_gain"]
+    return clamp(correction, -profile["max_correction"], profile["max_correction"])
+
+
 def _update_policy_state(track: TrackState, steering: float, speed: float, mode: str, timestamp: float, profile: dict) -> None:
     """写回策略跨帧状态。
 
@@ -2215,8 +2255,11 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     steering, speed, drive_mode = _escape_if_stalled(
         track, signals, steering, speed, drive_mode, profile, track.red_environment
     )
+    # 跨帧状态记录修正前的舵角：白线修正只作用于最终输出，平滑、限速和脱困
+    # 判据都不感知它（与 R011 在入口层后置修正时的动力学一致）。
     _update_policy_state(track, steering, speed, drive_mode, timestamp, profile)
-    return ControlCmd(steering, speed)
+    final_steering = clamp(steering + _lane_line_correction(track, LINE_FOLLOW_PROFILE), -1.0, 1.0)
+    return ControlCmd(final_steering, speed)
 
 
 

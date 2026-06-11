@@ -142,8 +142,23 @@ def test_timestamp_reset_discards_speed_state():
     assert reset_cmd.speed <= 0.20
 
 
-def test_inside_margin_limits_steering_toward_guardrail():
+def test_inside_margin_guard_is_noop_by_default():
+    # R014 实车证明默认开启边界余量保护既没拦住撞栏又引入无意义打轮，默认参数应为 no-op。
     profile = get_profile("fastest")
+    normal = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
+    close_right = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
+    close_right.right_margin_near = profile["inside_margin_warning"] * 0.35
+
+    normal_steer = _target_steering(normal, _control_signals(normal, profile), "hard_turn", profile)
+    guarded_steer = _target_steering(close_right, _control_signals(close_right, profile), "hard_turn", profile)
+
+    assert guarded_steer == normal_steer
+
+
+def test_inside_margin_limits_steering_toward_guardrail_when_enabled():
+    profile = get_profile("fastest")
+    profile["inside_margin_outward_gain"] = 0.32
+    profile["inside_margin_steering_cap"] = 0.42
     normal = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
     close_right = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
     close_right.right_margin_near = profile["inside_margin_warning"] * 0.35
@@ -153,6 +168,105 @@ def test_inside_margin_limits_steering_toward_guardrail():
 
     assert normal_steer > 0.05
     assert guarded_steer < normal_steer
+
+
+def test_confident_line_adds_bounded_post_hoc_steering_correction():
+    from controller.params import LINE_FOLLOW_PROFILE
+
+    base = make_track()
+    lined = make_track()
+    lined.line_offset = 0.25
+    lined.line_heading = 0.10
+    lined.line_confidence = 0.80
+
+    reset_policy_state()
+    base_cmd = warm_policy(base, mode="fastest")
+    reset_policy_state()
+    lined_cmd = warm_policy(lined, mode="fastest")
+
+    expected = (
+        lined.line_offset * LINE_FOLLOW_PROFILE["offset_gain"]
+        + lined.line_heading * LINE_FOLLOW_PROFILE["heading_gain"]
+    )
+    expected = min(expected, LINE_FOLLOW_PROFILE["max_correction"])
+    # 修正只作用于最终舵角输出：速度与无白线时一致，持续可信白线下舵角差收敛到有界修正量。
+    assert lined_cmd.speed == base_cmd.speed
+    assert abs((lined_cmd.steering - base_cmd.steering) - expected) < 1e-3
+
+
+def test_single_frame_line_detection_adds_no_correction():
+    # 实跑取证：basic t≈140.9 单帧把白车/斑马线认成线（lo=+0.35）导致 +0.5 舵角突跳；
+    # 修正必须连续 confirm_frames 帧有效才生效。
+    reset_policy_state()
+    base = make_track()
+    flicker = make_track()
+    flicker.line_offset = 0.25
+    flicker.line_heading = 0.0
+    flicker.line_confidence = 0.80
+
+    for index in range(20):
+        decide_control(base, index * 0.05, mode="fastest")
+    cmd = decide_control(flicker, 20 * 0.05, mode="fastest")
+
+    assert abs(cmd.steering) < 0.02
+
+
+def test_implausible_large_line_offset_is_rejected():
+    # 实跑取证：complex 直道把右侧白护栏认成线（lo≈0.4-0.93），骑线时 |offset| 不可能这么大。
+    from controller.params import LINE_FOLLOW_PROFILE
+
+    rail = make_track()
+    rail.line_offset = LINE_FOLLOW_PROFILE["offset_trust_max"] + 0.12
+    rail.line_heading = 0.0
+    rail.line_confidence = 0.80
+
+    reset_policy_state()
+    base_cmd = warm_policy(make_track(), mode="fastest")
+    reset_policy_state()
+    rail_cmd = warm_policy(rail, mode="fastest")
+
+    assert abs(rail_cmd.steering - base_cmd.steering) < 1e-6
+
+
+def test_line_correction_suppressed_near_obstacle():
+    blocked = make_track()
+    blocked.line_offset = 0.25
+    blocked.line_heading = 0.0
+    blocked.line_confidence = 0.80
+    blocked.near_obstacle = True
+
+    reset_policy_state()
+    base_cmd = warm_policy(make_track(), mode="fastest")
+    reset_policy_state()
+    blocked_cmd = warm_policy(blocked, mode="fastest")
+
+    assert abs(blocked_cmd.steering - base_cmd.steering) < 1e-6
+
+
+def test_line_correction_suppressed_in_sharp_turn():
+    # 实跑取证：complex t≈35.8 弯中线修正抵消入弯舵角；弯中线段不连续、直线拟合失真，应压到 0。
+    turn = make_track(heading=0.40, curvature=0.40, lookahead=0.40, red_environment=True)
+    lined_turn = make_track(heading=0.40, curvature=0.40, lookahead=0.40, red_environment=True)
+    lined_turn.line_offset = -0.25
+    lined_turn.line_heading = 0.0
+    lined_turn.line_confidence = 0.80
+
+    reset_policy_state()
+    base_cmd = warm_policy(turn, mode="fastest")
+    reset_policy_state()
+    lined_cmd = warm_policy(lined_turn, mode="fastest")
+
+    assert abs(lined_cmd.steering - base_cmd.steering) < 1e-6
+
+
+def test_geometry_escape_requires_low_speed():
+    # 实跑取证：complex t≈37.2 平稳左弯（指令速度≈0.46）被急弯卡边脱困误判，
+    # escape 强打 -0.58 直接导致撞左栏。正常速度巡弯不允许触发几何脱困。
+    reset_policy_state()
+    cornering = make_track(heading=0.50, curvature=0.30, lookahead=0.50, red_environment=True)
+    for index in range(60):
+        decide_control(cornering, index * 0.05, mode="fastest")
+        assert policy._LAST_MODE != "escaping"
 
 
 def test_hard_turn_requires_consecutive_frames():

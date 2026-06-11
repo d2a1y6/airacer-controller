@@ -52,6 +52,15 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 
 官方 SDK 和 Webots 安装见 [docs/official_testing.md](docs/official_testing.md)。人类守着 Webots 实跑时读 [docs/human_webots_testing.md](docs/human_webots_testing.md)；AI 复盘人类跑出的日志、telemetry、帧和截图时读 [docs/ai_offline_review.md](docs/ai_offline_review.md)。
 
+**新会话接手前先读 [experiments/STATUS.md](experiments/STATUS.md)**：它是唯一的活动交接文档（当前状态、铁律、未解问题、下一步），每轮工作结束时就地更新，不要另建 handoff 文件。
+
+## 工作铁律（详见 STATUS.md，每条都吃过亏）
+
+1. 实车（人类 Webots + 肉眼）是唯一裁判；离线指标只用来提假设，不能否决实车结论。`lost` 率尤其不是质量指标。
+2. policy/速度/走线类改动没有可信离线指标，必须人上车验证，不要 autonomous 盲调；感知类改动可先离线筛，仍需人上车终判。
+3. 调试构建（含 `open/json/np.save`）禁止上传；提交只用通过全部校验的 `submissions/final/team_controller.py`。
+4. 清 `.tmp` 前先确认 notes 的"下一步"不依赖其中的帧/日志；依赖的窗口先裁进 `experiments/cases/`。
+
 ## 控制流水线
 
 ```
