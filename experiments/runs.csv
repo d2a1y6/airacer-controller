@@ -57,3 +57,4 @@ date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finis
 2026-06-12,local,fastest,complex,0,,351.68,0,ai_short_stop,"R032 | Phase 2.2 候选从头覆盖 R018 风险窗口：跑到 t≈352s 主动停止，280-330s 窗口无 telemetry 事件、无近停，最低真实速度约 1.55，旧 x≈9,y≈87 内切卡点未复现。详见 notes.md R032。"
 2026-06-12,local,fastest,complex,0,,450.43,0,ai_short_stop,"R033 | Phase 2.2 候选延长跑到 t≈450s：无 telemetry 事件、无近停；但本轮误按旧时间窗口分析，旧 x≈-42,y≈124 空间点由 R034 补证。详见 notes.md R033。"
 2026-06-12,local,fastest,complex,0,,274.43,0,ai_short_stop,"R034 | Phase 2.2 候选按坐标覆盖旧 R024 空间卡点：最近到 x≈-44.0,y≈124.0，速度约 2.55，状态 normal；无 telemetry 事件、无近停，旧 x≈-42,y≈124 卡点未复现。详见 notes.md R034。"
+2026-06-12,local,fastest,complex,0,,399.74,0,ai_short_stop,"R035 | Phase 2.2 候选长跑到 t≈400s：通过旧 x≈-42,y≈124、旧起点前 x≈-10,y≈-27 / x≈28,y≈-28，并进入下一轮早段；无 telemetry 事件、无近停。详见 notes.md R035。"

@@ -6,7 +6,7 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-12（白线感知 **Phase 2.2 候选已实现并完成 AI 短测 R029/R030/R031/R032/R033/R034**：R028 通过第一个左弯窗口，但 `t≈32→35` 仍有短暂白线掉线和低速硬左。R029 查明原因是弯中稀疏虚线横向跳变略超门槛、单侧相机短时凑不齐双目条件。当前候选只在 complex 红色环境启用低置信单目白线兜底，放宽曲线虚线 `max_center_jump_ratio 0.24→0.32`、`min_y_span 70→60`，并把 offset-heading 冲突的回中优先阈值 `0.30→0.18`。AI complex 短测显示第一个左弯无长爬行、无 telemetry 事件，`line_conf>0` 达 `481/500`，`t≈42` 已稳定出弯；basic 短回归 R030 显示 `red_env` 全程 0、无近停或事件；R031 覆盖旧 R024/R025 后段 `130→185s` 内切窗口，R032 从头覆盖 R018 `280→330s` 风险窗口，R034 按坐标覆盖旧 R024 `x≈-42,y≈124` 空间卡点，均无事件、无近停，overlay 未见栏杆误锁。**这是走线/驾驶改动，还缺完整场或更后段验证，也必须由人眼终判视觉上是否沿中间白色虚线；R026/R027 第一个左弯 case 仍 open，未合 main。**
+最后更新：2026-06-12（白线感知 **Phase 2.2 候选已实现并完成 AI 短测 R029/R030/R031/R032/R033/R034/R035**：R028 通过第一个左弯窗口，但 `t≈32→35` 仍有短暂白线掉线和低速硬左。R029 查明原因是弯中稀疏虚线横向跳变略超门槛、单侧相机短时凑不齐双目条件。当前候选只在 complex 红色环境启用低置信单目白线兜底，放宽曲线虚线 `max_center_jump_ratio 0.24→0.32`、`min_y_span 70→60`，并把 offset-heading 冲突的回中优先阈值 `0.30→0.18`。AI complex 长跑 R035 到 `t≈399.7s`，通过第一个左弯、旧 R024/R025 后段、R018 风险窗、旧 R024 `x≈-42,y≈124`、旧起点前 `x≈-10,y≈-27` / `x≈28,y≈-28`，并进入下一轮早段；无事件、无近停，overlay 未见栏杆/车辆误锁。**这是目前最强 AI 证据，但走线/驾驶改动仍需人眼终判视觉上是否沿中间白色虚线；R026/R027 第一个左弯 case 仍 open，未合 main。**
 
 之前（2026-06-11 仓库整理）：相机帧改无损 PNG 且 `webots_run.sh` **默认每轮存帧**，跳完不用为看某时刻重跑；删除废弃 `docs/debug_tools.md`；README 加文档地图；新增报告可视化归档 `experiments/figures/` + 生成器 `scripts/plot_run.py` / `analyze_perception_dump.py --at`。上一轮实验结论：R024 证明 complex 旧 `x≈169,y≈111` 低速/内切问题仍会复现，不能合 main。
 
@@ -31,7 +31,7 @@
 
 | 版本 | 位置 | 实车结论 |
 |---|---|---|
-| **当前分支最新状态** | `codex/perception-dropout` | 控制策略等同 `313e882`；本轮新增跳点取证工具、R024/R025 日志和文档，并把跳点/调试存帧默认改为每 10 帧一次。R024 的 boundary escape 加强已撤回。**整条 complex 未跑通，不能合 main。** |
+| **当前分支最新状态** | `codex/perception-dropout` | Phase 2.2 候选已提交并连续 AI 短测。R035 从头跑到 `t≈399.7s`，通过历史内切/卡边窗口和旧起点前卡点，并进入下一轮早段；无事件、无近停。**还缺人眼终判，不能合 main。** |
 | **上一提交** | `313e882` | 已有 Webots controller console 捕获和限时存帧调试开关。控制策略包含 R021 采样色卡与 R022/R023 半径/escape 分离修复，但 R024 证明 complex 旧低速窗口仍会复现。 |
 | **R011/R012 版**（白线位置优先后置修正） | commit `16ae3f3`，已快照 `baselines/R011_line_posfirst_2026-06-11/` | basic 用户验证最佳：≈259.8s 高速通过车阵不撞 car5；complex 能过第一左弯但后段 `x≈-10,y≈-27` 近停。 |
 | **C004**（曲率可信度门控） | commit `0fc367e` | 更早的实车验证可靠基线（无白线逻辑），过弯不再反向打轮。 |
@@ -116,7 +116,12 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 - 结果：telemetry 时间单调但因主动 kill 被脚本标为 suspect；无事件、无近停。最近目标点为 `t=253.15,x≈-43.98,y≈123.96,speed≈2.55,status=normal`，距目标约 `1.98`。
 - 判断：旧 `x≈-42,y≈124` 长爬行未复现；核心窗口 `line_conf>0` 为 `241/250`，overlay 显示白线点仍在路面虚线附近，没有明显锁到远处栏杆。
 
-**回归门槛**：下一次验证优先跑完整 complex 或至少继续覆盖 R034 之后的更后段；人眼必须确认第一个左转不再出现 R026 的 `14.1s` 爬行，也不能重新锁白色护栏。若肉眼仍见擦左，优先复盘 R029 的 `t≈34→36` 正常左弯舵角是否仍切得过内。case：`experiments/cases/R026_first_left_tight_radius/`（open）。
+**R035 长跑**（2026-06-12，已完成，不跑完整场）：
+- 配置：`bash scripts/webots_run.sh complex --frames 12`，AI 跑过 R034 之后的后段并进入下一轮早段，在 `t≈399.74s` 主动停止。
+- 结果：telemetry 时间单调但因主动 kill 被脚本标为 suspect；无事件、无近停。最近旧起点前 `x≈-10,y≈-27` 距离约 `0.68`，最近 `x≈28,y≈-28` 距离约 `1.24`，都以 `normal` 和非近停速度通过。
+- 判断：旧起点前卡点也未复现；车阵、起点前直道、下一轮左弯和上方复合弯 overlay 均未见栏杆/车辆误锁。
+
+**回归门槛**：下一次验证优先让人跑当前候选，从视觉上确认第一个左转和后段复合弯是否稳定沿中间白色虚线；同时留意是否还有轻微擦栏。若肉眼仍见擦左，优先复盘 R029/R035 对应窗口的正常左弯舵角，而不是回退白线召回或继续堆 escape。case：`experiments/cases/R026_first_left_tight_radius/`（open）。
 
 ## 未解问题（用户视角，按优先级）
 
@@ -126,14 +131,14 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 ### P1 转弯半径太小 / 切内线贴内侧栏杆
 - R014/R021/R024 的典型表现都是入弯半径太小，切到内圈栏杆后长时间爬行。R022 曾短跑通过旧 `x≈169,y≈111`，但 R024 长跑复现了同一区域 37.4s 近停，说明它不是稳定修好。
 - R026 显示 Phase 1 后早段已有改善，但第一个左转仍出现 `14.1s` 爬行；已归档 open case `experiments/cases/R026_first_left_tight_radius/` 和报告图 `experiments/figures/R026_first_left_tight_radius/`。
-- Phase 2.2 候选的 AI 短测已连续覆盖第一个左弯、旧 `130→185s`、`280→330s`、旧 `x≈-42,y≈124` 四类风险窗，均未复现长爬行或内侧栏杆卡点；这仍是离线/AI 证据，不能替代完整场和人眼终判。
+- Phase 2.2 候选的 AI 短测/长跑已覆盖第一个左弯、旧 `130→185s`、`280→330s`、旧 `x≈-42,y≈124`、旧起点前 `x≈-10,y≈-27` / `x≈28,y≈-28` 等风险窗，均未复现长爬行或内侧栏杆卡点；这仍是离线/AI 证据，不能替代人眼终判。
 - R024 的“更早触发 boundary escape”失败并已撤回；继续堆 escape 不是主线。优先查为什么常规驾驶没有把白线保持在车身中心。
 - 已明确不要重开普通 margin guard：R014 证明它会受 road-mask 噪声影响。边界余量只用于 escape 中的贴边方向判断。
 
 ### P2 车没有稳定骑在白线上
 - 用户在 R011/R013 都肉眼确认：车没有稳定骑在白线上。
 - R025 把 `130-185s` 补帧后，控制日志显示 `line_conf=0`、`mode_reason=no_line_conf`。这一段不是“看见白线但不优先用”，而是白线感知链路没有提供目标。
-- R034 覆盖旧 `x≈-42,y≈124` 空间卡点时，核心段 `line_conf>0` 为 `241/250`，overlay 未见栏杆误锁；但“视觉上稳定骑线”仍需人眼确认。
+- R035 长跑里，车阵、起点前直道、下一轮左弯和上方复合弯 overlay 均显示白线候选在路面虚线附近，未见栏杆/车辆误锁；但“视觉上稳定骑线”仍需人眼确认。
 
 ### P3 无意义打轮和减速
 - R013/R014 仍明显，用户特别强调。可能与 P2 同根（中心目标抖动），先取证再定。
@@ -152,6 +157,7 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 - **报告可视化归档机制**（2026-06-11 新增）：精选图进 `experiments/figures/<R-id>_<slug>/`（进 git、长期保留），规则/选择标准见 `experiments/figures/README.md`。新增/扩展两个生成器：`scripts/plot_run.py`（整场轨迹+速度+事件总览图，替代过去手写 matplotlib）、`scripts/analyze_perception_dump.py --at <t...>`（为指定时刻出感知标注帧 overlay，不再只挑丢线帧）。`matplotlib` 已加入 `requirements.txt`。与 `experiments/cases/`（复现 bug 用）分工明确。
 - R026 第一个左转半径过小已按规则归档：case 在 `experiments/cases/R026_first_left_tight_radius/`，精选图在 `experiments/figures/R026_first_left_tight_radius/`。case 明确标记 open，不能当作已修复证据。
 - R034 旧 R024 空间卡点通过证据已按规则归档到 `experiments/figures/R034_r024_space_window_pass/`。这是 report figure，不是失败 case。
+- R035 长跑通过旧起点前和下一轮早段的证据已按规则归档到 `experiments/figures/R035_long_loop_pass/`。这是 report figure，不是失败 case。
 - Console 捕获结论：默认 `run_local > file 2>&1` 抓不到 Webots GUI/controller 面板里的学生控制器输出；debug 构建现按 `AIRACER_CONTROLLER_CONSOLE_LOG_DIR` 把 controller 进程的 stdout/stderr tee 到 `.tmp/run/webots_console/*.log`。实时读用 `tail -f .tmp/run/webots_console/*.log`，跑完也能直接读。
 - 跳点取证工具：`scripts/webots_jump_run.sh` 可从已有 telemetry 的某个 `t` 近似启动 Webots。因为帧已默认每轮都存，它**不再用于"补存帧"**，真正用途是看**当前（已改过的）代码**从某个历史姿态出发会怎么开（上一轮录制帧只反映上一轮代码）。它只恢复 `x/y/heading`，不恢复速度、物理状态、controller 记忆或仿真时钟；可以近似往前跑几秒看趋势，不能当真实续跑或正式验证。
 
