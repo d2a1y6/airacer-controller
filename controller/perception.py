@@ -96,8 +96,8 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
     功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
     参数：`image` 是单张 BGR 图像。
     返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数、主 mask 命中率和近处障碍标记。
-    逻辑：暗灰 mask 可避免偏离赛道时把底部中心的草地当道路；边缘不混入主 mask，
-    避免把背景强边缘误当成道路表面。
+    逻辑：暗灰 mask 分割低饱和灰色沥青；草地是高饱和绿，统一从道路 mask 扣除，
+    避免颜色种子落在草上时把整片草当成路；边缘不混入主 mask，避免把背景强边缘误当成道路表面。
     """
 
     height = image.shape[0]
@@ -112,6 +112,14 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
         & (hsv_roi[:, :, 1] <= VISION_PROFILE["road_sat_max"])
     ).astype(np.uint8) * 255
 
+    # 草地 mask：高饱和绿。沥青是低饱和灰，必不落在此区间；用于从道路 mask 中扣除草地。
+    grass_roi = (
+        (hsv_roi[:, :, 0] >= VISION_PROFILE["grass_hue_min"])
+        & (hsv_roi[:, :, 0] <= VISION_PROFILE["grass_hue_max"])
+        & (hsv_roi[:, :, 1] >= VISION_PROFILE["grass_sat_min"])
+        & (hsv_roi[:, :, 2] >= VISION_PROFILE["grass_value_min"])
+    )
+
     lab_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
     road_lab = _road_color_from_patch(lab_roi)
     distance = np.sqrt(np.sum((lab_roi - road_lab) ** 2, axis=2))
@@ -119,9 +127,14 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
 
     dark_fill_ratio = float(np.count_nonzero(dark_road_roi)) / max(float(dark_road_roi.size), 1.0)
     if dark_fill_ratio >= VISION_PROFILE["dark_mask_min_fill"]:
-        road_roi = dark_road_roi
+        road_roi = dark_road_roi.copy()
     else:
-        road_roi = color_roi
+        # 暗沥青 mask 稀疏（远处只剩细条路面）才回退颜色 mask；并入暗 mask 保住那条沥青，
+        # 颜色种子可能落在草上，靠下一步扣草兜底。
+        road_roi = color_roi | dark_road_roi
+
+    # 统一扣除草地：无论用哪条 mask，草都不算路。偏出赛道正对草地时 mask 会塌到近空 → 低置信 → lost。
+    road_roi[grass_roi] = 0
 
     kernel = np.ones((5, 5), dtype=np.uint8)
     road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_OPEN, kernel, iterations=1)

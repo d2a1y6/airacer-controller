@@ -360,6 +360,12 @@ def _escape_if_stalled(
         and track.lateral_error * track.lookahead_error >= profile["escape_offset_lookahead_alignment"]
     )
     low_speed_stall = speed <= profile["escape_low_speed_threshold"]
+    # 顶住栏杆但速度还没塌到低速阈值（落在 low_speed 覆盖空档）：几何冻结 + 大偏移 + 大反向打轮。
+    pinned_stall = (
+        abs(track.lateral_error) >= profile["escape_pinned_lateral_min"]
+        and abs(steering) >= profile["escape_pinned_steering_min"]
+        and speed <= profile["escape_pinned_speed_max"]
+    )
     stable_view = signature_delta <= profile["escape_signature_delta"]
 
     # 统一脱困方向：朝感知到的路面一侧打，远离顶住的栏杆。
@@ -379,6 +385,13 @@ def _escape_if_stalled(
         escape_speed = profile["escape_offset_speed"]
     elif allow_geometry_escape and mode == "hard_turn" and high_turn and not aligned_offset:
         should_count_stall = True
+    elif pinned_stall:
+        # basic/complex 都启用：几何冻结地顶住栏杆、speed 又没低到触发 low_speed 时的兜底。
+        should_count_stall = True
+        trigger_frames = int(profile["escape_pinned_trigger_frames"])
+        escape_frames = int(profile["escape_pinned_frames"])
+        escape_steering = profile["escape_pinned_steering"]
+        escape_speed = profile["escape_pinned_speed"]
     elif low_speed_stall:
         should_count_stall = True
         # 贴墙被卡本就是低置信/丢线状态，放宽门槛，否则脱困永远进不来。

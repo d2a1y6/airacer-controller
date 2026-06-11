@@ -113,6 +113,10 @@ VISION_PROFILE = {
     "road_gray_min": 35.0,
     "road_gray_max": 105.0,
     "road_sat_max": 80.0,
+    "grass_hue_min": 35.0,
+    "grass_hue_max": 95.0,
+    "grass_sat_min": 60.0,
+    "grass_value_min": 40.0,
     "dark_mask_min_fill": 0.04,
     "texture_gray_std_scale": 35.0,
     "min_segment_width": 24.0,
@@ -125,6 +129,8 @@ VISION_PROFILE = {
     "max_center_jump_ratio": 0.35,
     "min_valid_scans": 4,
     "min_camera_confidence": 0.12,
+    "empty_mask_confidence_scale": 0.25,
+    "saturated_mask_confidence_scale": 0.25,
     "fusion_max_offset_gap": 0.18,
     "fusion_confidence_margin": 0.18,
     "fusion_merge_gap": 0.12,
@@ -255,6 +261,13 @@ CONTROL = {
     "escape_low_speed_frames": 120,
     "escape_low_speed_steering": 0.74,
     "escape_low_speed_speed": 0.90,
+    "escape_pinned_lateral_min": 0.45,
+    "escape_pinned_steering_min": 0.55,
+    "escape_pinned_speed_max": 0.55,
+    "escape_pinned_trigger_frames": 20,
+    "escape_pinned_frames": 28,
+    "escape_pinned_steering": 0.80,
+    "escape_pinned_speed": 0.62,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }
@@ -445,8 +458,8 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
     功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
     参数：`image` 是单张 BGR 图像。
     返回：完整尺寸的 `road_mask`、`edge_mask`、灰度纹理分数、主 mask 命中率和近处障碍标记。
-    逻辑：暗灰 mask 可避免偏离赛道时把底部中心的草地当道路；边缘不混入主 mask，
-    避免把背景强边缘误当成道路表面。
+    逻辑：暗灰 mask 分割低饱和灰色沥青；草地是高饱和绿，统一从道路 mask 扣除，
+    避免颜色种子落在草上时把整片草当成路；边缘不混入主 mask，避免把背景强边缘误当成道路表面。
     """
 
     height = image.shape[0]
@@ -461,6 +474,14 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
         & (hsv_roi[:, :, 1] <= VISION_PROFILE["road_sat_max"])
     ).astype(np.uint8) * 255
 
+    # 草地 mask：高饱和绿。沥青是低饱和灰，必不落在此区间；用于从道路 mask 中扣除草地。
+    grass_roi = (
+        (hsv_roi[:, :, 0] >= VISION_PROFILE["grass_hue_min"])
+        & (hsv_roi[:, :, 0] <= VISION_PROFILE["grass_hue_max"])
+        & (hsv_roi[:, :, 1] >= VISION_PROFILE["grass_sat_min"])
+        & (hsv_roi[:, :, 2] >= VISION_PROFILE["grass_value_min"])
+    )
+
     lab_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
     road_lab = _road_color_from_patch(lab_roi)
     distance = np.sqrt(np.sum((lab_roi - road_lab) ** 2, axis=2))
@@ -468,9 +489,14 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
 
     dark_fill_ratio = float(np.count_nonzero(dark_road_roi)) / max(float(dark_road_roi.size), 1.0)
     if dark_fill_ratio >= VISION_PROFILE["dark_mask_min_fill"]:
-        road_roi = dark_road_roi
+        road_roi = dark_road_roi.copy()
     else:
-        road_roi = color_roi
+        # 暗沥青 mask 稀疏（远处只剩细条路面）才回退颜色 mask；并入暗 mask 保住那条沥青，
+        # 颜色种子可能落在草上，靠下一步扣草兜底。
+        road_roi = color_roi | dark_road_roi
+
+    # 统一扣除草地：无论用哪条 mask，草都不算路。偏出赛道正对草地时 mask 会塌到近空 → 低置信 → lost。
+    road_roi[grass_roi] = 0
 
     kernel = np.ones((5, 5), dtype=np.uint8)
     road_roi = cv2.morphologyEx(road_roi, cv2.MORPH_OPEN, kernel, iterations=1)
@@ -676,7 +702,8 @@ def _score_scan(
     功能：综合有效扫描线、宽度稳定性、中心稳定性和纹理分数。
     参数：扫描点、宽度序列、纹理分数、mask 命中率和 fallback 次数。
     返回：置信度和调试标记。
-    逻辑：有效线太少、整图近似全命中或全不命中时显著降权。
+    逻辑：有效线太少、整图近似全不命中时重降权；饱和 mask 保留中等降权，
+    避免远处路面可见但底部草地铺满 ROI 时整段丢线。
     """
 
     debug_flags = 0
@@ -710,8 +737,11 @@ def _score_scan(
     if valid_count < min_valid:
         confidence *= valid_count / max(float(min_valid), 1.0)
         debug_flags |= 1
-    if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92:
-        confidence *= 0.25
+    if mask_fill_ratio < 0.015:
+        confidence *= VISION_PROFILE["empty_mask_confidence_scale"]
+        debug_flags |= 4
+    elif mask_fill_ratio > 0.92:
+        confidence *= VISION_PROFILE["saturated_mask_confidence_scale"]
         debug_flags |= 4
     if fallback_count:
         confidence *= max(0.55, 1.0 - 0.06 * fallback_count)
@@ -1559,6 +1589,12 @@ def _escape_if_stalled(
         and track.lateral_error * track.lookahead_error >= profile["escape_offset_lookahead_alignment"]
     )
     low_speed_stall = speed <= profile["escape_low_speed_threshold"]
+    # 顶住栏杆但速度还没塌到低速阈值（落在 low_speed 覆盖空档）：几何冻结 + 大偏移 + 大反向打轮。
+    pinned_stall = (
+        abs(track.lateral_error) >= profile["escape_pinned_lateral_min"]
+        and abs(steering) >= profile["escape_pinned_steering_min"]
+        and speed <= profile["escape_pinned_speed_max"]
+    )
     stable_view = signature_delta <= profile["escape_signature_delta"]
 
     # 统一脱困方向：朝感知到的路面一侧打，远离顶住的栏杆。
@@ -1578,6 +1614,13 @@ def _escape_if_stalled(
         escape_speed = profile["escape_offset_speed"]
     elif allow_geometry_escape and mode == "hard_turn" and high_turn and not aligned_offset:
         should_count_stall = True
+    elif pinned_stall:
+        # basic/complex 都启用：几何冻结地顶住栏杆、speed 又没低到触发 low_speed 时的兜底。
+        should_count_stall = True
+        trigger_frames = int(profile["escape_pinned_trigger_frames"])
+        escape_frames = int(profile["escape_pinned_frames"])
+        escape_steering = profile["escape_pinned_steering"]
+        escape_speed = profile["escape_pinned_speed"]
     elif low_speed_stall:
         should_count_stall = True
         # 贴墙被卡本就是低置信/丢线状态，放宽门槛，否则脱困永远进不来。
