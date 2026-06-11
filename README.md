@@ -203,3 +203,5 @@ date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finis
 - `AGENTS.md`：给 Codex / AI agent 的执行规则。
 - `docs/official_testing.md`：官方 SDK、validator 和 Webots 本地测试接入方式（首次安装与官方校验）。
 - `docs/manual_testing.md`：日常调参的带日志迭代复测流程（构建调试单文件、防遥测交错、读日志、记账）。
+- `docs/debug_tools.md`：**全部自动化诊断工具的权威清单**——数据产物、脚本用法、AI 自主复盘录像的方法与铁律（自主作业前先读）。
+- `docs/offline_replay.md`：离线存帧与开环回放（只用于感知/估计诊断，不评估圈速）。
