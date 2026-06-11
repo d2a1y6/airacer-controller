@@ -220,15 +220,16 @@ t=37.2 强制 -0.58 舵角 0.8s，是 R016 撞左栏的直接原因。
 
 ## 下一步（建议顺序）
 
-1. 请人用当前 Phase 2.2 候选从头跑 `bash scripts/webots_run.sh complex`。重点看 R026/R027 case 窗口：`t≈29→36` 第一个左转是否还撞/擦左边，视觉上是否沿中间白色虚线。AI 自主短测 R029 已通过这个窗口，但不能替代人眼终判。
-2. 若仍失败，先对比 R029 控制日志：确认是 `t≈34→36` 的常规左弯舵角仍切内，还是白线误锁到护栏/路肩。前者再调 heading/turn-in 权重，后者回到 `_camera_line_state` 的 road-context 和单目兜底门控。
+1. 请人用当前 Phase 2.2 候选从头跑 `bash scripts/webots_run.sh complex`。重点看第一个左转、后段复合弯、旧起点前直道是否视觉上稳定沿中间白色虚线，是否还有轻微擦栏。
+2. 若肉眼仍失败，先对比 R029/R035 控制日志：确认是正常左弯舵角仍切内，还是白线误锁到护栏/车辆/路肩。前者再调 heading/turn-in 权重，后者回到 `_camera_line_state` 的 road-context 和单目兜底门控。
 3. 修白线检测时继续保留误锁防护：白栏杆、白车、斑马线仍要拒绝，不能靠全局放宽阈值蒙混通过。
-4. complex 新窗口修完后跑 basic 回归，确认没有破坏 R023/R026 的起步居中和 basic 通过状态。
-5. complex 稳定跑通前不要合 main；跑通后再做提速和正式提交。
+4. 若人眼确认 complex 走线达标，再跑 basic 回归和最终 validator；之后才考虑合 main / 提速。
 
 ## 验证状态
 
-最近一次（2026-06-12 Phase 2.2 候选后）：`pytest -q` 为 **113 passed**；`python -m py_compile controller/*.py scripts/*.py tests/*.py` 通过；`bash -n scripts/webots_run.sh scripts/webots_jump_run.sh` 通过；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但有软性能 warning（p95 `36.24ms` > 20ms）。正常构建 md5：fastest/final=`f4b79c09f6811580817ecfe04d1fb11a`，safe=`db16a4ac92af6082fcc2396ee46fe9be`。这是驾驶行为改动，必须人上车跑 complex 终判。
+最近一次（2026-06-12 R035 后提交包复验）：`pytest -q` 为 **113 passed**；`python -m py_compile controller/*.py scripts/*.py tests/*.py` 通过；`bash -n scripts/webots_run.sh scripts/webots_jump_run.sh` 通过；`scripts/validate_submission.py` 对 `submissions/final` / `fastest` / `safe` 均通过；官方 `validate_controller.py` 通过但有软性能 warning（p95 `48.53ms` > 20ms）；`run_local.py --validate-only` 也通过但同样有 W014（p95 `42.39ms`）。正常构建 md5：fastest/final=`f4b79c09f6811580817ecfe04d1fb11a`，safe=`db16a4ac92af6082fcc2396ee46fe9be`。这是驾驶行为改动，必须人上车跑 complex 终判。
+
+上一次（2026-06-12 Phase 2.2 候选后）：`pytest -q` 为 **113 passed**；`python -m py_compile controller/*.py scripts/*.py tests/*.py` 通过；`bash -n scripts/webots_run.sh scripts/webots_jump_run.sh` 通过；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但有软性能 warning（p95 `36.24ms` > 20ms）。正常构建 md5：fastest/final=`f4b79c09f6811580817ecfe04d1fb11a`，safe=`db16a4ac92af6082fcc2396ee46fe9be`。这是驾驶行为改动，必须人上车跑 complex 终判。
 
 上一次（2026-06-12 Phase 2.1 候选后）：`pytest -q` 为 **110 passed**；`python -m py_compile controller/*.py scripts/*.py tests/*.py` 通过；`bash -n scripts/webots_run.sh scripts/webots_jump_run.sh` 通过；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但有软性能 warning（p95 `32.29ms` > 20ms）。正常构建 md5：fastest/final=`c85e845cddfbd072daf17150688b9782`，safe=`bca1f6f4a494b3e160f5c6fa598dfb2e`。这是驾驶行为改动，必须人上车跑 complex 终判。
 
