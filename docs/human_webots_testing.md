@@ -44,6 +44,19 @@ pkill -f webots; pkill -f run_local; sleep 1
 
 如需手工分步执行（自定义 mode、输出路径等），等价命令是 `scripts/build_submission.py --debug-log ... [--dump-frames ... --dump-frame-stride N] --out .tmp/run/team_controller_debug.py`，再用 SDK `run_local.py --skip-validate` 启动；细节见 `docs/ai_offline_review.md` 第 1 节。
 
+## 1.1 跳点取证（只看画面，不当正式验证）
+
+如果已有 telemetry，想快速看某个时间点附近的相机画面，可以用：
+
+```bash
+bash scripts/webots_jump_run.sh complex 144 --duration 5 --frames 1 \
+  --telemetry .tmp/r025_line_priority_run/telemetry.jsonl
+```
+
+它会从 telemetry 取最接近 `t=144s` 的 `x/y/heading`，生成临时 Webots world，把 `car_1` 初始位置放过去，然后只跑几秒并存相机帧到 `.tmp/jump_run/frames/`。
+
+这个工具只能恢复车的位置和朝向，不能恢复速度、轮胎/悬挂物理状态、控制器内部记忆和仿真时钟；所以它适合看“白线是否在视野里、mask 是否误判”，不适合证明某个策略能从该点真实脱困。正式结论仍以从头实跑为准。
+
 ## 2. 肉眼观察要记什么
 
 人类观察比脚本更重要。请尽量记录这些事实：
@@ -66,7 +79,7 @@ pkill -f webots; pkill -f run_local; sleep 1
 - `.tmp/run/frames_basic/`
 - SDK telemetry：`/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl`
 
-**人类不要手动删 `.tmp`**。下一次 `scripts/webots_run.sh` 会自动轮换旧产物；全量清理由 AI 在确认结论已写入 `experiments/`、且 notes 的"下一步"不依赖这些产物后执行（见 `docs/ai_offline_review.md` 第 7 节）。
+**人类不要手动删 `.tmp`**。下一次 `scripts/webots_run.sh` 会自动轮换旧产物；全量清理由 AI 在确认结论已写入 `experiments/`、且 notes 的"下一步"不依赖这些产物后执行（见 `docs/ai_offline_review.md` 第 8 节）。
 
 ## 4. 正式提交版
 

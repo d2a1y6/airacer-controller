@@ -6,7 +6,7 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-11（R023 后补充调试能力；complex 旧 `x≈169,y≈111` 卡点已通过，basic 短跑回归正常；整条 complex 仍未证明跑通）。
+最后更新：2026-06-11（R025 后；控制策略回到 `313e882` 行为，新增跳点取证工具；R024 证明 complex 旧 `x≈169,y≈111` 低速/内切问题仍会复现，不能合 main）。
 
 ## 阅读路径
 
@@ -29,8 +29,8 @@
 
 | 版本 | 位置 | 实车结论 |
 |---|---|---|
-| **工作树（候选，未完成）** | working-tree，未提交 | 控制策略等同 HEAD；本轮只补 Webots controller console 捕获和限时存帧调试开关。**整条 complex 仍未证明跑通。** |
-| **HEAD**（分支 `codex/perception-dropout`，已推） | `06a915f` | R021 真实采样色卡、R022/R023 半径和 escape 分离修复已提交。旧 `x≈169,y≈111` 卡点通过，basic 短跑正常；整条 complex 仍未证明跑通。 |
+| **当前分支最新状态** | `codex/perception-dropout` | 控制策略等同 `313e882`；本轮只新增跳点取证工具、R024/R025 日志和文档。R024 的 boundary escape 加强已撤回。**整条 complex 未跑通，不能合 main。** |
+| **上一提交** | `313e882` | 已有 Webots controller console 捕获和限时存帧调试开关。控制策略包含 R021 采样色卡与 R022/R023 半径/escape 分离修复，但 R024 证明 complex 旧低速窗口仍会复现。 |
 | **R011/R012 版**（白线位置优先后置修正） | commit `16ae3f3`，已快照 `baselines/R011_line_posfirst_2026-06-11/` | basic 用户验证最佳：≈259.8s 高速通过车阵不撞 car5；complex 能过第一左弯但后段 `x≈-10,y≈-27` 近停。 |
 | **C004**（曲率可信度门控） | commit `0fc367e` | 更早的实车验证可靠基线（无白线逻辑），过弯不再反向打轮。 |
 
@@ -52,13 +52,14 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 > 但 R011/R012 时代就存在的残留（骑线精度、complex 两处低速窗口）仍需取证后对症修。
 
 ### P1 转弯半径太小 / 切内线贴内侧栏杆
-- R014/R021 的典型表现是入弯半径太小，切到内圈栏杆后长时间爬行。R022 用 notes 里历史有效方向修：降低远处前瞻和急弯舵角、加强速度相关收舵、让弯道更慢一点；旧 `x≈169,y≈111` 卡点已通过。
-- 当前不能写成彻底解决：R022 只跑到 `t≈197.6s` 控制日志，telemetry 证据到 `t≈177.4s`，还没覆盖整条 complex 后半程。
+- R014/R021/R024 的典型表现都是入弯半径太小，切到内圈栏杆后长时间爬行。R022 曾短跑通过旧 `x≈169,y≈111`，但 R024 长跑复现了同一区域 37.4s 近停，说明它不是稳定修好。
+- R024 的“更早触发 boundary escape”失败并已撤回；继续堆 escape 不是主线。优先查为什么常规驾驶没有把白线保持在车身中心。
 - 已明确不要重开普通 margin guard：R014 证明它会受 road-mask 噪声影响。边界余量只用于 escape 中的贴边方向判断。
 
 ### P2 车没有稳定骑在白线上
-- 用户在 R011/R013 都肉眼确认：即使"看见白线"（`line_offset/line_conf` 正常），车身中心也没压住白线。
-- 需要用 debug 帧核对"白线检测正确 → 为什么最终 steering 没把车带上线"这条链路，逐段看 steering 分解。
+- 用户在 R011/R013 都肉眼确认：车没有稳定骑在白线上。
+- R025 把 `130-185s` 补帧后，控制日志显示 `line_conf=0`、`mode_reason=no_line_conf`。这一段不是“看见白线但不优先用”，而是白线感知链路没有提供目标。
+- 另一个窗口 `380-420s` 会出现白线候选，但 `line_offset≈0.5-0.86`，被信任门控拒绝。下一步要区分“真白线漏检”和“护栏/白车误锁被正确拒绝”。
 
 ### P3 无意义打轮和减速
 - R013/R014 仍明显，用户特别强调。可能与 P2 同根（中心目标抖动），先取证再定。
@@ -68,10 +69,19 @@ estimator `_apply_line_target` 以 0.82/0.68/0.58 权重把 `lateral/heading/loo
 
 ## 证据现状
 
-- R021 颜色采样证据保留在 `.tmp/color_sample/color_samples.json` 和 `.tmp/run.prev/perception_*` 小文件中；抽稀 `.npy` 帧已删除。
-- R022/R023 控制日志保留在 `.tmp/run.prev/control_complex.jsonl` 和 `.tmp/run/control_basic.jsonl`；后续 static-car 窗口帧在 `.tmp/run.prev/frames_complex/`，`.tmp` 约 436MB，清理前先确认是否还要复盘 `t≈410-430s`。
+- R021 颜色采样证据保留在 `.tmp/color_sample/color_samples.json`、`complex_sample.png`、`sample.png`。
+- R024 static-car 小窗口只保留 3 张 stereo preview：`.tmp/r024_static_grid_case/preview/`。
+- R025 证据保留在 `.tmp/r025_line_priority_run/`：控制日志、telemetry、trajectory 图、live_view，以及 7 组 `130-185s` overlay/stereo PNG。原始 `.npy` 帧已删。
+- `.tmp` 已从约 700MB 清到约 18MB；当前保留的都是下一轮可能直接用到的小型证据。
 - 流程已修补：`scripts/webots_run.sh` 会自动清理孤儿进程/旧遥测并把上一轮产物轮换到 `.tmp/run.prev`，最近两轮产物不会再被立即删掉。
 - Console 捕获结论：默认 `run_local > file 2>&1` 抓不到 Webots GUI/controller 面板里的学生控制器输出；debug 构建现按 `AIRACER_CONTROLLER_CONSOLE_LOG_DIR` 把 controller 进程的 stdout/stderr tee 到 `.tmp/run/webots_console/*.log`。实时读用 `tail -f .tmp/run/webots_console/*.log`，跑完也能直接读。
+- 跳点取证工具：`scripts/webots_jump_run.sh` 可从已有 telemetry 的某个 `t` 近似启动 Webots 并存短窗口相机帧。它只恢复 `x/y/heading`，不恢复速度、物理状态、controller 记忆或仿真时钟，只能看画面，不能当正式验证。
+
+## R024/R025 最新结论（2026-06-11）
+
+R024：尝试把 boundary escape 触发提前、速度门槛放宽，结果失败。complex 仍在 `x≈169,y≈111` 低速 37.4s，后续还出现 `x≈-42,y≈124` 和起点前长时间近停，最终 `t=622.016` 手动停止。该策略改动已撤回。
+
+R025：专门重跑 `130-185s` 相机帧窗口。控制日志显示该窗口 `line_conf=0`，line correction 为 0；所以“白线优先”没有被执行，是因为没有白线目标输入。下一步要修 `_camera_line_state`/ROI/信任链路，让真实中心虚线在这类弯道能被检测到，同时不能把白栏杆、白车、斑马线放进来。
 
 ## R022/R023 半径与 escape 分离结论（2026-06-11）
 
@@ -126,12 +136,12 @@ t=37.2 强制 -0.58 舵角 0.8s，是 R016 撞左栏的直接原因。
 
 ## 下一步（建议顺序）
 
-1. 继续跑 `bash scripts/webots_run.sh complex` 到更后段，确认 R022 之后是否还有新的内切/近停窗口；不要把“过旧卡点”误写成整条跑通。
-2. 若后段再出现贴边，先截短窗口帧和控制日志，确认 margin、白线、目标舵角和 escape 方向，再改代码。
-3. 保持当前采样色卡和保守 road mask；不要为了降低卡点把 road 重新放宽到栏杆/路外地面。
-4. complex 新窗口修完后继续跑 basic 回归，确认同一策略没有破坏 R023 的短跑状态。
-5. 跑通后再做提速和提交；不要把当前候选当作完成态。
+1. 从 `.tmp/r025_line_priority_run/line_window_preview/` 的 overlay 入手，定位 `130-185s` 为什么 `line_conf=0`：ROI、颜色阈值、形态学、候选几何还是信任门控哪一步丢线。
+2. 修白线检测时保留误锁防护：白栏杆、白车、斑马线仍要拒绝，不能靠全局放宽阈值蒙混通过。
+3. 用 `scripts/webots_jump_run.sh complex <t> --duration 5 --frames 1 --telemetry <telemetry>` 快速补画面；正式结论仍必须从头跑 `bash scripts/webots_run.sh complex`。
+4. complex 新窗口修完后跑 basic 回归，确认没有破坏 R023 的短跑状态。
+5. complex 稳定跑通前不要合 main；跑通后再做提速和正式提交。
 
 ## 验证状态
 
-最近一次（2026-06-11 R023 后）：`pytest` 94 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 和 `run_local.py --validate-only` 通过，但仍有性能 warning（本轮 p95 波动到 84-103ms，软上限 20ms）。`submissions/final/team_controller.py` 低于 100KB。
+最近一次（2026-06-11 R025 文档/工具整理后）：`git diff --check` 通过；`py_compile` + `bash -n` 通过；`pytest -q` 为 98 passed；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 `validate_controller.py` 通过但仍有性能 warning（本轮 p95 51.63ms，软上限 20ms）。`submissions/final/team_controller.py` 低于 100KB。

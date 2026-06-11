@@ -34,6 +34,22 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R025 — 白线优先失效取证：关键窗口没有可用白线信号 (2026-06-11, complex)
+- **构建**: working-tree；R024 的 boundary escape 加强已撤回，控制策略回到 `313e882` 同等行为。本轮只为取证加相机帧窗口。
+- **配置**: `bash scripts/webots_run.sh complex --frames 6 --frame-window 130 185`，world=complex, car_1, 单车, practice；调试构建。跑到 `t≈190.34s` 后手动停止。
+- **记录完整性**: 控制日志 clean，约 `5948` 帧；相机帧窗口保存 `286` 对 stereo（`572` 个 `.npy`），分析后删除原始帧，只保留 7 组 overlay/stereo PNG 在 `.tmp/r025_line_priority_run/line_window_preview/`。telemetry 和控制日志保留在 `.tmp/r025_line_priority_run/`。
+- **结果**: 未作为完赛验证。本轮确认 `135-185s` 窗口里 `line_conf=0`、`line_offset=0`、line correction 为 0，控制日志 `mode_reason` 长期是 `no_line_conf`。也就是说，算法并不是“看见白线但不优先用”，而是白线感知链路没有给 policy 提供可用目标。
+- **现象**: 这个窗口对应用户指出的内切/低速段。按设计，白线修正应把车带回车身中心；实际没有生效，因为输入信号为空。另查 `380-420s` 段，白线偶尔出现但 `line_offset≈0.5-0.86`，会被信任门控当作护栏/错误线拒绝。
+- **结论/下一步**: 核心旋钮不是继续提高 road mask 权重，也不是简单放宽白线信任阈值。下一步要用保留的 overlay 检查 `_camera_line_state` 为什么在 `x≈169,y≈111` 一带不给出白线候选，同时保留白栏杆/白车误锁防护。
+
+### R024 — boundary escape 提前触发反例：没有修好转弯半径问题 (2026-06-11, complex)
+- **构建**: `313e882` 之后的临时 working-tree；把边界障碍脱困触发帧数从 `8` 降到 `4`、速度上限从 `0.46` 放到 `0.52`，并让 boundary path 不要求 stable view。本轮结束后已撤回。
+- **配置**: `bash scripts/webots_run.sh complex`，world=complex, car_1, 单车, practice；调试构建，无相机帧。
+- **记录完整性**: 控制日志 clean，`19438` 帧；telemetry 同步可读。手动停止时无孤儿 Webots 进程残留。
+- **结果**: 未跑通。末帧 `t=622.016,x=28.758,y=-28.280,heading=-1.5707,speed=0.0`。最长近停段：`514.85-622.02s`（约 `107.2s`，`x≈27.9,y≈-28.1 → x≈28.8,y≈-28.3`）；另外还有 `135.26-172.64s`（约 `37.4s`，`x≈169.1,y≈112.0 → x≈169.5,y≈110.7`）、`392.61-412.99s`（约 `20.4s`，`x≈-42.5,y≈124.1 → x≈-42.5,y≈123.5`）、`99.33-110.43s`（约 `11.1s`，`x≈140.7,y≈147.5`）。
+- **现象**: 更早、更宽松的 escape 没有解决车入弯半径太小的问题。用户指出核心仍是转弯时没把白线保持在车身中间，这个判断与数据一致。
+- **结论/下一步**: 该改动已撤回，不作为候选。继续堆 escape 只会掩盖问题，下一步必须修“白线没有被有效感知/采用”的链路。
+
 ### R023 — basic 回归：贴边 escape 方向改动未引入异常 (2026-06-11, basic)
 - **构建**: working-tree；在 R022 的保守入弯半径参数和贴边 escape 方向修复上复验 basic。
 - **配置**: `bash scripts/webots_run.sh basic`，world=basic, car_1, 单车, practice；调试构建。

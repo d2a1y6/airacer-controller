@@ -96,7 +96,20 @@ python scripts/analyze_perception_dump.py .tmp/run/frames_basic \
 
 结论必须写清楚证据来源，例如“看了 t=92.4-96.0 的 overlay，白线在车身左侧，但 `target_steering` 仍为右打”。不要只凭一组均值推断。
 
-## 5. 开环回放
+## 5. 跳点取证
+
+如果 telemetry 有目标时间点，但原始相机帧没存下来，可以用跳点工具补短窗口画面：
+
+```bash
+bash scripts/webots_jump_run.sh complex 144 --duration 5 --frames 1 \
+  --telemetry .tmp/r025_line_priority_run/telemetry.jsonl
+```
+
+脚本会生成临时 Webots world，把 `car_1` 放到 telemetry 最近帧的 `x/y/heading`，再跑几秒并保存相机帧到 `.tmp/jump_run/frames/`。临时 world 放在 SDK 的 `webots/worlds/` 下，跑完自动删除。
+
+这个工具只恢复位置和朝向，不恢复速度、轮胎/悬挂状态、controller 内部记忆或仿真时钟。它适合回答“这个姿态下白线是否在视野里、mask 是否把栏杆当路面”，不能证明策略能从该状态真实脱困。策略验证仍要从头跑正式 world。
+
+## 6. 开环回放
 
 已有帧后，可以离线重跑同一段固定画面：
 
@@ -119,7 +132,7 @@ extract_observation → estimate_track → decide_control → clamp_cmd
 
 开环回放不能判断圈速、是否完赛、是否真实撞栏。真实 Webots 中，控制输出会改变车的位置和后续画面；回放里的后续画面已经固定。
 
-## 6. 记录和归档
+## 7. 记录和归档
 
 真实 Webots / 平台 run 才分配 R-id。AI 复盘后应把结论写回：
 
@@ -130,7 +143,7 @@ extract_observation → estimate_track → decide_control → clamp_cmd
 
 `analyze_telemetry.py --archive <label>` 只把当前原始 telemetry 临时复制到 `.tmp/recordings/<label>/`，方便本轮分析。它不是长期归档。
 
-## 7. 清理与保留
+## 8. 清理与保留
 
 `.tmp` 的保留规则（吃过亏：R014 撞栏帧被提前清掉，下一轮只能重跑取证）：
 
