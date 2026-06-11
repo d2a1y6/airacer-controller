@@ -34,6 +34,14 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R037 — 正式 final 单文件 basic 回归：红色环境兜底未污染 basic (2026-06-12, basic)
+- **构建**: commit `39b6cfe`，直接使用 `submissions/final/team_controller.py`，不使用 debug 构建；md5 与 fastest 相同，为 `f4b79c09f6811580817ecfe04d1fb11a`。
+- **配置**: 官方 `run_local.py --code-path submissions/final/team_controller.py --world basic --car-slot car_1`，通过官方 validator 后启动 Webots；AI 跑到 `t≈150.69s` 主动停止。
+- **记录完整性**: telemetry 时间单调且可读，但因主动 kill，metadata 仍带旧总帧数，脚本标为 suspect。本轮没有控制日志和相机帧，只用于正式单文件 basic 回归。
+- **结果**: telemetry 无事件、无近停，末帧 `x≈-19.76,y≈121.03,speed≈3.94,status=normal`。全段真实速度 mean `5.12`、median `6.09`、p95 `6.10`；近停占比 `<0.3=0.00`。
+- **现象**: `t=40→95` 直道/右弯速度中位数 `6.10`；`t=100→130` 顶部左侧弯最低速度约 `2.00`，状态一直 normal；`t=130→150` 起点区域均速约 `5.29`。没有出现贴边、长爬行或事件。
+- **结论/下一步**: 正式 final 单文件没有在 basic 前 150 秒引入明显回归，说明 Phase 2.2 的 complex 红色环境单目白线兜底没有污染 basic。下一步仍是人眼跑 complex 终判。
+
 ### R036 — 正式 final 单文件 complex 冒烟：关键风险窗行为与 debug 证据一致 (2026-06-12, complex)
 - **构建**: commit `35b96a1`，直接使用 `submissions/final/team_controller.py`，不使用 debug 构建；md5 与 fastest 相同，为 `f4b79c09f6811580817ecfe04d1fb11a`。
 - **配置**: 官方 `run_local.py --code-path submissions/final/team_controller.py --world complex --car-slot car_1`，通过官方 validator 后启动 Webots；AI 监控旧风险坐标，跑过旧起点前窗口后主动停止，实际到 `t≈360.32s`。
