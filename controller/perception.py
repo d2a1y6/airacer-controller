@@ -353,6 +353,31 @@ def _startup_single_line_candidate(
     return line
 
 
+def _red_environment_single_line_candidate(
+    line: tuple[float, float, float] | None,
+    profile: dict,
+    red_environment: bool,
+) -> tuple[float, float, float] | None:
+    """判断 complex 弯中单目白线是否可作低置信兜底。
+
+    功能：在红色场地里，一侧相机可能因透视/虚线间隙漏掉白线；另一侧若已通过路面上下文过滤，
+    可低置信接入，避免控制链路短暂失去中线。
+    参数：`line` 是单相机检测结果，`red_environment` 来自左右画面的红色场地判定。
+    返回：可信则返回置信度折扣后的 line；否则返回 None。
+    逻辑：只在 complex 红色环境启用，且要求 offset 仍在主信任门内；basic 和发车单目逻辑互不影响。
+    """
+
+    if line is None or not red_environment or not profile["single_camera_enable"]:
+        return None
+    offset, heading, confidence = line
+    if confidence < profile["single_camera_min_confidence"]:
+        return None
+    if abs(offset) > profile["single_camera_offset_max"]:
+        return None
+    scaled_confidence = confidence * profile["single_camera_confidence_scale"]
+    return offset, heading, clamp(scaled_confidence, 0.0, 1.0)
+
+
 def _stereo_line_state(left_img, right_img, profile: dict, timestamp=None) -> tuple[float, float, float]:
     """融合左右相机的白线状态。
 
@@ -369,6 +394,10 @@ def _stereo_line_state(left_img, right_img, profile: dict, timestamp=None) -> tu
     right = _camera_line_state(right_img, profile)
     if left is None or right is None:
         single = _startup_single_line_candidate(left or right, profile, timestamp)
+        if single is not None:
+            return single
+        red_environment = _is_red_environment(left_img) or _is_red_environment(right_img)
+        single = _red_environment_single_line_candidate(left or right, profile, red_environment)
         if single is not None:
             return single
         return 0.0, 0.0, 0.0

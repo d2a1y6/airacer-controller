@@ -51,3 +51,5 @@ date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finis
 2026-06-12,local,fastest,complex,0,,93.60,0,manual_stop,"R026 | Phase 1 后首段 complex 取证：lost 降到约 1%，起步居中改善，但第一个左转仍有 14.1s 爬行，机制是弯中白线在主转向帧掉线、road-mask 预判提前左打导致半径过小。已归档 open case 和 report figures，详见 notes.md R026。"
 2026-06-12,local,fastest,complex,0,,46.02,0,manual_stop,"R027 | Phase 2 候选复跑：第一个左转仍撞/擦左边但未长时间卡死。白线已大量召回，问题转为 line_heading/road heading 强左压过 offset 回中，且 0.55 offset 门拒掉 0.62-0.71 的真实弯中白线。已实现 offset 优先修复候选，详见 notes.md R027。"
 2026-06-12,local,fastest,complex,0,,64.58,0,ai_short_stop,"R028 | Phase 2.1 候选 AI 自主短测：只跑到当前问题窗口之后即停止；第一个左弯无长爬行、无 telemetry 事件，t≈42 已回到直道中央。残留 t≈32-35 低速硬左瞬态，case 仍需人眼终判，详见 notes.md R028。"
+2026-06-12,local,fastest,complex,0,,70.75,0,ai_short_stop,"R029 | Phase 2.2 候选 AI 自主短测：只跑到第一个左弯后；红色环境单目白线兜底+曲线虚线门控放宽后，line_conf>0 达 481/500，窗口无 telemetry 事件、无近停，t≈42 已稳定出弯。case 仍需人眼终判，详见 notes.md R029。"
+2026-06-12,local,fastest,basic,0,,46.78,0,ai_short_stop,"R030 | Phase 2.2 候选 basic 短回归：只跑早段 46.8s；red_env 全程 0，确认红色环境单目兜底未污染 basic。无 telemetry 事件、无近停，详见 notes.md R030。"

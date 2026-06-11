@@ -256,9 +256,9 @@ LINE_FOLLOW_PROFILE = {
     "road_dark_chroma_max": 36.0,
     "offset_near_fraction": 0.34,
     "initial_center_max_offset": 0.40,
-    "max_center_jump_ratio": 0.24,
+    "max_center_jump_ratio": 0.32,
     "min_points_per_camera": 3,
-    "min_y_span": 70.0,
+    "min_y_span": 60.0,
     "near_y_ratio": 0.78,
     "far_y_ratio": 0.55,
     "min_confidence": 0.30,
@@ -282,8 +282,14 @@ LINE_FOLLOW_PROFILE = {
     "curve_gate": 0.35,
 
 
-    "offset_priority_min": 0.30,
+    "offset_priority_min": 0.18,
     "offset_curve_min_scale": 0.35,
+
+
+    "single_camera_enable": True,
+    "single_camera_min_confidence": 0.60,
+    "single_camera_confidence_scale": 0.65,
+    "single_camera_offset_max": 0.75,
 
 
 
@@ -348,7 +354,7 @@ ESTIMATOR_PROFILE = {
 
 
 
-    "line_offset_priority_min": 0.30,
+    "line_offset_priority_min": 0.18,
     "line_conflict_heading_scale": 0.20,
     "line_conflict_projected_scale": 0.65,
     "line_startup_until": 14.0,
@@ -932,6 +938,31 @@ def _startup_single_line_candidate(
     return line
 
 
+def _red_environment_single_line_candidate(
+    line: tuple[float, float, float] | None,
+    profile: dict,
+    red_environment: bool,
+) -> tuple[float, float, float] | None:
+\
+\
+\
+\
+\
+\
+\
+
+
+    if line is None or not red_environment or not profile["single_camera_enable"]:
+        return None
+    offset, heading, confidence = line
+    if confidence < profile["single_camera_min_confidence"]:
+        return None
+    if abs(offset) > profile["single_camera_offset_max"]:
+        return None
+    scaled_confidence = confidence * profile["single_camera_confidence_scale"]
+    return offset, heading, clamp(scaled_confidence, 0.0, 1.0)
+
+
 def _stereo_line_state(left_img, right_img, profile: dict, timestamp=None) -> tuple[float, float, float]:
 \
 \
@@ -948,6 +979,10 @@ def _stereo_line_state(left_img, right_img, profile: dict, timestamp=None) -> tu
     right = _camera_line_state(right_img, profile)
     if left is None or right is None:
         single = _startup_single_line_candidate(left or right, profile, timestamp)
+        if single is not None:
+            return single
+        red_environment = _is_red_environment(left_img) or _is_red_environment(right_img)
+        single = _red_environment_single_line_candidate(left or right, profile, red_environment)
         if single is not None:
             return single
         return 0.0, 0.0, 0.0
@@ -2701,7 +2736,10 @@ def _lane_line_correction(
         mixed_target = offset_target + track.line_heading * profile["heading_gain"]
         curve_scale = 1.0 - clamp(signals["curve_risk"] / curve_gate, 0.0, 1.0)
         target = clamp(mixed_target, -max_correction, max_correction) * curve_scale
-        if abs(track.line_offset) >= profile["offset_priority_min"]:
+        if (
+            abs(track.line_offset) >= profile["offset_priority_min"]
+            and track.line_offset * track.line_heading < 0.0
+        ):
 
 
             offset_floor = clamp(

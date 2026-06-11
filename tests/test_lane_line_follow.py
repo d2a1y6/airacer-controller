@@ -57,6 +57,17 @@ def _sparse_dashed_curve_image(points):
     return image
 
 
+def _red_scene_sparse_dashed_curve_image(points):
+    """红色场地背景 + 沥青路面里的稀疏虚线，用来触发 complex 单目兜底。"""
+
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    image[:, :] = _RED_GROUND
+    image[220:430, :] = _ASPHALT
+    for x, y in points:
+        cv2.rectangle(image, (int(x) - 5, int(y) - 8), (int(x) + 5, int(y) + 8), (235, 235, 235), -1)
+    return image
+
+
 def test_symmetric_stereo_line_has_near_zero_correction():
     left = _line_image([350, 348, 346, 344, 342, 340])
     right = _line_image([290, 292, 294, 296, 298, 300])
@@ -97,6 +108,34 @@ def test_startup_single_camera_left_line_is_rejected():
     assert offset == 0.0
     assert heading == 0.0
     assert confidence == 0.0
+
+
+def test_single_camera_line_after_startup_is_rejected_outside_red_environment():
+    left = _line_image([420, 398, 360, 310])
+    right = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    offset, heading, confidence = _stereo_line_state(left, right, LINE_FOLLOW_PROFILE, timestamp=32.0)
+
+    assert offset == 0.0
+    assert heading == 0.0
+    assert confidence == 0.0
+
+
+def test_red_environment_single_camera_curve_line_is_low_confidence_fallback():
+    left = _red_scene_sparse_dashed_curve_image([
+        (420, 399),
+        (365, 357),
+        (280, 315),
+    ])
+    right = np.zeros((480, 640, 3), dtype=np.uint8)
+    right[:, :] = _RED_GROUND
+
+    offset, heading, confidence = _stereo_line_state(left, right, LINE_FOLLOW_PROFILE, timestamp=32.0)
+
+    assert confidence >= LINE_FOLLOW_PROFILE["min_confidence"]
+    assert confidence < 0.80
+    assert offset > 0.10
+    assert heading < 0.0
 
 
 def test_bright_white_post_at_road_red_edge_is_rejected():

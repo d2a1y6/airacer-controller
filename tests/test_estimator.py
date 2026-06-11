@@ -196,6 +196,23 @@ def test_conflicting_line_heading_keeps_offset_recenter_priority():
     assert track.heading_error > -0.20
 
 
+def test_moderate_offset_with_extreme_left_heading_still_recenters():
+    # R028：放宽弯中虚线连续性后，稀疏曲线可能给出很强的负 heading。
+    # 只要 offset 已表明线在右侧，主链路仍应保留右向回中，不让 heading 把 lookahead 拉到左侧。
+    reset_estimator_state()
+    obs = make_obs(lambda progress: 0.0, confidence=0.02)
+    obs.debug_flags = 32
+    obs.line_offset = 0.20
+    obs.line_heading = -1.00
+    obs.line_confidence = 0.60
+
+    track = estimate_track(obs, 32.0)
+
+    assert track.lost is False
+    assert track.lateral_error > 0.03
+    assert track.lookahead_error > 0.02
+
+
 def test_too_large_line_offset_is_rejected_outside_startup_window():
     reset_estimator_state()
     obs = make_obs(lambda progress: 0.0, confidence=0.02)

@@ -704,7 +704,10 @@ def _lane_line_correction(
         mixed_target = offset_target + track.line_heading * profile["heading_gain"]
         curve_scale = 1.0 - clamp(signals["curve_risk"] / curve_gate, 0.0, 1.0)
         target = clamp(mixed_target, -max_correction, max_correction) * curve_scale
-        if abs(track.line_offset) >= profile["offset_priority_min"]:
+        if (
+            abs(track.line_offset) >= profile["offset_priority_min"]
+            and track.line_offset * track.line_heading < 0.0
+        ):
             # R027：弯中 line_heading 可与 offset 回中方向相反。弯很急时仍至少保留一部分
             # 纯 offset 修正，让车先回到白线附近，再相信斜率。
             offset_floor = clamp(

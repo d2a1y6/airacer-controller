@@ -34,6 +34,23 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R030 — Phase 2.2 候选 basic 短回归：红色环境单目兜底未污染 basic (2026-06-12, basic)
+- **构建**: working-tree；同 R029 Phase 2.2 候选。
+- **配置**: AI 自主运行 `bash scripts/webots_run.sh basic --frames 4`，world=basic, car_1, practice；只跑早段回归，主动停止于 `t≈46.78s`。
+- **记录完整性**: clean。控制日志 `1462` 帧，telemetry `1462` 帧，`metadata.total_frames=1462`。
+- **结果**: telemetry 无事件、状态 `normal`，末帧 `x=84.69,y=265.23,speed=5.95`；全段近停占比 `<0.3=0.00`，真实速度 mean `5.168` / median `6.090`。
+- **现象**: `red_env` 全程 0，说明 R029 新增的红色环境单目白线兜底没有在 basic 启用。控制日志 `mean|lat|=0.039`，`|lat|>0.3=0.00`，lost 仅 `21/1462≈1%`，无明显贴边或异常减速。
+- **结论/下一步**: Phase 2.2 候选没有在 basic 早段引入明显回归。仍需人眼跑 complex，确认第一个左弯是否视觉上沿中间白色虚线且无轻微擦左。
+
+### R029 — Phase 2.2 候选自主短测：补上弯中白线短掉线，第一个左弯通过 (2026-06-12, complex)
+- **构建**: working-tree；在 R028 后新增红色环境单目白线兜底（低置信折扣）、放宽曲线虚线扫描连续性/y 跨度，并把 offset-heading 冲突的回中优先阈值从 `0.30` 降到 `0.18`。已重新生成 `submissions/fastest` / `safe` / `final`。
+- **配置**: AI 自主运行 `bash scripts/webots_run.sh complex --frames 2`，world=complex, car_1, practice；按用户要求只跑到当前问题窗口之后，实际主动停止于 `t≈70.75s`。
+- **记录完整性**: clean。控制日志 `2211` 帧，telemetry `2211` 帧，`metadata.total_frames=2211`；保存 `1105` 对 stereo PNG。
+- **结果**: 第一个左弯窗口通过。telemetry `t=27→43` 从 `x≈170.4,y≈-29.5` 到 `x≈199.0,y≈5.6`，状态一直 `normal`，无事件；窗口 supervisor 速度最低约 `1.36`，全段近停占比 `<0.3=0.00`。
+- **现象**: 对比 R028，`t=27→43` 控制日志中 `line_conf>0` 从 `348/500` 提到 `481/500`，最长白线短掉线基本消失；窗口命令速度均值 `0.607`，低速 `<0.3` 约 `1%`。`t≈31→32` 左舵明显收小并开始右向回中；`t≈34→36` 仍有正常左弯舵角，但 telemetry 不近停、不撞，`t≈42` 已稳定出弯。
+- **验证**: `pytest -q` 为 `113 passed`；`py_compile` + `bash -n` 通过；`scripts/validate_submission.py submissions/final/team_controller.py` 通过；官方 validator 通过但有 W014 性能软警告（p95 `36.24ms`）。md5：fastest/final=`f4b79c09f6811580817ecfe04d1fb11a`，safe=`db16a4ac92af6082fcc2396ee46fe9be`。
+- **结论/下一步**: 当前候选比 R028 更接近目标：弯中白线连续性强，车没有复现长爬行或撞栏事件。本轮不继续盲调。case 仍保持 open，因为这是 AI 短测，尚未由人眼确认是否完全沿中间白色虚线。
+
 ### R028 — Phase 2.1 候选自主短测：第一个左弯窗口通过，仍有低速瞬态 (2026-06-12, complex)
 - **构建**: working-tree；包含 R027 后的 Phase 2.1 offset 优先候选（offset trust 0.75、heading/offset 冲突时保留回中优先级）。
 - **配置**: AI 自主运行 `bash scripts/webots_run.sh complex --frames 2`，world=complex, car_1, practice；按用户要求没有跑完整场，只跑到当前问题窗口之后，约 `t=64.6s` 主动停止。

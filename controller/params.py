@@ -147,9 +147,9 @@ LINE_FOLLOW_PROFILE = {
     "road_dark_chroma_max": 36.0,   # 路面上下文：最大色度（排除红地≈94、草≈84）
     "offset_near_fraction": 0.34,   # 用最近/最远各 1/3 实测点的中位数算 offset/heading，不再直线外推
     "initial_center_max_offset": 0.40,
-    "max_center_jump_ratio": 0.24,
+    "max_center_jump_ratio": 0.32,
     "min_points_per_camera": 3,
-    "min_y_span": 70.0,
+    "min_y_span": 60.0,
     "near_y_ratio": 0.78,
     "far_y_ratio": 0.55,
     "min_confidence": 0.30,
@@ -173,8 +173,14 @@ LINE_FOLLOW_PROFILE = {
     "curve_gate": 0.35,
     # R027 取证：弯中 offset 已说明车偏离白线，但 curve_gate 会把后置白线修正压成 0。
     # 当 offset 足够大时，保留一部分纯 offset 回中力；heading 仍可被弯中门控压低。
-    "offset_priority_min": 0.30,
+    "offset_priority_min": 0.18,
     "offset_curve_min_scale": 0.35,
+    # R028 残留瞬态：第一个左弯中段常只有一侧相机能凑够弯中虚线点，双目硬要求会让
+    # `line_conf` 短暂归零。只在 complex 红色环境里接受单目兜底，并打置信折扣；basic 不受影响。
+    "single_camera_enable": True,
+    "single_camera_min_confidence": 0.60,
+    "single_camera_confidence_scale": 0.65,
+    "single_camera_offset_max": 0.75,
     # complex 发车时车初始在白线左侧，road mask 会把右侧大块低饱和地面误当路，导致几何中心贴左。
     # 只在开头短窗口接受“白线在右侧且斜率合理”的较大 offset，用于把车捕获回白线中间；
     # 负 offset 和接近护栏的大 offset 仍拒绝。
@@ -239,7 +245,7 @@ ESTIMATOR_PROFILE = {
     # R027 取证：第一个左弯里白线 offset 为正（线在右，车应右回中），但 line_heading 很负。
     # 若直接融合 heading/lookahead，会继续给大左舵。offset 足够大且与 heading 反号时，白线
     # 主要代表"回中方向"，heading 只能弱参考，lookahead 不允许被反向拉过中心。
-    "line_offset_priority_min": 0.30,
+    "line_offset_priority_min": 0.18,
     "line_conflict_heading_scale": 0.20,
     "line_conflict_projected_scale": 0.65,
     "line_startup_until": 14.0,
