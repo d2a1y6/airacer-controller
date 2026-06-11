@@ -170,6 +170,8 @@ ESTIMATOR_PROFILE = {
     "far_eval_progress": 0.75,
     "heading_eval_progress": 0.45,
     "poly2_min_points": 5,
+    "curvature_full_points": 12,
+    "curvature_min_y_span": 150.0,
     "heading_gain": 1.25,
     "curvature_gain": 1.45,
     "fallback_curvature_gain": 0.70,
@@ -1056,25 +1058,42 @@ def _heading_from_fit(coeffs: np.ndarray, degree: int) -> float:
     return clamp(derivative * ESTIMATOR_PROFILE["heading_gain"], -1.0, 1.0)
 
 
+def _curvature_trust(n_points: int, y_span: float, fit_score: float) -> float:
+    """计算曲率可信度。
+
+    功能：当扫描点少、纵向跨度小或拟合误差大时，二次项不可信，可信度趋近 0。
+    参数：`n_points` 是中心点数，`y_span` 是纵向像素跨度，`fit_score` 是拟合质量分。
+    返回：`[0, 1]` 的可信度。
+    逻辑：远端被遮挡时只剩近处少量聚簇点，deg-2 二次系数是数值噪声（常被钳到 ±1、
+    甚至符号相反——在全程右弯的赛道上凭空出现"满信心左弯"）。三项必须同时达标才信曲率。
+    """
+
+    span = max(ESTIMATOR_PROFILE["curvature_full_points"] - ESTIMATOR_PROFILE["poly2_min_points"], 1.0)
+    n_score = clamp((float(n_points) - ESTIMATOR_PROFILE["poly2_min_points"]) / span, 0.0, 1.0)
+    span_score = clamp(y_span / ESTIMATOR_PROFILE["curvature_min_y_span"], 0.0, 1.0)
+    return clamp(n_score * span_score * clamp(fit_score, 0.0, 1.0), 0.0, 1.0)
+
+
 def _curvature_from_fit(
     coeffs: np.ndarray,
     degree: int,
     lateral_error: float,
     lookahead_error: float,
+    trust: float,
 ) -> float:
     """估计中心线曲率。
 
-    功能：二次拟合时用二次项，其他情况用远近误差差值兜底。
-    参数：拟合系数、阶数、近处误差和远处误差。
+    功能：二次拟合时用二次项，其他情况用远近误差差值兜底，并按可信度收缩。
+    参数：拟合系数、阶数、近处误差、远处误差和曲率可信度 `trust`。
     返回：右弯为正、左弯为负的曲率值。
-    逻辑：所有结果裁剪到 `[-1, 1]`，保持 policy 输入稳定。
+    逻辑：用 `trust` 把不可信的二次系数收向 0，避免幻觉急弯；再裁剪到 `[-1, 1]`。
     """
 
     if degree == 2:
         value = float(coeffs[0]) * ESTIMATOR_PROFILE["curvature_gain"]
     else:
         value = (lookahead_error - lateral_error) * ESTIMATOR_PROFILE["fallback_curvature_gain"]
-    return clamp(value, -1.0, 1.0)
+    return clamp(value * trust, -1.0, 1.0)
 
 
 def _fit_error_score(progress: np.ndarray, x_norm: np.ndarray, coeffs: np.ndarray) -> float:
@@ -1216,9 +1235,11 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         1.0,
     )
     heading_error = _heading_from_fit(coeffs, degree)
-    curvature = _curvature_from_fit(coeffs, degree, lateral_error, lookahead_error)
+    fit_score = _fit_error_score(progress, x_norm, coeffs)
+    curvature_trust = _curvature_trust(len(points), y_span, fit_score)
+    curvature = _curvature_from_fit(coeffs, degree, lateral_error, lookahead_error, curvature_trust)
 
-    confidence = _geometry_confidence(obs, points, y_span, _fit_error_score(progress, x_norm, coeffs))
+    confidence = _geometry_confidence(obs, points, y_span, fit_score)
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
         track = _lost_track(confidence, red_environment)
         _LAST_TRACK = track

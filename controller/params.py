@@ -72,6 +72,8 @@ ESTIMATOR_PROFILE = {
     "far_eval_progress": 0.75,
     "heading_eval_progress": 0.45,
     "poly2_min_points": 5,
+    "curvature_full_points": 12,
+    "curvature_min_y_span": 150.0,
     "heading_gain": 1.25,
     "curvature_gain": 1.45,
     "fallback_curvature_gain": 0.70,

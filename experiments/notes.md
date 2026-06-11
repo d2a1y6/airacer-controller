@@ -32,7 +32,13 @@
 
 ## 当前记录（新格式，最新在上）
 
-### R005 — C003 蓝门桥接：实车迄今最好的一版（保留） (2026-06-11, basic)
+### R006 — C004 曲率可信度门控：幻觉左弯消除，迄今最好 (2026-06-11, basic)
+- **构建**: C003(grass+pinned+gate-bridge) 之上加**估计器曲率可信度门控**——`curvature = raw × trust`，`trust=点数×纵向跨度×拟合质量`，点少/聚簇/拟合差时曲率收向 0。
+- **配置**: world=basic, car_1, 单车, practice。
+- **现象（用户实车 = ground truth）**: **迄今最好**。过弯不再往反方向（左）打轮；"车离开中心线"明显好转。
+- **数据**: `幻觉左弯(curv<-0.1)` 从 C002 的 hard_turn 里 0.22 降到 **0.056**；`mean|lat|=0.027`（贴中心线很紧）；steer mean +0.023（正确偏右）。lost=0.69 是 gate-bridge 的良性虚高（车 lost 时直线滑行，不据此判好坏——见 [[on-track-truth-over-offline-proxy]]）。
+- **残留问题（下一主攻）**: **转弯转得太早 → 贴内线栏杆**（corner cut）。机制：转向目标里"远处前瞻项"(lookahead×0.9 + heading + curvature)在车还居中、近处还直时(lateral≈0)就因远处路已弯而提前打轮 → 切内线。证据：起步帧 lateral +0.09 时 steer 已 +0.45（由 curv+lookahead 驱动）。
+- **结论**: C004 保留为最佳基线。下一步做"入弯时机门控"——远处弯但近处还没到时压制前瞻项，让车跟着中心线、等弯真正到了再转。
 - **构建**: 在 C002 基础上加"蓝色 checkpoint 门并入道路 mask"（gate-bridge）。
 - **配置**: world=basic, car_1, 单车, practice。
 - **现象（用户肉眼 = ground truth）**: **比之前所有版本都好**——蓝门前的大拐弯、过弯剐蹭栏杆**全部消失**，只剩第一个蓝门前稍微丢一点线。
