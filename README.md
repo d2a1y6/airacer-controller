@@ -32,8 +32,8 @@ def control(left_img, right_img, timestamp):
 | `experiments/README.md` | `experiments/` 留档规则总览 | 想知道 STATUS、runs、notes、cases、figures 怎么分工 |
 | `baselines/README.md` | baseline 快照规则和当前快照索引 | 想找可回退版本或当前 best 快照 |
 | `docs/official_testing.md` | 官方 SDK 与 Webots 安装、官方 validator | 首次配环境、提交前跑官方校验 |
-| `docs/human_webots_testing.md` | 人类守着 Webots 实跑、肉眼记录的流程 | 准备上车跑一轮 |
-| `docs/ai_offline_review.md` | AI 用日志/telemetry/帧/overlay 离线复盘的流程 | 人类跑完、AI 接手分析 |
+| `docs/human_webots_testing.md` | AI 或人类跑 Webots，并留下可复盘产物的流程 | 准备上车跑一轮 |
+| `docs/ai_offline_review.md` | AI 用日志/telemetry/帧/overlay 复盘一轮 run 的流程 | 跑完后需要诊断机制 |
 | `docs/official_test_matrix.md` | 官方赛道、测试入口、赛制清单 | 需要赛道/测试入口的完整清单 |
 | `experiments/notes.md` | 按 R-id 倒序的实验叙事 | 想查某次 run 的细节，不必通读 |
 | `experiments/runs.csv` | 真实 run 的结构化台账 | 想横向比较历次结果 |
@@ -88,10 +88,10 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 
-Webots 实跑分两段：
+Webots 实跑分两层：
 
-- 人类实跑和肉眼观察：`docs/human_webots_testing.md`
-- AI 离线复盘、逐帧取证和归档：`docs/ai_offline_review.md`
+- AI 日常迭代可以自己跑 Webots、看日志和截图：`docs/human_webots_testing.md` + `docs/ai_offline_review.md`
+- 关键验收节点再让人类肉眼确认，例如准备标完成、合 main、提交 final，或 AI 判断已经接近解决时
 
 完整工具索引见 `scripts/README.md`。
 
@@ -114,7 +114,7 @@ Webots 实跑分两段：
 整场录像和逐帧回看很重要，但它们是临时诊断材料，不是长期仓库资产。这里的“整场回看”是 AI 先看全局摘要，再从整场记录里挑关键窗口逐帧取证；不是要求人类或 AI 把完整录像逐帧看完。
 
 - `.tmp/` 用来放 debug 构建、控制日志、整场相机帧 PNG、overlay、Webots 录像和临时 SDK 克隆。`scripts/webots_run.sh` 默认每轮保存相机帧（无损 PNG，整场约几百 MB），所以跑完后看任意时刻都不必重跑。
-- 人类负责实跑和肉眼现象记录；AI 负责用日志、telemetry、帧和 overlay 解释机制。
+- AI 可以负责日常实跑、日志分析、截图/overlay 取证和机制解释；人类负责关键验收时的肉眼确认。
 - AI 分析时必须用关键窗口的逐帧画面或 overlay 支撑判断；不要只凭数字或猜测下结论。
 - **最近一次 run 的 `.tmp/run` 产物保留到被下一次 run 覆盖**（`scripts/webots_run.sh` 自动轮换到 `.tmp/run.prev`）；清理前先确认 notes 里的"下一步"不依赖它。不要提交整场帧、整场录像、批量截图或临时 telemetry 复制件。
 - 如果某个失败窗口以后还会反复用来回归，裁剪成 `experiments/cases/<R-id>_<slug>/`，只保留很小的窗口和少量关键 overlay。
@@ -125,7 +125,7 @@ Webots 实跑分两段：
 
 - `experiments/STATUS.md`：唯一活动交接文档，就地更新，不再新建 handoff 文件。
 - `experiments/runs.csv`：真实 Webots/platform run 的结构化台账。`notes` 列只写一两句并以 `R0xx |` 开头，细节进 notes.md。
-- `experiments/notes.md`：肉眼现象、数据摘要、结论、下一步，最新记录在最上面。
+- `experiments/notes.md`：实跑现象、数据摘要、结论、下一步，最新记录在最上面。
 - `experiments/analysis_*.md`：有机制解释价值的长分析。
 - `experiments/cases/`：少量关键失败窗口，不保存整场原始数据。
 - `experiments/figures/`：报告图和长期回查图，不保存批量截图。

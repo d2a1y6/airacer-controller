@@ -8,7 +8,7 @@
 |---|---|
 | `STATUS.md` | 唯一活动交接文档。新接手先读这里，了解当前 best、未解问题、下一步。 |
 | `runs.csv` | 结构化台账。一行是一轮真实 Webots/platform run。 |
-| `notes.md` | 按 R-id 倒序的实验叙事：肉眼观察、数据摘要、结论、下一步。 |
+| `notes.md` | 按 R-id 倒序的实验叙事：观察现象、数据摘要、结论、下一步。 |
 | `cases/README.md` | 失败窗口归档规则。 |
 | `figures/README.md` | 报告图/长期可视化归档规则。 |
 | `analysis_*.md` | 有机制解释价值的专题分析。 |
@@ -39,7 +39,7 @@
 
 ## 一轮 run 后怎么记录
 
-1. 人类按 `docs/human_webots_testing.md` 跑 Webots，记录肉眼现象。
+1. AI 或人类按 `docs/human_webots_testing.md` 跑 Webots，记录观察现象；关键验收节点再请人类肉眼确认。
 2. AI 按 `docs/ai_offline_review.md` 看 telemetry、控制日志、帧和 overlay。
 3. 在 `runs.csv` 追加一行，`notes` 以 `R0xx |` 开头，只写短结论。
 4. 在 `notes.md` 顶部追加对应 R-id 的完整叙事。

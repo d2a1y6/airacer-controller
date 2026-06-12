@@ -1,6 +1,6 @@
 # R026 first left tight radius
 
-- 状态：**未完成 / open**。这是回归 case，不要在没有新一轮 Webots complex 实跑前标记完成。
+- 状态：**未完成 / open**。这是回归 case，不要在没有新一轮 Webots complex 实跑和关键验收前标记完成。日常验证可以由 AI 自己跑 Webots 并分析日志/overlay；准备关闭 case 时再请人类确认。
 - 来源：R026，world=complex，car_1，practice，调试构建；记录来自 `.tmp/run/control_complex.jsonl` 和 SDK `.local/recordings/telemetry.jsonl`。
 - 时间窗：`t=29.0→48.0`，第一个左转入口到爬行段结束。
 - 现象：车在第一个左转半径过小，切到内侧后进入约 `14.1s` 的低速爬行；telemetry 最长爬行段为 `t=33.8→47.8`，位置约 `x=188.6,y=-27.1 → x=188.9,y=-26.9`。
@@ -25,9 +25,9 @@
 ## 后续回归
 
 - R027 复跑补充：Phase 2 后第一个左弯仍撞/擦左边，但不再长时间卡死。白线已大量召回，问题变成 `line_heading` / road heading 强左压过 `line_offset` 回中；同时 `line_offset≈0.62-0.71` 的真实弯中白线被旧 `0.55` 门拒掉。当前 Phase 2.1 候选已改为 offset 优先融合，并把信任门放到 `0.75`。本 case 仍 open。
-- R028 AI 自主短测补充：Phase 2.1 候选只跑到当前问题窗口之后，`t≈64.6s` 主动停止。第一个左弯没有复现 `14.1s` 长爬行，也没有 telemetry 事件，`t≈42` 已回到直道中央；残留是 `t≈32→35` 的短暂低速硬左瞬态。由于这不是完整场，也没有人眼终判，本 case 仍 open。
-- R029 AI 自主短测补充：Phase 2.2 候选只跑到当前问题窗口之后，`t≈70.75s` 主动停止。第一个左弯窗口 `line_conf>0` 达 `481/500`，telemetry 无事件、无近停，`t≈42` 已稳定出弯；但仍需人眼确认是否真正沿中间白色虚线且无轻微擦左。本 case 仍 open。
-- 请人用当前 Phase 2.2 候选重新跑 `bash scripts/webots_run.sh complex`。
+- R028 AI 自主短测补充：Phase 2.1 候选只跑到当前问题窗口之后，`t≈64.6s` 主动停止。第一个左弯没有复现 `14.1s` 长爬行，也没有 telemetry 事件，`t≈42` 已回到直道中央；残留是 `t≈32→35` 的短暂低速硬左瞬态。由于这不是完整验收，本 case 仍 open。
+- R029 AI 自主短测补充：Phase 2.2 候选只跑到当前问题窗口之后，`t≈70.75s` 主动停止。第一个左弯窗口 `line_conf>0` 达 `481/500`，telemetry 无事件、无近停，`t≈42` 已稳定出弯；后续仍需在关键验收时确认是否真正沿中间白色虚线且无轻微擦左。本 case 仍 open。
+- AI 可先用当前候选重新跑 `bash scripts/webots_run.sh complex` 并复盘日志/overlay；准备关闭 case 时再请人类关键验收。
 - 通过标准：
   - 第一个左转不再出现 `t≈33.8→47.8` 这种长爬行。
   - `t≈31` 左右的弯中线信号能稳定进入控制链路，不能只在一两帧闪现。

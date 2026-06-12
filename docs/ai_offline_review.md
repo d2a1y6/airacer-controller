@@ -1,6 +1,6 @@
 # AI 离线复盘手册
 
-本文给接手实验记录的 AI 看。人类按 `docs/human_webots_testing.md` 跑过 Webots 后，AI 应该用 telemetry、控制日志、相机帧和 overlay 解释现象。人类肉眼结论是最终事实来源；离线复盘负责找机制证据、定位代码链路和整理下一步。
+本文给接手实验记录的 AI 看。Webots 可以由 AI 自己跑，也可以由人类跑；跑完后，AI 应该用 telemetry、控制日志、相机帧和 overlay 解释现象。日常迭代不必每轮都等人工，AI 可以自跑、自查、自筛候选；准备标完成、合 main、提交 final，或 AI 判断已接近解决时，再让人类做关键验收。
 
 这里的“整场 review”不是逐帧看完整场。正确做法是先看整场摘要，再从整场记录里挑关键窗口逐帧看图、生成少量 overlay，用画面和日志支撑判断。
 
@@ -10,7 +10,7 @@
 
 | 数据 | 常见路径 | 用途 | 保存策略 |
 |---|---|---|---|
-| 人类反馈 | 用户消息、截图、`experiments/notes.md` | 判断真实现象，确定优先级 | 写进 notes.md 对应 R-id |
+| 观察反馈 | 用户消息、AI 自跑观察、截图、`experiments/notes.md` | 判断真实现象，确定优先级 | 写进 notes.md 对应 R-id |
 | telemetry | `/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl` | 位置、速度、爬行段、事件 | 整场复制件只临时留存；长期写摘要或裁剪窗口 |
 | 控制日志 | `.tmp/run/control_*.jsonl` | 每帧内部状态、mode、目标控制量、最终输出 | 摘要写 notes；窗口可裁进 case |
 | 相机帧 | `.tmp/run/frames_*/*.png` | 逐帧看白线、道路 mask、障碍物、栏杆 | 整场 PNG 不进 git；关键帧渲染成 overlay 后裁进 case |
@@ -28,7 +28,7 @@ python scripts/build_submission.py --mode fastest \
   --out .tmp/run/team_controller_debug.py
 ```
 
-帧保存为无损 PNG（不是旧的 `.npy`），整场约几百 MB，所以可以默认每轮都存。`--dump-frame-stride` 默认是 10，约每 0.3s 留一对图，适合整场回看；精确撞栏窗口才显式传 `--dump-frame-stride 1`。人类实跑直接用 `bash scripts/webots_run.sh <basic|complex>` 即可（帧默认开启，自动做跑前清理、构建和启动）；只在确定不看画面时加 `--no-frames`。
+帧保存为无损 PNG（不是旧的 `.npy`），整场约几百 MB，所以可以默认每轮都存。`--dump-frame-stride` 默认是 10，约每 0.3s 留一对图，适合整场回看；精确撞栏窗口才显式传 `--dump-frame-stride 1`。AI 或人类实跑直接用 `bash scripts/webots_run.sh <basic|complex>` 即可（帧默认开启，自动做跑前清理、构建和启动）；只在确定不看画面时加 `--no-frames`。
 
 ## 2. 全局摘要
 
@@ -51,7 +51,7 @@ python scripts/plot_run.py --telemetry <telemetry.jsonl> --out .tmp/run/trajecto
 - telemetry 是否干净，是否 interleaved。
 - 末帧位置、最长爬行段、低速段。
 - 是否有 lap、finish、collision 事件。
-- 与人类反馈是否一致。
+- 与观察反馈是否一致。
 
 再看控制器内部行为：
 
@@ -72,7 +72,7 @@ python scripts/analyze_control_log.py .tmp/run/control_basic.jsonl
 
 不要平均地看所有帧。优先挑这些窗口逐帧看：
 
-- 人类看到撞车、撞栏、偏离白线的时间窗。
+- 人类或 AI 看到撞车、撞栏、偏离白线的时间窗。
 - telemetry 的最长爬行段或近停段。
 - 大 `|steering|`、steering 突变、突然减速的窗口。
 - `line_conf` 高但车没骑白线的窗口。
@@ -141,10 +141,10 @@ extract_observation → estimate_track → decide_control → clamp_cmd
 
 ## 7. 记录和归档
 
-真实 Webots / 平台 run 才分配 R-id。AI 复盘后应把结论写回：
+真实 Webots / 平台 run 才分配 R-id。AI 自跑和人类实跑都算真实 run；AI 复盘后应把结论写回：
 
 - `experiments/runs.csv`：一行结构化摘要，`notes` 以 `R0xx |` 开头。
-- `experiments/notes.md`：肉眼现象、数据摘要、看过的关键窗口、结论、下一步。
+- `experiments/notes.md`：观察现象、数据摘要、看过的关键窗口、结论、下一步。
 - `experiments/analysis_*.md`：有机制解释价值的长分析。
 - `experiments/cases/<R-id>_<slug>/`：只保存会反复用于回归的小型失败窗口。
 - `experiments/figures/<R-id>_<slug>/`：报告要用或之后会回查的**精选可视化**（整场轨迹图、关键感知标注帧、对比图），规则和生成命令见 `experiments/figures/README.md`。和 `cases/` 区分：`cases/` 是为复现 bug，`figures/` 是为报告叙事。

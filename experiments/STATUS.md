@@ -61,7 +61,7 @@ R038 的代表窗口是 `t=226.0→230.2`：
 1. 在 hard_turn 且 line_conf 低/短暂为 0 时，保留上一段可信白线的 offset 记忆，不要立刻完全回到 road-mask 预判。
 2. 只在“上一段可信白线显示车已在内侧”时加轻微向外保守偏置，避免全局收舵。
 3. 用 R038 case 的 `t=226.0→230.2` 做回归窗口，检查 `line_offset` 是否更早回 0，overlay 是否仍没有误锁栏杆/车辆。
-4. 再让人跑一次 Webots，人眼确认车身是否稳定骑在中间白色虚线上。
+4. AI 先自己跑 Webots 到目标窗口并看 telemetry/control log/overlay。若结果已经接近完成，再让人类做关键验收，确认车身是否稳定骑在中间白色虚线上。
 
 不要优先做这些：
 
@@ -81,9 +81,9 @@ R038 的代表窗口是 `t=226.0→230.2`：
 
 ## 项目铁律
 
-1. 人工 Webots + 肉眼是驾驶质量的最终裁判；离线指标只能提假设。
+1. AI 可以自己跑 Webots、看日志和截图做日常迭代；关键验收节点再请人类肉眼确认。
 2. `lost` 率不是质量指标。车 lost 时可能直线滑行，lost 多不必然差；lost 少也不代表骑线好。
-3. policy/速度/走线改动不能靠 autonomous 盲调完成，必须人眼复跑。
+3. policy/速度/走线改动不能只靠离线数字定好坏。AI 自跑必须配合 telemetry、control log 和 overlay；准备标完成、合 main 或提交 final 前要人工确认。
 4. 感知改动要看整场和关键窗口，不能只看一个点。
 5. 调试构建禁上传；最终只交 `submissions/final/team_controller.py`，提交前跑 validator 和测试。
 6. 清 `.tmp` 前先把关键窗口裁进 `experiments/cases/` 或 `experiments/figures/`。R038 已归档，可以清理本轮 `.tmp`。

@@ -1,6 +1,6 @@
-# 人类 Webots 实跑手册
+# Webots 实跑手册
 
-本文给守在 Webots 前的人看。目标是把车真实跑起来，用肉眼记录现象，并把可复盘的日志和画面留给 AI。这里不要求人类跑完整的日志分析，也不要求人工逐帧看录像；AI 的离线复盘流程见 `docs/ai_offline_review.md`。
+本文给需要启动 Webots 的人或 AI 看。目标是把车真实跑起来，留下可复盘的控制日志、telemetry 和相机帧；如果是关键验收节点，再由人类肉眼确认走线质量。这里不要求人类跑完整的日志分析，也不要求人工逐帧看录像；AI 的复盘流程见 `docs/ai_offline_review.md`。
 
 首次安装 Webots 和官方 SDK 见 `docs/official_testing.md`。
 
@@ -49,9 +49,9 @@ pkill -f webots; pkill -f run_local; sleep 1
 
 如需手工分步执行（自定义 mode、输出路径等），等价命令是 `scripts/build_submission.py --debug-log ... [--dump-frames ... --dump-frame-stride N] --out .tmp/run/team_controller_debug.py`，再用 SDK `run_local.py --skip-validate` 启动；细节见 `docs/ai_offline_review.md` 第 1 节。
 
-## 2. 肉眼观察要记什么
+## 2. 观察要记什么
 
-人类观察比脚本更重要。请尽量记录这些事实：
+日常迭代可以由 AI 自己跑 Webots、看日志和截图。关键验收时，人类观察仍很重要。请尽量记录这些事实：
 
 - 赛道：`basic` 或 `complex`。
 - 是否跑完一圈；如果没跑完，在哪里停住或撞上。
@@ -62,9 +62,9 @@ pkill -f webots; pkill -f run_local; sleep 1
 
 截图很有价值。能截就截，但不要为了截图中断关键观察。
 
-### 当前 Phase 2.2 complex 终判清单
+### 当前 Phase 2.2 complex 验收清单
 
-这轮只需要回答一个核心问题：车在 complex 过弯时，视觉上是否沿着中间白色虚线走，而不是切到内侧栏杆。
+这轮只需要回答一个核心问题：车在 complex 过弯时，视觉上是否沿着中间白色虚线走，而不是切到内侧栏杆。AI 可以先自跑并筛候选；当 AI 判断已经接近解决，或准备标完成/合 main/提交 final 时，再让人类按这张表确认。
 
 建议从头跑：
 
@@ -94,16 +94,16 @@ R0xx human complex:
 - 截图或备注：
 ```
 
-## 3. 跑完交给 AI
+## 3. 跑完交给 AI 或进入复盘
 
-跑完后，把肉眼结论告诉 AI，并说明 `.tmp/run/` 里有哪些产物，例如：
+跑完后，把观察结论告诉 AI，并说明 `.tmp/run/` 里有哪些产物。如果是 AI 自跑，也要把这些结论写进 notes 或下一步分析里，例如：
 
 - `.tmp/run/control_basic.jsonl`
 - `.tmp/run/webots_console/*.log`
 - `.tmp/run/frames_basic/`
 - SDK telemetry：`/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl`
 
-**人类不要手动删 `.tmp`**。下一次 `scripts/webots_run.sh` 会自动轮换旧产物；全量清理由 AI 在确认结论已写入 `experiments/`、且 notes 的"下一步"不依赖这些产物后执行（见 `docs/ai_offline_review.md` 第 8 节）。
+**不要手动删 `.tmp`**。下一次 `scripts/webots_run.sh` 会自动轮换旧产物；全量清理由 AI 在确认结论已写入 `experiments/`、且 notes 的"下一步"不依赖这些产物后执行（见 `docs/ai_offline_review.md` 第 8 节）。
 
 ## 4. 正式提交版
 
