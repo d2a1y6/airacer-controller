@@ -68,4 +68,4 @@
 2026-06-12,local,fastest,complex,0,,,1,human_radius_ok,"R044 人工实跑：转弯半径基本解决（90°急弯不再切内、缓弯基本骑线），gentle_extra=1.5 略过头(急弯偶外偏/缓弯line_offset中位−0.07)。末段蹭右侧静止黑车=半径略大副作用，无避让逻辑暂不管。促成 R044-b 回调 + 速度提升4阶段。详见 notes.md R045 / cases/R042_turn_in_too_early。"
 2026-06-13,local,fastest,complex,0,,257.70,0,human_best,"R049 人工实跑=当前最佳：入弯门控重做(R042-R048)+定向提速(R049)后，转弯不撞、全程明显更快(mean速度0.85/median0.90、0 lost)；contact 日志 7 episode 全是轻擦(峰值3点/zmax≤0.50)无硬撞；末段蹭右侧静止黑车(无避让逻辑、已知)。已存 baseline R049_turn_in_speed_best_2026-06-13。详见 notes.md R049。"
 2026-06-13,multi-car-v2-worktree,fastest,complex,0,,,0,pending_webots,"R050 | 上游合并(R049 base)+多车安全改进：跨帧轨迹锚定、丢线强制倒车安全网、对手降速0.72、红色环境置信加成。pytest 122/122 passed, build+validate 通过。详见 notes.md R050。"
-2026-06-13,multi-car,fastest,complex,3+,,275+,0,multi_car_pass,"R052 | 6车complex：car_1成功完赛3-4圈(最大speed 5.80)，CP3短暂卡死~2s后脱困自救恢复。弯道+对手减速因子0.40、脱困摆动0.30、物理卡死检测force_escape。详见 notes.md R052。"
+2026-06-13,with_other_cars,fastest,complex,3+,,275+,0,multi_car_pass,"R052 终版 | 6车complex：car_1成功完赛3-4圈(最大speed 5.80)，CP3短暂卡死~2s后脱困自救恢复。弯道+对手减速因子0.40、脱困摆动0.30、物理卡死检测force_escape。已推送upstream/with_other_cars。详见 notes.md R052。"

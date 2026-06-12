@@ -34,7 +34,20 @@
 
 ## 当前记录（新格式，最新在上）
 
-### R052 — 6车 complex 多圈成功完赛（2026-06-13, complex, 6-car, multi-car 分支）
+## 终版交付清单（2026-06-13）
+
+- **分支**: `with_other_cars`（推送到 upstream + origin）
+- **提交文件**: `submissions/final/team_controller.py`
+- **基线**: `baselines/R049_turn_in_speed_best_2026-06-13/`
+- **实验报告**: `experiments/AI_Racer_Experiment_Report.docx`
+- **多车测试指南**: `docs/multicar_extreme_tests.md`
+- **数据图表**: `experiments/figures/run3_analysis/`
+- **测试**: pytest 122/122, build+validate 通过
+- **关键能力**: 单车 complex 完赛 (R049 mean速度0.85) + 6车 complex 多圈完赛 (R052)
+
+---
+
+### R052 — 6车 complex 多圈成功完赛（最终版，2026-06-13, complex, 6-car, with_other_cars）
 - **构建**: R051 + 多车脱困增强
 - **配置**: complex, 6 车 (car_1=fastest 本车, car_2-6 对手), practice, batch+fast
 - **结果**:
