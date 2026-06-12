@@ -3,7 +3,7 @@
 ## trajectory_speed.png
 - 展示：R038 complex 人工复跑的整场轨迹和速度。
 - 来源：R038，complex，car_1，telemetry=`/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl`；`python scripts/plot_run.py --telemetry ... --out experiments/figures/R038_best_human_residual_tight_radius/trajectory_speed.png --title "R038 complex current best with residual tight-radius turns"`。
-- 看点：全程 `t=0.03→330.14s` 未记录 telemetry 事件、无近停，和人工观察的“能自己蹭出去、没有卡死”一致；但这不表示没有碰栏，R038 的 Webots console/人工观察确认仍有一次栏杆接触。
+- 看点：全程 `t=0.03→330.14s` 未记录 telemetry 事件、无近停，和人工观察的“能自己蹭出去、没有卡死”一致；但这不表示没有碰栏。R038 人工观察到 Webots GUI console 出现过 `WARNING: Contact joints between materials 'default' and 'default' will only be created for the 10 deepest contact points instead of all the 12 contact points.`，并确认仍有一次栏杆接触；该 GUI 文本目前不能从自动日志稳定读取。
 
 ## overlay_000033_600.png
 - 展示：第一个左弯中的感知标注。

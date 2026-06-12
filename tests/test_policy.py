@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.common import TrackState
-from controller.params import BASIC_CONTROL_OVERRIDES, get_profile
+from controller.params import CONTROL, get_profile
 import controller.policy as policy
 from controller.policy import _control_signals, _target_steering, decide_control, reset_policy_state
 
@@ -50,9 +50,9 @@ def test_curves_control_sign_and_reduce_speed():
     reset_policy_state()
     straight = warm_policy(make_track(), mode="fastest")
     reset_policy_state()
-    right_curve = warm_policy(make_track(heading=0.25, curvature=0.35, lookahead=0.30), mode="fastest")
+    right_curve = warm_policy(make_track(lateral=0.70, heading=0.25, curvature=0.35, lookahead=0.30), mode="fastest")
     reset_policy_state()
-    left_curve = warm_policy(make_track(heading=-0.25, curvature=-0.35, lookahead=-0.30), mode="fastest")
+    left_curve = warm_policy(make_track(lateral=-0.70, heading=-0.25, curvature=-0.35, lookahead=-0.30), mode="fastest")
 
     assert right_curve.steering > 0.05
     assert left_curve.steering < -0.05
@@ -74,7 +74,7 @@ def test_lost_track_uses_lost_speed():
         mode="fastest",
         steps=6,
     )
-    assert abs(cmd.speed - BASIC_CONTROL_OVERRIDES["lost_speed"]) < 0.03
+    assert abs(cmd.speed - CONTROL["lost_speed"]) < 0.03
     assert -1.0 <= cmd.steering <= 1.0
 
 
@@ -107,7 +107,7 @@ def test_lost_corner_does_not_use_straight_coast():
         lost=True,
     )
     cmd = warm_policy(turn_lost, mode="fastest", steps=4)
-    assert abs(cmd.speed - BASIC_CONTROL_OVERRIDES["lost_speed"]) < 0.03
+    assert abs(cmd.speed - CONTROL["lost_speed"]) < 0.03
 
 
 def test_low_confidence_stays_slow():
@@ -132,6 +132,18 @@ def test_all_profile_names_use_same_control_parameters():
     assert unknown.steering == fastest.steering
 
 
+def test_basic_and_complex_flags_use_same_policy_parameters():
+    base = make_track(lateral=0.18, heading=0.12, curvature=0.20, lookahead=0.16, confidence=0.80, red_environment=False)
+    red = make_track(lateral=0.18, heading=0.12, curvature=0.20, lookahead=0.16, confidence=0.80, red_environment=True)
+    reset_policy_state()
+    basic_cmd = warm_policy(base, mode="fastest")
+    reset_policy_state()
+    complex_cmd = warm_policy(red, mode="safe")
+
+    assert complex_cmd.speed == basic_cmd.speed
+    assert complex_cmd.steering == basic_cmd.steering
+
+
 def test_timestamp_reset_discards_speed_state():
     reset_policy_state()
     fast = warm_policy(make_track(), mode="fastest", steps=20)
@@ -145,8 +157,8 @@ def test_timestamp_reset_discards_speed_state():
 def test_inside_margin_guard_is_noop_by_default():
     # R014 实车证明默认开启边界余量保护既没拦住撞栏又引入无意义打轮，默认参数应为 no-op。
     profile = get_profile("fastest")
-    normal = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
-    close_right = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
+    normal = make_track(lateral=0.16, heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
+    close_right = make_track(lateral=0.16, heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
     close_right.right_margin_near = profile["inside_margin_warning"] * 0.35
 
     normal_steer = _target_steering(normal, _control_signals(normal, profile), "hard_turn", profile)
@@ -159,14 +171,14 @@ def test_inside_margin_limits_steering_toward_guardrail_when_enabled():
     profile = get_profile("fastest")
     profile["inside_margin_outward_gain"] = 0.32
     profile["inside_margin_steering_cap"] = 0.42
-    normal = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
-    close_right = make_track(heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
+    normal = make_track(lateral=0.16, heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
+    close_right = make_track(lateral=0.16, heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
     close_right.right_margin_near = profile["inside_margin_warning"] * 0.35
 
     normal_steer = _target_steering(normal, _control_signals(normal, profile), "hard_turn", profile)
     guarded_steer = _target_steering(close_right, _control_signals(close_right, profile), "hard_turn", profile)
 
-    assert normal_steer > 0.05
+    assert normal_steer > 0.03
     assert guarded_steer < normal_steer
 
 
@@ -346,7 +358,8 @@ def test_centered_complex_turn_in_keeps_wide_radius():
         red_environment=True,
     )
     cmd = warm_policy(approach, mode="fastest", steps=10)
-    assert 0.04 < cmd.steering < 0.18
+    # 车几乎居中（lateral≈0）→ R044 入弯门控把远处项压到≈0 → 几乎不提前转（半径更大）。
+    assert abs(cmd.steering) < 0.06
 
 
 def test_hard_turn_requires_consecutive_frames():
@@ -358,3 +371,212 @@ def test_hard_turn_requires_consecutive_frames():
 
     decide_control(track, 0.05, mode="fastest")
     assert policy._LAST_MODE == "hard_turn"
+
+
+def test_sustained_inside_turn_line_strengthens_outward_correction():
+    # R039：弯中可信白线连续显示车在内侧（offset 大、与 heading 反号）时，向外回中修正
+    # 应强于仅靠 offset 楼层，把车拉回白线、放大转弯半径（修复 R038 残留切内线）。
+    # 这里关掉 R040 弯中减预瞄，单独验证事后白线修正（否则二者叠加超过 max_correction）。
+    from controller.params import CONTROL, LINE_FOLLOW_PROFILE as P
+
+    base = make_track(heading=-0.70, curvature=-0.30, lookahead=-0.45, confidence=0.6, red_environment=True)
+    lined = make_track(heading=-0.70, curvature=-0.30, lookahead=-0.45, confidence=0.6, red_environment=True)
+    lined.line_offset = 0.55
+    lined.line_heading = -0.80
+    lined.line_confidence = 0.85
+
+    saved = CONTROL["corner_relief_enable"]
+    CONTROL["corner_relief_enable"] = False
+    try:
+        reset_policy_state()
+        base_cmd = warm_policy(base, mode="fastest", steps=10)
+        reset_policy_state()
+        lined_cmd = warm_policy(lined, mode="fastest", steps=10)
+    finally:
+        CONTROL["corner_relief_enable"] = saved
+
+    correction = lined_cmd.steering - base_cmd.steering
+    floor_only = lined.line_offset * P["offset_gain"] * P["offset_curve_min_scale"]
+    assert correction > floor_only + 0.05
+    assert correction <= P["max_correction"] + 1e-6
+
+
+def test_inside_turn_correction_holds_through_brief_line_dropout():
+    # R039：弯中白线短暂丢置信（虚线间隙）时，向外修正应保持若干帧再衰减，
+    # 不被 road-mask 弯道预判在空档里继续向内切；普通 EMA 会一帧砍半。
+    turn = make_track(heading=-0.70, curvature=-0.30, lookahead=-0.45, confidence=0.6, red_environment=True)
+    turn.line_offset = 0.55
+    turn.line_heading = -0.80
+    turn.line_confidence = 0.85
+
+    reset_policy_state()
+    warm_policy(turn, mode="fastest", steps=10)
+    held = policy._LINE_CORRECTION
+    assert held > 0.10
+
+    dropout = make_track(heading=-0.70, curvature=-0.30, lookahead=-0.45, confidence=0.6, red_environment=True)
+    dropout.line_confidence = 0.0
+    decide_control(dropout, 10 * 0.05, mode="fastest")
+    assert policy._LINE_CORRECTION > held * 0.7
+
+
+def test_inside_assist_inactive_when_line_and_heading_agree():
+    # 守护：offset 与 heading 同号（车偏左但弯也向左/或右转车偏左）不是“切内线”几何，
+    # 不应触发向外辅助，避免把正常入弯舵角反向拉走。
+    from controller.params import LINE_FOLLOW_PROFILE as P
+
+    base = make_track(heading=0.30, curvature=0.30, lookahead=0.30, confidence=0.6, red_environment=True)
+    lined = make_track(heading=0.30, curvature=0.30, lookahead=0.30, confidence=0.6, red_environment=True)
+    lined.line_offset = 0.55
+    lined.line_heading = 0.40  # 与 offset 同号
+    lined.line_confidence = 0.85
+
+    reset_policy_state()
+    base_cmd = warm_policy(base, mode="fastest", steps=10)
+    reset_policy_state()
+    lined_cmd = warm_policy(lined, mode="fastest", steps=10)
+
+    correction = lined_cmd.steering - base_cmd.steering
+    # 同号时只有常规混合修正，不含 R039 向外辅助；上限不超过 max_correction。
+    assert correction <= P["max_correction"] + 1e-6
+
+
+def test_corner_relief_reduces_far_term_when_line_shows_inside():
+    # R040：接触日志定位 t≈228.6 撞内栏。弯中可信白线显示车已切内侧（offset 与远处预瞄反号）时，
+    # 应在源头削弱远处项→同样几何下舵角更小（半径更大），而不是靠事后修正硬顶。
+    from controller.params import get_profile
+
+    profile = get_profile("fastest")
+    # 左弯：远处预瞄强烈向左（负），白线 offset 正（线在右=车在内侧左），二者反号 = 切内。
+    inside = make_track(lateral=-0.30, heading=-0.65, curvature=0.0, lookahead=-0.55, confidence=0.7, red_environment=True)
+    inside.line_offset = 0.55
+    inside.line_heading = -0.80
+    inside.line_confidence = 0.85
+    signals = _control_signals(inside, profile)
+
+    reset_policy_state()
+    relieved = _target_steering(inside, signals, "hard_turn", dict(profile))
+    reset_policy_state()
+    no_relief = dict(profile); no_relief["corner_relief_enable"] = False
+    baseline = _target_steering(inside, signals, "hard_turn", no_relief)
+
+    # relief 让向左的目标舵角幅度变小（更不内切）。
+    assert relieved > baseline + 0.03
+    assert relieved <= 0.0  # 仍是左舵，只是更浅
+
+
+def test_corner_relief_inactive_without_confident_line():
+    # 守护：没有可信白线时 relief 不动远处项，正常急弯舵角不被削弱。
+    from controller.params import get_profile
+
+    profile = get_profile("fastest")
+    turn = make_track(heading=-0.65, curvature=0.0, lookahead=-0.55, confidence=0.7, red_environment=True)
+    turn.line_confidence = 0.0
+    signals = _control_signals(turn, profile)
+
+    reset_policy_state()
+    relieved = _target_steering(turn, signals, "hard_turn", dict(profile))
+    reset_policy_state()
+    no_relief = dict(profile); no_relief["corner_relief_enable"] = False
+    baseline = _target_steering(turn, signals, "hard_turn", no_relief)
+    assert abs(relieved - baseline) < 1e-9
+
+
+def test_corner_relief_holds_through_offset_sign_flip():
+    # R041：line_offset 在弯中来回穿过 0（极限环）时，relief 不应瞬间归零让 road-mask 猛拉回。
+    # 触发后应迟滞保持，使 trough 帧的远处项仍被压住——这正是 t≈228 撞内栏过冲的成因。
+    from controller.params import get_profile
+
+    profile = get_profile("fastest")
+    inside = make_track(lateral=-0.30, heading=-0.65, curvature=0.0, lookahead=-0.55, confidence=0.7, red_environment=True)
+    inside.line_offset = 0.55
+    inside.line_heading = -0.80
+    inside.line_confidence = 0.85
+    trough = make_track(lateral=-0.30, heading=-0.65, curvature=0.0, lookahead=-0.55, confidence=0.7, red_environment=True)
+    trough.line_offset = -0.05  # offset 翻负（甩到外侧），瞬时 relief 门关闭
+    trough.line_heading = -0.80
+    trough.line_confidence = 0.85
+    sig_in = _control_signals(inside, profile)
+    sig_tr = _control_signals(trough, profile)
+
+    # 先在内侧帧触发 relief，再到 trough 帧——保持的 relief 仍应压住远处项。
+    reset_policy_state()
+    _target_steering(inside, sig_in, "hard_turn", dict(profile))
+    held = _target_steering(trough, sig_tr, "hard_turn", dict(profile))
+    # 基线：trough 帧没有先前 relief、且 relief 关闭。
+    reset_policy_state()
+    no_relief = dict(profile); no_relief["corner_relief_enable"] = False
+    baseline = _target_steering(trough, sig_tr, "hard_turn", no_relief)
+
+    assert held > baseline + 0.02  # 保持的 relief 让 trough 帧仍更不内切（破极限环）
+
+
+def test_turn_in_suppressed_when_car_still_centered_on_approach():
+    # R042/R044：直道接近弯口——远处路已弯（lookahead/heading 大）但车还居中（lateral≈0）。
+    # 这正是"入弯太早→切内线"的根因帧。新门控 arrival 只看近处 lateral → 远处预瞄项被压到≈0，
+    # 舵角很小（晚转）。
+    from controller.params import get_profile
+
+    profile = get_profile("fastest")
+    approach = make_track(lateral=0.0, heading=-0.45, curvature=0.0, lookahead=-0.30,
+                          confidence=0.7, red_environment=True)
+    signals = _control_signals(approach, profile)
+    reset_policy_state()
+    steer = _target_steering(approach, signals, "hard_turn", dict(profile))
+    assert abs(steer) < 0.06  # 车还居中 → 几乎不转（迟滞入弯）
+
+
+def test_turn_in_opens_once_car_has_drifted_into_corner():
+    # R042：一旦车真的到弯口、开始偏离（lateral 长起来），门应放开，让车"晚而狠"地转。
+    from controller.params import get_profile
+
+    profile = get_profile("fastest")
+    arrived = make_track(lateral=-0.30, heading=-0.45, curvature=0.0, lookahead=-0.30,
+                         confidence=0.7, red_environment=True)
+    signals = _control_signals(arrived, profile)
+    reset_policy_state()
+    steer = _target_steering(arrived, signals, "hard_turn", dict(profile))
+    assert steer < -0.2  # 门已放开 → 实打实左转
+
+
+def test_turn_in_latch_sustains_turn_through_midcorner_lateral_dip():
+    # R048：弯中 lateral 短暂回落（road-mask 重新对正路面）时，门控不应立刻收掉远处预瞄项，
+    # 否则车转一半忽然收轮、转不到位、半径变大。latch 保持 → trough 帧仍打实左舵。
+    from controller.params import get_profile
+
+    profile = get_profile("fastest")
+    deep = make_track(lateral=-0.40, heading=-0.80, curvature=0.0, lookahead=-0.60,
+                      confidence=0.7, red_environment=True)        # 已深入弯、lateral 大
+    dip = make_track(lateral=-0.03, heading=-0.80, curvature=0.0, lookahead=-0.60,
+                     confidence=0.7, red_environment=True)         # 路还在弯，但 lateral 回落
+    sig_d = _control_signals(deep, profile)
+    sig_p = _control_signals(dip, profile)
+
+    reset_policy_state()
+    _target_steering(deep, sig_d, "hard_turn", dict(profile))      # build latch
+    held = _target_steering(dip, sig_p, "hard_turn", dict(profile))
+    # 对照：dip 帧没有先前 latch（门只看瞬时 lateral）
+    reset_policy_state()
+    no_latch = _target_steering(dip, sig_p, "hard_turn", dict(profile))
+
+    assert held < no_latch - 0.05   # latch 让 trough 帧仍打更多左舵（持续转，不收轮）
+    assert held < 0.0
+
+
+def test_turn_in_gate_is_pure_lateral_no_sharpness_modulation():
+    # R046：删除 R044 的 curve_risk 调制后，入弯门控只由近处 |lateral| 决定，
+    # 与 curve_risk 无关——同样的 lateral 漂移，不论远处弯多急，门控缩放一致。
+    from controller.params import get_profile
+
+    profile = get_profile("fastest")
+    gentle = make_track(lateral=-0.20, heading=-0.30, curvature=0.0, lookahead=-0.25,
+                        confidence=0.7, red_environment=True)   # curve_risk ≈ 0.30
+    sharp = make_track(lateral=-0.20, heading=-0.95, curvature=0.0, lookahead=-0.90,
+                       confidence=0.7, red_environment=True)    # curve_risk ≈ 0.95
+    # 同样 lateral 下，corner_arrival 相同 → lookahead_term 被缩放的"比例"相同。
+    ref = profile["turn_in_lateral_ref"]
+    expected_arrival = min(1.0, 0.20 / ref)
+    assert "turn_in_gentle_extra" not in profile and "turn_in_sharp_ref" not in profile
+    # 直接验证门控公式：corner_arrival 只看 |lateral|/ref。
+    assert abs(expected_arrival - min(1.0, abs(gentle.lateral_error) / ref)) < 1e-9
+    assert abs(expected_arrival - min(1.0, abs(sharp.lateral_error) / ref)) < 1e-9

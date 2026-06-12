@@ -10,6 +10,7 @@
 set -euo pipefail
 
 SDK=/Users/day/Desktop/Github/pkudsa.airacer/sdk
+ARCHIVE_KEEP=10
 WORLD=${1:?用法: scripts/webots_jump_run.sh <basic|complex> <telemetry_time> [--duration N] [--frames N]}
 TARGET_TIME=${2:?用法: scripts/webots_jump_run.sh <basic|complex> <telemetry_time> [--duration N] [--frames N]}
 shift 2
@@ -44,10 +45,69 @@ pkill -f webots 2>/dev/null || true
 pkill -f run_local 2>/dev/null || true
 sleep 1
 
-if [[ -d .tmp/jump_run ]]; then
-  rm -rf .tmp/jump_run.prev
-  mv .tmp/jump_run .tmp/jump_run.prev
-fi
+archive_jump_path() {
+  local src="$1"
+  local prefix="$2"
+  local ext="${3:-}"
+  if [[ ! -e "$src" ]]; then
+    return
+  fi
+  if should_discard_jump_archive_source "$src" "$prefix"; then
+    rm -rf "$src"
+    echo "discarded empty $prefix archive source → $src"
+    return
+  fi
+  mkdir -p .tmp/jump_run.archive
+  local ts
+  ts=$(date +%Y%m%d_%H%M%S)
+  local dest=".tmp/jump_run.archive/${prefix}_${ts}${ext}"
+  local idx=1
+  while [[ -e "$dest" ]]; do
+    dest=".tmp/jump_run.archive/${prefix}_${ts}_${idx}${ext}"
+    idx=$((idx + 1))
+  done
+  mv "$src" "$dest"
+  echo "archived previous $prefix → $PWD/$dest"
+  prune_jump_archives ".tmp/jump_run.archive/${prefix}_*"
+}
+
+should_discard_jump_archive_source() {
+  local src="$1"
+  local prefix="$2"
+  if [[ -d "$src" ]]; then
+    case "$prefix" in
+      jump_run_*)
+        if find "$src" -type f \( -name 'control_*.jsonl' -o -name 'contact_*.jsonl' -o -name '*.png' \) -size +0 -print -quit | grep -q .; then
+          return 1
+        fi
+        return 0
+        ;;
+    esac
+    return 1
+  fi
+  if [[ ! -s "$src" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+prune_jump_archives() {
+  local pattern="$1"
+  local archived=()
+  local item
+  while IFS= read -r item; do
+    archived+=("$item")
+  done < <(compgen -G "$pattern" | sort -r)
+  if (( ${#archived[@]} <= ARCHIVE_KEEP )); then
+    return
+  fi
+  for item in "${archived[@]:ARCHIVE_KEEP}"; do
+    rm -rf "$item"
+    echo "deleted old archive → $PWD/$item"
+  done
+}
+
+archive_jump_path .tmp/jump_run "jump_run_${WORLD}"
 mkdir -p .tmp/jump_run/webots_console .tmp/jump_run/frames
 
 JUMP_WORLD="$SDK/webots/worlds/.codex_jump_${WORLD}_car_1.wbt"
@@ -73,7 +133,7 @@ python scripts/make_teleport_world.py \
   --out "$JUMP_WORLD" \
   --pose-out .tmp/jump_run/pose.json
 
-rm -f "$SDK/.local/recordings/telemetry.jsonl"
+archive_jump_path "$SDK/.local/recordings/telemetry.jsonl" "telemetry_${WORLD}" ".jsonl"
 
 python scripts/build_submission.py --mode fastest \
   --debug-log .tmp/jump_run/control_${WORLD}.jsonl \
@@ -86,7 +146,7 @@ python scripts/build_submission.py --mode fastest \
 export AIRACER_CONTROLLER_CONSOLE_LOG_DIR="$PWD/.tmp/jump_run/webots_console"
 python "$SDK/run_local.py" \
   --code-path "$PWD/.tmp/jump_run/team_controller_debug.py" \
-  --world "$JUMP_WORLD" --car-slot car_1 --skip-validate &
+  --world "$JUMP_WORLD" --car-slot car_1 --skip-validate > .tmp/jump_run/webots_launch.log 2>&1 &
 RUN_PID=$!
 
 for _ in $(seq 1 600); do

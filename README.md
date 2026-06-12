@@ -103,7 +103,7 @@ Webots 实跑分两层：
 | 精确窗口逐帧取证 | `scripts/webots_run.sh --frames 1` 或 `--frame-window S E` | `bash scripts/webots_run.sh complex --frame-window 226 230` |
 | 看轨迹、速度、事件和近停 | `scripts/analyze_telemetry.py` | `python scripts/analyze_telemetry.py --no-archive` |
 | 看内部状态、白线、mode、舵角 | `scripts/analyze_control_log.py` | `python scripts/analyze_control_log.py .tmp/run/control_complex.jsonl` |
-| 生成整场轨迹+速度图 | `scripts/plot_run.py` | 输出 `trajectory_speed.png`，报告图按 `experiments/figures/README.md` 归档 |
+| 生成整场轨迹+速度+撞栏图 | `scripts/plot_run.py` | 输出 `trajectory_speed.png`，可叠加 `contact_*.jsonl`；报告图按 `experiments/figures/README.md` 归档 |
 | 生成关键帧感知 overlay | `scripts/analyze_perception_dump.py` | `--at 226.56,228.48`；用于看 mask、白线点、扫描线、边界 |
 | 固定画面开环回放 | `scripts/replay_offline.py` | 用已有帧重跑当前代码，比较 `line_conf/steering/mode` 等字段 |
 | 从历史姿态近似启动 | `scripts/webots_jump_run.sh` | 只恢复 `x/y/heading`，用于看当前代码从某姿态起步的趋势，不是严格续跑 |

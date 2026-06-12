@@ -1,99 +1,65 @@
 # 当前状态（接手从这里开始）
 
-最后更新：2026-06-12。当前分支：`codex/perception-dropout`。
-交接基线提交：`b3188d4 Record R038 best human baseline`。
+最后更新：2026-06-13（R049 当前最佳，已存 baseline）。当前分支：`codex/perception-dropout`。
 
 ## 一句话结论
 
-当前 `submissions/final/team_controller.py` 是目前人眼确认的最好版本，但还没完成。
-R038 人工 Webots 复跑显示：绝大多数弯不再剐蹭，轻蹭也能自己擦出；残留问题是弯中转弯半径仍偏小，车身会落到中间白线内侧，并确认发生过一次碰栏/轻蹭。
+转弯半径/入弯时机问题已**系统性解决并实跑确认**，速度也大幅提上来了。当前 `submissions/final/team_controller.py`（MD5 `79ffbdbfe1259cc41824123e296bd49b`）= **R049 当前最佳**，已存快照 `baselines/R049_turn_in_speed_best_2026-06-13/`。
+实跑：转弯不撞、全程明显更快（mean 速度 0.85 / median 0.90、0 lost）、contact 日志无硬撞（全是轻擦）。
 
-不要合 main。不要把 R026/R038 case 标成完成。
+**控制器整体逻辑见 `docs/technical_manual.md`（交付版，已较稳定）。** 入弯门控的演进细节见下「核心机制」。
 
 ## 当前最好版本
 
-- 控制代码版本：commit `ab58b74` 起的 Phase 2.2 控制器；`b3188d4` 只新增记录和归档，没有改控制代码。
-- 提交文件：`submissions/final/team_controller.py`
-- MD5：`f4b79c09f6811580817ecfe04d1fb11a`
-- 已保存快照：`baselines/R038_phase22_best_human_2026-06-12/`
-- R038 记录：`experiments/notes.md` 的 R038，`experiments/runs.csv` 最后一行。
-- R038 报告图：`experiments/figures/R038_best_human_residual_tight_radius/`
-- R038 open case：`experiments/cases/R038_residual_tight_radius/`
+- 提交文件：`submissions/final/team_controller.py`（R049，MD5 `79ffbdbfe1259cc41824123e296bd49b`）。统一策略：`fastest/safe/basic` 不再分叉，`get_profile` 只返回 `CONTROL`。
+- baseline 快照：`baselines/R049_turn_in_speed_best_2026-06-13/`（含 README + 单文件）。
+- 回退点：`baselines/R038_phase22_best_human_2026-06-12/`（更保守、更慢的上一代）。
+- 全套测试 + 本地/官方 validator 通过；提交文件不含调试 I/O。
 
-## 已解决到什么程度
+## 核心机制（接手必读：入弯门控是这几轮的重点）
 
-R038 复跑数据：
+"转弯半径"由入弯门控主导，它在 `policy._target_steering` 里给远处预瞄项 `lookahead_term` 乘一个 `corner_arrival`：
 
-- 时间：`t=0.03→330.14s`
-- telemetry：未记录 collision/checkpoint 等事件，无近停，末帧 `status=normal`；这不等于没碰栏。R038 的 Webots 物理引擎 console 出现过接触点提示，人工确认有一次栏杆接触
-- 控制日志：全程 `lost=0`，`mean|lat|=0.069`，低命令速度 `<0.3` 约 1%
-- 人工观察：多数弯已经不剐蹭，但仍有一次碰栏/轻蹭，只是不会卡死
+1. **判据只看近处 `|lateral|` 漂移**（R042/R043）：`instant_arrival = |lateral|/arrival_ref`。直道接近段 lateral≈0 → 远处项被压到≈0 → 不提前切内；车沿线开到弯口、真正偏离时 lateral 才长起来 → 再转（out-in-out）。**不用 heading/curve_risk 当判据**——它们在接近段就大、会让门提前开（早切内）；弯急缓在入弯瞬间也无法从未发育的视野里判别（R046 删掉了按 curve_risk 调制的尝试）。
+2. **速度耦合**（R047）：`arrival_ref = turn_in_lateral_ref×(1−turn_in_speed_comp×speed_norm)`。过弯越快半径越大，高速早开门补偿。
+3. **latch 保持 + 出弯迟滞**（R048）：门是连续乘子，但 lateral 在弯中会反复回落→门收掉远处项→"转一半收轮、转不到位"。所以 hard_turn 里把 `_TURN_IN_LATCH` ratchet 到峰值并保持（弯中持续转）、出弯按 `turn_in_hold_decay` 迟滞收门。
+- 旋钮：`turn_in_lateral_ref 0.75`（小=早转/半径小）、`turn_in_speed_comp 0.6`、`turn_in_hold_decay 0.92`。
+- 配套（弯中走线）：白线后置修正 `inside_assist_*`/`hold_*`、弯中减预瞄 `corner_relief_*`（只动最终舵角/远处项，不污染 risk/速度）。
 
-这说明 Phase 2.2 已经解决了旧版本的大部分长爬行、卡栏、卡死问题。
+速度：R047/R049 把 mean 速度从 0.62 提到 0.85。关键 `min_confidence_factor 0.95`（解耦感知置信压速）、`curve_power 1.5`（提中等弯、急弯=物理上限不变）、`hard_turn_speed 0.72`、`max_speed_increase_per_sec 5.0`。
 
-## 还没解决的问题
+## 调试基建（重要，接手会用到）
 
-核心残留：弯中仍切内线，转弯半径偏小。
+- **撞栏接触日志**（让 AI 离线就能"看见撞栏"）：SDK supervisor（`pkudsa.airacer/sdk/webots/controllers/supervisor/supervisor.py`，env 开关 `AIRACER_CONTACT_LOG=1`，**未提交在 SDK 仓库工作树**）。`scripts/webots_run.sh` 默认开 → `.tmp/run/contact_<world>.jsonl`。看：`scripts/analyze_contact_log.py`。判读：峰值点数≥3 且 `zmax>0.6` = 真撞栏；孤立 1-2 点 / `zmax≈0.49` = 发车点底盘伪接触。
+- 离线复盘流程 `docs/ai_offline_review.md`；人工实跑 `docs/human_webots_testing.md`；脚本速查 `scripts/README.md`。
 
-R038 的代表窗口是 `t=226.0→230.2`：
+## 已知残留 / 下一步（给接手的 AI）
 
-- `line_offset` 中位数 `+0.374`，最高 `+0.754`
-- `line_conf=0` 有 10/131 帧
-- `|line_offset|>0.35` 有 74/131 帧
-- overlay 显示真实虚线仍在路面内，但每侧通常只拿到 3-4 个点
+1. **避让其他车（最优先的新功能）**：当前**完全没有**对手车避让逻辑（`opponent.py` 只做近处车身检测）。R049 末段会蹭一辆右侧静止黑车——这不是半径问题，是缺避让。后续单独加一层。
+2. **个别中等弯偏宽/偏内**：根因是两个结构相似的弯被感知估出不同 `curve_risk`（弯在视野里发育多少、apex 遮挡、白线可见度）→ 不同速度 → 不同半径。这是**感知一致性**问题（见 notes.md R049）。继续提速也卡在这里：要更快只能让中等弯被正确识别，或接受更宽的弯。
+3. **继续提速**：急弯已接近速度-半径物理上限，再快就更宽/撞。剩余空间在改善感知一致性 + 更好的过弯走线。
 
-驾驶含义：左弯里白线在近处偏到车右侧，说明车已经落到白线内侧。白线没有完全失效，但证据稀疏、来得偏晚。
+## 工作约定（经验，不限制"改哪里"）
 
-## 为什么不是简单调大半径
+**想改哪里改哪里、放手大改**——任意模块（含 basic）、参数、脚本、SDK 调试层都可自由改，没有"先获人工验收才能动手"的门槛。保守微调往往没用（这几轮的教训：小步 0.2/0.3 调没用，结构性/果断的改才动得了）。
 
-这里没有独立的“转弯半径”旋钮。最终舵角来自三类东西混合：
+**唯一硬约束**：上传的 `submissions/final/team_controller.py` 必须过 `validate_submission.py` + 官方 validator，且不含调试 I/O（`open/json/cv2.imwrite`）和禁用模块。调试构建只在 `.tmp/` 本地跑，永不上传。
 
-- road-mask 的道路几何和远处弯道预判
-- 中间白色虚线的 offset/heading
-- 速度、hard_turn、escape 等策略门控
-
-如果全局减小入弯舵角，真实急弯可能过不去或跑到外侧。如果继续放宽白线检测，容易重新把栏杆、车身、路牙当成中心线。R038 的机制更像：弯中白线短暂低置信时，road-mask 继续按弯道预判向内切；等白线重新稳定时，车已经在线内侧，只能事后回正。
-
-## 下一步建议
-
-优先做一个小而可验证的改动：
-
-1. 在 hard_turn 且 line_conf 低/短暂为 0 时，保留上一段可信白线的 offset 记忆，不要立刻完全回到 road-mask 预判。
-2. 只在“上一段可信白线显示车已在内侧”时加轻微向外保守偏置，避免全局收舵。
-3. 用 R038 case 的 `t=226.0→230.2` 做回归窗口，检查 `line_offset` 是否更早回 0，overlay 是否仍没有误锁栏杆/车辆。
-4. AI 先自己跑 Webots 到目标窗口并看 telemetry/control log/overlay。若结果已经接近完成，再让人类做关键验收，确认车身是否稳定骑在中间白色虚线上。
-
-不要优先做这些：
-
-- 不要全局降低 `max_abs_steering` 或简单减小所有弯道舵角。
-- 不要继续堆 escape。R038 的问题是常规入弯走线偏内，不是卡住后脱困不够强。
-- 不要只看 `lost=0` 或 telemetry 无 collision。R038 已经无 lost、telemetry 无事件，但 Webots console/人眼仍确认一次碰栏/轻蹭和半径偏小。
-
-## 必读证据
-
-- 当前最新叙事：`experiments/notes.md` 的 R038
-- 当前 residual case：`experiments/cases/R038_residual_tight_radius/README.md`
-- 当前 best baseline：`baselines/R038_phase22_best_human_2026-06-12/README.md`
-- 报告图说明：`experiments/figures/R038_best_human_residual_tight_radius/CAPTION.md`
-- 历史第一左弯 case：`experiments/cases/R026_first_left_tight_radius/README.md`
-- 人工测试流程：`docs/human_webots_testing.md`
-- AI 离线复盘流程：`docs/ai_offline_review.md`
-
-## 项目铁律
-
-1. AI 可以自己跑 Webots、看日志和截图做日常迭代；关键验收节点再请人类肉眼确认。
-2. `lost` 率不是质量指标。车 lost 时可能直线滑行，lost 多不必然差；lost 少也不代表骑线好。
-3. policy/速度/走线改动不能只靠离线数字定好坏。AI 自跑必须配合 telemetry、control log 和 overlay；准备标完成、合 main 或提交 final 前要人工确认。
-4. 感知改动要看整场和关键窗口，不能只看一个点。
-5. 调试构建禁上传；最终只交 `submissions/final/team_controller.py`，提交前跑 validator 和测试。
-6. 清 `.tmp` 前先把关键窗口裁进 `experiments/cases/` 或 `experiments/figures/`。R038 已归档，可以清理本轮 `.tmp`。
+经验：① 驾驶质量以 Webots 实跑为准，`lost` 率不是质量指标；② 撞栏看 `contact_*.jsonl`，别只靠肉眼盯 GUI console；③ 走线/policy/感知改动最好跑一次 Webots 再下结论，默认流程 **AI 改 → 人跑 → 人报完成 → AI 读日志**（省 token）；④ **技术手册不要每次改参数就更新**，等结构稳定、人明确要求时再改（见手册顶部维护约定）；⑤ 改 `controller/common.py` 字段要同步所有调用方/测试/文档。
 
 ## 常用命令
 
 ```bash
 pytest -q
+python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
 python scripts/validate_submission.py submissions/final/team_controller.py
+bash scripts/webots_run.sh complex          # 实跑（默认存帧 + 撞栏接触日志）
+python scripts/analyze_contact_log.py .tmp/run/contact_complex.jsonl
 python scripts/analyze_control_log.py .tmp/run/control_complex.jsonl
-python scripts/analyze_telemetry.py --telemetry /Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl --no-archive
-python scripts/analyze_perception_dump.py .tmp/run/frames_complex --control-log .tmp/run/control_complex.jsonl --overlay-dir .tmp/overlays --at 226.56,228.48,229.44
 ```
+
+## 关键归档
+
+- 入弯/半径根因与演进 case：`experiments/cases/R042_turn_in_too_early/`（R041 撞栏 → R049 完整对照 + 图）。
+- 叙事流水账：`experiments/notes.md`（最新在上，R049 起回看入弯门控演进）；结构化台账 `experiments/runs.csv`。
+- 控制器逻辑（交付版）：`docs/technical_manual.md`。

@@ -286,6 +286,20 @@ LINE_FOLLOW_PROFILE = {
     "offset_curve_min_scale": 0.35,
 
 
+
+
+
+
+    "inside_assist_enable": True,
+    "inside_assist_offset_min": 0.30,
+    "inside_assist_streak_min": 4,
+    "inside_assist_gain": 0.55,
+    "inside_assist_max": 0.20,
+    "hold_offset_min": 0.30,
+    "hold_frames": 8,
+    "hold_decay": 0.90,
+
+
     "single_camera_enable": True,
     "single_camera_min_confidence": 0.60,
     "single_camera_confidence_scale": 0.65,
@@ -384,12 +398,14 @@ CONTROL = {
     "lost_confidence": 0.10,
     "recovery_confidence": 0.28,
     "lost_speed": 0.28,
-    "recovery_speed": 0.44,
-    "hard_turn_speed": 0.38,
-    "hard_turn_center_speed_bonus": 0.20,
-    "correction_speed": 0.58,
-    "hard_turn_threshold": 0.20,
-    "hard_turn_exit_threshold": 0.16,
+
+
+    "recovery_speed": 0.55,
+    "hard_turn_speed": 0.55,
+    "hard_turn_center_speed_bonus": 0.28,
+    "correction_speed": 0.72,
+    "hard_turn_threshold": 0.30,
+    "hard_turn_exit_threshold": 0.24,
     "hard_turn_enter_frames": 2,
     "recovery_enter_frames": 2,
     "correction_error": 0.25,
@@ -411,9 +427,34 @@ CONTROL = {
     "gain_curve": 0.12,
     "gain_lateral_nonlinear": 0.22,
     "gain_curve_nonlinear": 0.02,
-    "turn_in_floor": 0.55,
-    "turn_in_lateral_ref": 0.30,
-    "turn_in_heading_ref": 0.45,
+
+
+
+
+
+
+
+
+
+
+
+    "turn_in_lateral_ref": 0.75,
+    "turn_in_sharp_ref": 0.7,
+    "turn_in_gentle_extra": 0.5,
+
+
+
+
+
+
+
+
+    "corner_relief_enable": True,
+    "corner_relief_conf_min": 0.45,
+    "corner_relief_offset_min": 0.25,
+    "corner_relief_gain": 2.0,
+    "corner_relief_max": 0.85,
+    "corner_relief_hold_decay": 0.85,
     "steering_deadzone": 0.015,
     "max_abs_steering": 0.76,
     "hard_turn_steering_scale": 0.78,
@@ -429,19 +470,23 @@ CONTROL = {
     "inside_left_heading_max": -0.24,
     "inside_left_curvature_max": -0.45,
     "inside_left_steering_limit": -0.40,
-    "curve_slowdown": 0.70,
+
+    "curve_slowdown": 0.50,
     "curve_power": 1.18,
-    "offset_slowdown": 0.38,
+    "offset_slowdown": 0.28,
     "offset_power": 1.25,
-    "min_confidence_factor": 0.58,
-    "steering_slowdown": 0.18,
+
+
+    "min_confidence_factor": 0.90,
+    "steering_slowdown": 0.12,
     "steering_power": 1.15,
     "steering_smoothing_cruise": 0.16,
     "steering_smoothing_turn": 0.14,
     "steering_smoothing_correction": 0.14,
     "steering_smoothing_recovery": 0.28,
     "max_steering_delta": 0.46,
-    "max_speed_increase_per_sec": 1.85,
+
+    "max_speed_increase_per_sec": 3.5,
     "max_speed_decrease_per_sec": 4.80,
     "escape_min_confidence": 0.48,
     "escape_curve_threshold": 0.45,
@@ -489,34 +534,6 @@ CONTROL = {
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }
-
-BASIC_CONTROL_OVERRIDES = {
-    "lost_speed": 0.24,
-    "recovery_speed": 0.38,
-    "straight_speed": 1.00,
-    "straight_lost_speed": 1.00,
-    "hard_turn_speed": 0.30,
-    "hard_turn_center_speed_bonus": 0.30,
-    "correction_speed": 0.50,
-    "far_conflict_offset_start": 0.00,
-    "far_conflict_offset_scale": 3.20,
-    "far_conflict_min_scale": 0.05,
-    "gain_lateral": 0.86,
-    "gain_lookahead": 0.68,
-    "gain_heading": 0.68,
-    "gain_curve": 0.10,
-    "near_weight_offset_boost": 0.58,
-    "far_weight_curve_boost": 0.28,
-    "max_abs_steering": 0.74,
-    "hard_turn_steering_scale": 0.78,
-    "steering_speed_cap_scale": 0.42,
-    "curve_slowdown": 0.70,
-    "curve_power": 1.35,
-    "steering_slowdown": 0.28,
-    "max_speed_increase_per_sec": 1.60,
-    "max_speed_decrease_per_sec": 2.20,
-}
-
 
 def get_profile(name: str) -> dict:
 \
@@ -2036,7 +2053,7 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
 """控制策略模块。
 
 功能概述：根据赛道状态统一规划转向和速度。
-输入输出：输入 `TrackState`、时间戳和 fastest/safe 模式，输出 `ControlCmd`。
+输入输出：输入 `TrackState`、时间戳和兼容用 mode 字段，输出 `ControlCmd`。
 处理流程：计算风险分量，选择驾驶状态，生成目标转向和速度，再做平滑与变化率限制。
 """
 
@@ -2066,6 +2083,8 @@ _LAST_STRAIGHT_MEMORY_ACTIVE = False
 _LINE_STREAK = 0
 _LINE_LAST_OFFSET = 0.0
 _LINE_CORRECTION = 0.0
+_LINE_HOLD_FRAMES = 0
+_CORNER_RELIEF = 0.0
 
 
 def reset_policy_state() -> None:
@@ -2083,10 +2102,12 @@ def reset_policy_state() -> None:
     global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
-    global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION
+    global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
+    _LINE_HOLD_FRAMES = 0
+    _CORNER_RELIEF = 0.0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -2370,14 +2391,48 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
 
 
 
-    corner_arrival = clamp(
-        abs(track.lateral_error) / profile["turn_in_lateral_ref"]
-        + abs(track.heading_error) / profile["turn_in_heading_ref"],
-        0.0,
-        1.0,
+
+
+
+
+
+
+
+    sharpness = clamp(signals["curve_risk"] / profile["turn_in_sharp_ref"], 0.0, 1.0)
+    arrival_ref = profile["turn_in_lateral_ref"] * (
+        1.0 + profile["turn_in_gentle_extra"] * (1.0 - sharpness)
     )
-    turn_in_gate = profile["turn_in_floor"] + (1.0 - profile["turn_in_floor"]) * corner_arrival
-    lookahead_term *= turn_in_gate
+    corner_arrival = clamp(abs(track.lateral_error) / arrival_ref, 0.0, 1.0)
+    lookahead_term *= corner_arrival
+
+
+
+
+
+
+    global _CORNER_RELIEF
+    instant_relief = 0.0
+    if (
+        profile.get("corner_relief_enable")
+        and track.red_environment
+        and mode == "hard_turn"
+        and track.line_confidence >= profile["corner_relief_conf_min"]
+        and abs(track.line_offset) >= profile["corner_relief_offset_min"]
+        and track.line_offset * lookahead_term < 0.0
+    ):
+        instant_relief = clamp(
+            (abs(track.line_offset) - profile["corner_relief_offset_min"]) * profile["corner_relief_gain"],
+            0.0,
+            profile["corner_relief_max"],
+        ) * clamp(track.line_confidence, 0.0, 1.0)
+
+
+    if profile.get("corner_relief_enable") and track.red_environment and mode == "hard_turn":
+        _CORNER_RELIEF = max(instant_relief, _CORNER_RELIEF * profile["corner_relief_hold_decay"])
+    else:
+        _CORNER_RELIEF = 0.0
+    if _CORNER_RELIEF > 0.0:
+        lookahead_term *= 1.0 - _CORNER_RELIEF
     near_weight = profile["near_weight_base"] + signals["offset_risk"] * profile["near_weight_offset_boost"]
     far_weight = profile["far_weight_base"] + signals["curve_risk"] * profile["far_weight_curve_boost"]
     if center_term * lookahead_term < 0.0:
@@ -2698,7 +2753,7 @@ def _lane_line_correction(
 \
 
 
-    global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION
+    global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES
 
     normal_valid = (
         profile["enable"]
@@ -2729,7 +2784,8 @@ def _lane_line_correction(
 
     target = 0.0
     confirm_frames = int(profile["startup_confirm_frames"] if startup_valid and not normal_valid else profile["confirm_frames"])
-    if valid and _LINE_STREAK >= confirm_frames:
+    active = valid and _LINE_STREAK >= confirm_frames
+    if active:
         max_correction = profile["startup_max_correction"] if startup_valid and not normal_valid else profile["max_correction"]
         curve_gate = profile["startup_curve_gate"] if startup_valid and not normal_valid else profile["curve_gate"]
         offset_target = track.line_offset * profile["offset_gain"]
@@ -2749,6 +2805,40 @@ def _lane_line_correction(
             )
             if offset_floor * target <= 0.0 or abs(offset_floor) > abs(target):
                 target = offset_floor
+
+
+
+        if (
+            profile["inside_assist_enable"]
+            and track.red_environment
+            and mode in {"hard_turn", "correcting"}
+            and _LINE_STREAK >= int(profile["inside_assist_streak_min"])
+            and abs(track.line_offset) >= profile["inside_assist_offset_min"]
+            and track.line_offset * track.line_heading < 0.0
+        ):
+            excess = abs(track.line_offset) - profile["inside_assist_offset_min"]
+            assist = math.copysign(
+                clamp(excess * profile["inside_assist_gain"], 0.0, profile["inside_assist_max"]),
+                track.line_offset,
+            )
+            if assist * target >= 0.0:
+                target = clamp(target + assist, -max_correction, max_correction)
+
+
+
+    turn_mode = mode in {"hard_turn", "correcting"}
+    if active:
+        _LINE_HOLD_FRAMES = (
+            int(profile["hold_frames"])
+            if turn_mode and abs(_LINE_LAST_OFFSET) >= profile["hold_offset_min"]
+            else 0
+        )
+    elif _LINE_HOLD_FRAMES > 0 and turn_mode:
+        _LINE_HOLD_FRAMES -= 1
+        _LINE_CORRECTION *= profile["hold_decay"]
+        return clamp(_LINE_CORRECTION, -profile["max_correction"], profile["max_correction"])
+    else:
+        _LINE_HOLD_FRAMES = 0
 
     if startup_valid and not normal_valid:
         alpha = profile["startup_smoothing"]
@@ -2805,9 +2895,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
 
-    profile = get_profile(mode if mode in {"fastest", "safe"} else "fastest")
-    if not track.red_environment:
-        profile.update(BASIC_CONTROL_OVERRIDES)
+    profile = get_profile(mode)
     timestamp = float(timestamp)
     _maybe_reset_policy_by_timestamp(timestamp, profile)
     signals = _control_signals(track, profile)
@@ -2852,7 +2940,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 """
 
 
-PROFILE = "safe"
+PROFILE = "unified"
 
 
 def control(left_img, right_img, timestamp):

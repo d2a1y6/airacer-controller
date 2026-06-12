@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.common import TrackState
-from controller.params import BASIC_CONTROL_OVERRIDES, CONTROL
+from controller.params import CONTROL
 from controller.policy import decide_control, reset_policy_state
 
 
@@ -22,8 +22,8 @@ def _run_frozen(track: TrackState, frames: int = 80) -> float:
     return max_speed
 
 
-def test_pinned_against_rail_triggers_escape_on_basic():
-    # basic（red_environment=False）：顶住右栏（路在左 lateral<0）、几何冻结、速度落在 low_speed 覆盖空档。
+def test_pinned_against_rail_triggers_escape():
+    # 顶住右栏（路在左 lateral<0）、几何冻结、速度落在 low_speed 覆盖空档。
     # 旧逻辑不会脱困；现在 pinned_stall 应触发，把速度顶到 escape_pinned_speed 推离栏杆。
     pinned = TrackState(
         lateral_error=-0.62,
@@ -60,7 +60,7 @@ def test_pinned_left_margin_escapes_right_even_if_geometry_points_left():
         cmd = decide_control(stuck_left, t, mode="fastest")
         max_steer = max(max_steer, cmd.steering)
 
-    assert max_steer >= BASIC_CONTROL_OVERRIDES["max_abs_steering"] - 1e-6
+    assert max_steer >= CONTROL["max_abs_steering"] - 1e-6
 
 
 def test_pinned_right_margin_escapes_left_even_if_geometry_points_right():
@@ -85,7 +85,7 @@ def test_pinned_right_margin_escapes_left_even_if_geometry_points_right():
         cmd = decide_control(stuck_right, t, mode="fastest")
         min_steer = min(min_steer, cmd.steering)
 
-    assert min_steer <= -BASIC_CONTROL_OVERRIDES["max_abs_steering"] + 1e-6
+    assert min_steer <= -CONTROL["max_abs_steering"] + 1e-6
 
 
 def test_centered_frozen_view_does_not_force_pinned_escape():

@@ -7,7 +7,7 @@
 
 ## 关键判断
 
-- telemetry：整轮 `t=0.03→330.14s` 未记录 collision/near-stop 事件，末帧 `status=normal`。这只能说明本地 supervisor 没有把本轮接触记成事件或停车惩罚；它不证明没有碰栏。R038 的 Webots 物理引擎 console 出现过类似“发生碰撞，只计算其中最重要的 N 个碰撞点”的接触点提示，人工观察确认有一次栏杆接触，但没有表现成旧版本那种长时间卡死。
+- telemetry：整轮 `t=0.03→330.14s` 未记录 collision/near-stop 事件，末帧 `status=normal`。这只能说明本地 supervisor 没有把本轮接触记成事件或停车惩罚；它不证明没有碰栏。R038 人工观察到 Webots GUI/物理引擎 console 出现过 `WARNING: Contact joints between materials 'default' and 'default' will only be created for the 10 deepest contact points instead of all the 12 contact points.`，并确认有一次栏杆接触，但没有表现成旧版本那种长时间卡死。该 GUI console 文本目前不能从自动日志稳定读取。
 - 控制日志：全程 `lost=0`，但 hard_turn 中仍有短暂低白线置信。`t>5s` 后 hard_turn 的 `line_conf=0` 约 `2.2%`，`line_conf<0.45` 约 `9.2%`。
 - 本窗口：`line_offset` 中位数 `+0.374`，最高 `+0.754`；`line_conf=0` 有 10/131 帧，`|line_offset|>0.35` 有 74/131 帧。正 offset 在这些左弯帧里表示白线在近处偏右，车已经进入白线内侧。
 - overlay：`overlay_000226_560.png` / `overlay_000228_480.png` / `overlay_000229_440.png` 显示虚线仍在路面内，但每侧只拿到 3-4 个点，纠正依据稀疏。
@@ -16,4 +16,4 @@
 
 这不是“再把最大舵角调小”那么简单。当前策略需要在 tight turn 里既跟住真实弯道，又不能误把栏杆、车身或白色路牙当成中心线。R038 已经把长爬行和大多数擦栏压下去，但弯中短暂低置信后，road-mask 的弯道预判仍会让车切内线；白线重新出现时，车已经在白线内侧，只能事后回正。
 
-后续回归先由 AI 自跑并检查三件事：同一窗口里 `line_offset` 是否更早回到 0 附近，overlay/截图里车身是否稳定骑在中间白色虚线上，以及 Webots/物理引擎 console 是否仍出现接触点提示。不要只看 `lost=0` 或 telemetry 无 collision；R038 已经证明碰栏可能不进 telemetry 事件。等 AI 判断接近解决，再让人类做关键验收。
+后续回归先由 AI 自跑并检查：同一窗口里 `line_offset` 是否更早回到 0 附近，overlay/截图里车身是否稳定骑在中间白色虚线上，轨迹/速度是否还有贴栏慢爬迹象。不要只看 `lost=0` 或 telemetry 无 collision；R038 已经证明碰栏可能不进 telemetry 事件。Webots GUI console 的接触点 warning 目前不能从文件日志稳定读取，只能作为人工观察反馈；等 SDK supervisor 有结构化 contact log 后，再把它纳入 AI 自动判据。等 AI 判断接近解决，再让人类做关键验收。

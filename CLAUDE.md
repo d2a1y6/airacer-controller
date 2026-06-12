@@ -21,7 +21,6 @@ pip install -r requirements.txt
 
 # 修改 controller/ 后重新构建
 python scripts/build_submission.py --mode fastest
-python scripts/build_submission.py --mode safe
 
 # 生成准备上传的最终版本
 python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
@@ -50,16 +49,22 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
   --world basic --car-slot car_1
 ```
 
+**控制器整体逻辑（一帧画面怎么变成舵角/油门）的详细说明见 [docs/technical_manual.md](docs/technical_manual.md)。** 它是面向交付的稳定逻辑说明，**不要每次改参数/策略就更新它**（尤其改动没跑通时）；调参过程写 `experiments/`，等策略结构稳定、人明确要求时再更新手册。
+
 官方 SDK 和 Webots 安装见 [docs/official_testing.md](docs/official_testing.md)。AI 或人类跑 Webots 时读 [docs/human_webots_testing.md](docs/human_webots_testing.md)；AI 用日志、telemetry、帧和截图复盘时读 [docs/ai_offline_review.md](docs/ai_offline_review.md)。脚本入口和诊断工具速查见 [scripts/README.md](scripts/README.md)。
 
 **新会话接手前先读 [experiments/STATUS.md](experiments/STATUS.md)**：它是唯一的活动交接文档（当前状态、铁律、未解问题、下一步），每轮工作结束时就地更新，不要另建 handoff 文件。实验目录怎么留档见 [experiments/README.md](experiments/README.md)；case 和 figure 的细则分别见 `experiments/cases/README.md`、`experiments/figures/README.md`。
 
-## 工作铁律（详见 STATUS.md，每条都吃过亏）
+## 工作约定（经验为主，不限制"改哪里"）
 
-1. Webots 实跑是驾驶质量的主证据。AI 可以自己跑 Webots、看日志和截图做日常迭代；到了关键验收节点，再让人类肉眼确认。`lost` 率尤其不是质量指标。
-2. policy/速度/走线类改动不能只靠离线数字定好坏。AI 可以自主跑到目标窗口并复盘 overlay，但准备标完成、合 main 或提交 final 前，需要人类做关键验收。
-3. 调试构建（含 `open/json/cv2.imwrite` 等 I/O）禁止上传；提交只用通过全部校验的 `submissions/final/team_controller.py`。
-4. 清 `.tmp` 前先确认 notes 的"下一步"不依赖其中的帧/日志；依赖的窗口先裁进 `experiments/cases/`。
+**想改哪里就改哪里、放手大改。** controller 任意模块（含 basic 分支）、参数、脚本、SDK 调试层都可自由改。没有"必须先获人工批准/关键验收"才能动手这回事，也没有"basic 不许碰"这种保护。大胆做结构性的改动——历史经验是：保守的微调往往没用。
+
+**唯一硬约束（违反会让提交直接作废，不是自我设限）**：上传的 `submissions/final/team_controller.py` 必须通过 `validate_submission.py` 和官方 validator，且**不含调试 I/O**（`open/json/cv2.imwrite` 等）和**禁用模块**（见下"提交文件约束"）。调试构建只在本地 `.tmp/` 跑，永不上传。
+
+**经验（帮判断好坏，不拦你动手）**：
+- 驾驶质量以 Webots 实跑为准；离线数字会骗人——`lost` 率尤其不是质量指标。撞栏现在能靠 `contact_*.jsonl` 离线看（见 `docs/ai_offline_review.md`）。
+- 走线/policy 改动最好跑一次 Webots 看真实效果再下结论。出于 token 考虑，默认流程是 **AI 改 → 人跑 → 人报完成 → AI 读日志**（见 `docs/human_webots_testing.md`）；这是证据闭环，不是审批门槛。合 main / 提交 final 由人触发即可。
+- 清 `.tmp` 前确认 notes 的"下一步"不依赖其中帧/日志；依赖的窗口先裁进 `experiments/cases/`。
 
 ## 控制流水线
 
@@ -90,15 +95,15 @@ left_img, right_img
 
 **误差符号**：左负右正。图像坐标按 OpenCV：`x` 向右，`y` 向下。
 
-**参数唯一源**：所有控制参数集中在 `params.py`，不在模块内硬编码调参值。`fastest` 和 `safe` 当前读取同一套 `CONTROL` 参数。
+**参数唯一源**：所有控制参数集中在 `params.py`，不在模块内硬编码调参值。当前只维护一套 unified 策略；`fastest` / `safe` / `basic` 不再有独立参数分支。
 
-**场景感知**：`estimator.py` 会在连续红色环境帧后锁存 `red_environment = True`（写入 `TrackState`）。`policy.py` 和 `perception.py` 用该标志在 basic/complex 赛道间切换策略分支。单帧误检不会触发锁存；`reset_estimator_state()` 或时间戳回退会清空。
+**场景感知**：`estimator.py` 会在连续红色环境帧后锁存 `red_environment = True`（写入 `TrackState`）。它现在是感知/诊断特征，不再用于切换 basic/complex 控制参数。单帧误检不会触发锁存；`reset_estimator_state()` 或时间戳回退会清空。
 
 **提交文件约束**：`controller/` 代码最终会被合并进单文件提交，**禁止**使用以下模块：`os, sys, socket, subprocess, multiprocessing, threading, time, datetime, io, builtins, ctypes, shutil, tempfile, requests, urllib, http, pickle, importlib`，以及 `open, eval, exec, compile, globals, locals`。`scripts/` 和 `tests/` 可以使用标准库。
 
 ## 构建机制
 
-`scripts/build_submission.py` 按固定顺序拼接 `controller/` 各模块（`common → params → opponent → perception → estimator → policy → team_controller_local`），删除本地 import，将 `PROFILE` 固定为 `--mode` 参数值，输出自包含的单文件。
+`scripts/build_submission.py` 按固定顺序拼接 `controller/` 各模块（`common → params → opponent → perception → estimator → policy → team_controller_local`），删除本地 import，输出自包含的单文件。`--mode` 只保留为旧工作流和默认输出路径兼容，不再改变策略内容。
 
 ## Baseline 与实验记录
 

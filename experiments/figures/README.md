@@ -25,13 +25,16 @@
 `telemetry` 默认在 SDK 的 `.local/recordings/telemetry.jsonl`，跑完后建议先 `analyze_telemetry.py --archive <R-id>` 或直接指定路径。
 
 ### 1. 整场轨迹 + 速度 + 事件图 `trajectory_speed.png`（必留，每个归档 run 一张）
-顶视 x-y 轨迹按速度着色，叠加起终点、最长爬行段、状态异常（碰撞/卡住）点、lap 和事件；
+顶视 x-y 轨迹按速度着色，叠加起终点、最长爬行段、状态异常（碰撞/卡住）点、lap、事件和可选撞栏接触点；
 下方是速度-时间曲线。这是「这一版整体开得怎么样、在哪卡住、哪段慢」的总览图，报告里讲每个版本都用它。
 ```bash
 python scripts/plot_run.py --telemetry <telemetry.jsonl> \
+  --contact-log .tmp/run/contact_<track>.jsonl \
   --out experiments/figures/<run>_<slug>/trajectory_speed.png \
   --title "<R-id> <track>"
 ```
+如果没有 contact log，可以省略 `--contact-log`。有 contact log 时，深红 X 是撞栏接触位置，深红时间窗是接触时段；
+相距不超过 4.0 world units 的多个接触 episode 会合并为一条标注。
 
 ### 2. 感知标注帧 `overlay_<t>_<slug>.png`（关键时刻 1–4 张）
 左右相机画面 + 道路 mask（绿）+ 边缘（黄）+ 扫描线 + 中心/白线点（红），带时间戳和 fill/points 标注。

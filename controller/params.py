@@ -175,6 +175,20 @@ LINE_FOLLOW_PROFILE = {
     # 当 offset 足够大时，保留一部分纯 offset 回中力；heading 仍可被弯中门控压低。
     "offset_priority_min": 0.18,
     "offset_curve_min_scale": 0.35,
+    # R039（2026-06-12，R038 残留弯中切内线取证）：弯中（curve_risk≈0.67 ≫ curve_gate 0.35）
+    # curve_scale 把混合回中修正压到 0，只剩很弱的 offset 楼层（≈0.10-0.19），不足以抵消
+    # road-mask 的弯道向内预判 → 半径偏小、车落到白线内侧贴/撞内栏。当可信白线连续多帧显示
+    # 车确在内侧（|offset| 大、offset 与 heading 反号）时，叠加一个有界“向外辅助”，方向恒为把车
+    # 推回白线一侧；并在白线短暂丢置信（虚线间隙）时按固定帧数保持上一段向外修正。全程仍受
+    # max_correction 上限约束，不会越过既有舵角包络。**这是走线改动，必须人上车终判。**
+    "inside_assist_enable": True,
+    "inside_assist_offset_min": 0.30,   # 车被判定“已在内侧”的 |offset| 下限
+    "inside_assist_streak_min": 4,      # 连续多少帧可信内侧才允许辅助（抗单帧误检）
+    "inside_assist_gain": 0.55,         # 超出阈值部分换算成向外偏置的增益
+    "inside_assist_max": 0.20,          # 向外辅助偏置上限（叠加后仍受 max_correction 钳制）
+    "hold_offset_min": 0.30,            # 触发“丢置信保持”所需的上一段可信 |offset|
+    "hold_frames": 8,                   # 丢置信后保持向外修正的最大帧数
+    "hold_decay": 0.90,                 # 保持期内每帧衰减系数
     # R028 残留瞬态：第一个左弯中段常只有一侧相机能凑够弯中虚线点，双目硬要求会让
     # `line_conf` 短暂归零。只在 complex 红色环境里接受单目兜底，并打置信折扣；basic 不受影响。
     "single_camera_enable": True,
@@ -275,12 +289,14 @@ CONTROL = {
     "lost_confidence": 0.10,
     "recovery_confidence": 0.28,
     "lost_speed": 0.28,
-    "recovery_speed": 0.44,
-    "hard_turn_speed": 0.38,
-    "hard_turn_center_speed_bonus": 0.20,
-    "correction_speed": 0.58,
-    "hard_turn_threshold": 0.20,
-    "hard_turn_exit_threshold": 0.16,
+    # 速度提升 Phase 2（激进）：少把中等弯当 hard_turn（threshold 0.20→0.30），且 hard_turn/恢复/
+    # 回中各状态的速度上限大幅抬高——半径已稳，弯里可以更快。
+    "recovery_speed": 0.55,
+    "hard_turn_speed": 0.72,
+    "hard_turn_center_speed_bonus": 0.28,
+    "correction_speed": 0.72,
+    "hard_turn_threshold": 0.30,
+    "hard_turn_exit_threshold": 0.24,
     "hard_turn_enter_frames": 2,
     "recovery_enter_frames": 2,
     "correction_error": 0.25,
@@ -302,13 +318,39 @@ CONTROL = {
     "gain_curve": 0.12,
     "gain_lateral_nonlinear": 0.22,
     "gain_curve_nonlinear": 0.02,
-    "turn_in_floor": 0.55,
-    "turn_in_lateral_ref": 0.30,
-    "turn_in_heading_ref": 0.45,
+    # 入弯时机门控（R042/R043/R044，接触日志+控制日志定位"入弯太早"是切内线/撞内栏根因）：
+    # arrival 只看"车已物理到弯"= 近处 |lateral| 漂移（直道≈0，开到弯口才长起来）。R043 删除
+    # floor、且 R044 移除 heading 项后，arrival 纯由 lateral 决定，policy 直接用它缩放远处预瞄项；
+    # 车未到弯口时预瞄项可被压到 0。R046 删除了 R044 的"弯有多急(curve_risk)"调制——它在入弯初期
+    # curve_risk 还低时把所有弯误判成缓弯、过度迟滞，等 curve_risk 涨上来车已深入弯里才急打轮（半径
+    # 反而大、冲外侧、掉速）。入弯瞬间没有信号能区分缓/急弯，故这种调制原理上修不好，已删。
+    # 现在 arrival 纯由近处 |lateral| 漂移决定：`corner_arrival = clamp(|lateral|/turn_in_lateral_ref, 0, 1)`。
+    "turn_in_lateral_ref": 0.75,     # arrival 参考基准（调小=更早转/半径更小，调大=更晚转/半径更大）
+    # R047：过弯越快半径越大——把入弯参考随速度收小，speed_norm 时参考 = lateral_ref×(1−此值×speed_norm)，
+    # 高速早开门、早转，弥补高速入口多走的距离。0=不耦合（纯 lateral）。
+    "turn_in_speed_comp": 0.6,
+    # R048：入弯门控是 lookahead_term 上的连续乘子，但 lateral 在弯中会反复回落→门收掉远处项→车转
+    # 一半收轮、转不到位、出弯提前收。用 latch 保持 arrival 峰值并按此衰减：弯中 lateral 短暂回落
+    # 不收门（持续转）、出弯迟滞收轮。越大保持越久（出弯 lag 越长，过头会出弯过转），0=不保持。
+    "turn_in_hold_decay": 0.92,
+    # R040/R041（2026-06-12，接触日志定位 t≈228.6 撞内栏）：弯中可信白线显示车已切内侧时，按
+    # (|line_offset|−offset_min)·gain×置信度 成比例削弱远处预瞄项（lookahead+heading），上限
+    # corner_relief_max。直接在源头放大半径并消除"road-mask 拉内 vs 白线拉外"的来回甩。
+    # 只缩远处转向项，不进 risk/mode/速度/入弯门控。
+    # R041 关键：relief 加"保持/迟滞"。接触日志显示撞栏发生在 line_offset 来回穿过 0 的极限环里——
+    # offset 一翻负 relief 就瞬间归零、road-mask 立刻猛拉回 -0.76、过冲撞内栏。所以 relief 触发后
+    # 按 hold_decay 衰减保持，trough 里也压住远处项，打破极限环。同时调激进（gain/max 调大、门降到
+    # 0.45）——之前保守微调没用。**走线改动，需人上车终判。**
+    "corner_relief_enable": True,
+    "corner_relief_conf_min": 0.45,
+    "corner_relief_offset_min": 0.25,
+    "corner_relief_gain": 2.0,
+    "corner_relief_max": 0.85,
+    "corner_relief_hold_decay": 0.85,   # relief 触发后每帧保持衰减系数（迟滞，破极限环）
     "steering_deadzone": 0.015,
     "max_abs_steering": 0.76,
     "hard_turn_steering_scale": 0.78,
-    "steering_speed_cap_scale": 0.42,
+    "steering_speed_cap_scale": 0.20,   # R047：高速收舵放松——速度上调后它在弯里把舵卡死、导致打不动/冲外
     # 边界余量保护默认关闭（outward_gain/slowdown=0、cap=1.0 即 no-op）：余量来自
     # road-mask 边界点，mask 饱和或 fallback 时是噪声，R014 实车证明它既没拦住撞栏
     # 又会产生无意义打轮/减速。margin 字段保留为诊断输出。
@@ -320,19 +362,23 @@ CONTROL = {
     "inside_left_heading_max": -0.24,
     "inside_left_curvature_max": -0.45,
     "inside_left_steering_limit": -0.40,
-    "curve_slowdown": 0.70,
-    "curve_power": 1.18,
-    "offset_slowdown": 0.38,
+    # 速度提升 Phase 3（激进）：弯道/横偏/转向降速因子整体减弱——半径已稳，不需要刹这么狠。
+    "curve_slowdown": 0.42,
+    "curve_power": 1.5,    # 提高指数：中等弯(curve_risk 0.4-0.6)提速，急弯(=1.0)降速不变(物理上限)
+    "offset_slowdown": 0.28,
     "offset_power": 1.25,
-    "min_confidence_factor": 0.58,
-    "steering_slowdown": 0.18,
+    # 速度提升 Phase 1（最安全、收益最大）：解耦感知置信对速度的惩罚。track_conf 中位仅 0.60，
+    # 几何没问题也被压速；min_confidence_factor 0.58→0.90 → 中等置信几乎不再压速。
+    "min_confidence_factor": 0.95,
+    "steering_slowdown": 0.12,
     "steering_power": 1.15,
     "steering_smoothing_cruise": 0.16,
     "steering_smoothing_turn": 0.14,
     "steering_smoothing_correction": 0.14,
     "steering_smoothing_recovery": 0.28,
     "max_steering_delta": 0.46,
-    "max_speed_increase_per_sec": 1.85,
+    # 速度提升 Phase 4（激进）：出弯后更快回速，缩短低速段。
+    "max_speed_increase_per_sec": 5.0,
     "max_speed_decrease_per_sec": 4.80,
     "escape_min_confidence": 0.48,
     "escape_curve_threshold": 0.45,
@@ -381,41 +427,13 @@ CONTROL = {
     "timestamp_reset_gap": 2.0,
 }
 
-BASIC_CONTROL_OVERRIDES = {
-    "lost_speed": 0.24,
-    "recovery_speed": 0.38,
-    "straight_speed": 1.00,
-    "straight_lost_speed": 1.00,
-    "hard_turn_speed": 0.30,
-    "hard_turn_center_speed_bonus": 0.30,
-    "correction_speed": 0.50,
-    "far_conflict_offset_start": 0.00,
-    "far_conflict_offset_scale": 3.20,
-    "far_conflict_min_scale": 0.05,
-    "gain_lateral": 0.86,
-    "gain_lookahead": 0.68,
-    "gain_heading": 0.68,
-    "gain_curve": 0.10,
-    "near_weight_offset_boost": 0.58,
-    "far_weight_curve_boost": 0.28,
-    "max_abs_steering": 0.74,
-    "hard_turn_steering_scale": 0.78,
-    "steering_speed_cap_scale": 0.42,
-    "curve_slowdown": 0.70,
-    "curve_power": 1.35,
-    "steering_slowdown": 0.28,
-    "max_speed_increase_per_sec": 1.60,
-    "max_speed_decrease_per_sec": 2.20,
-}
-
-
 def get_profile(name: str) -> dict:
     """读取控制 profile。
 
     功能：为顶层控制器提供当前唯一维护的控制参数。
-    参数：`name` 保留兼容构建脚本和提交文件中的 fastest/safe 标记。
+    参数：`name` 保留兼容构建脚本和提交文件中的旧模式标记。
     返回：`CONTROL` 参数字典的浅拷贝。
-    逻辑：所有模式都返回同一套参数，便于先集中优化一个目标。
+    逻辑：所有模式、赛道和提交文件都返回同一套参数；不再维护 basic/fastest/safe 分支。
     """
 
     del name

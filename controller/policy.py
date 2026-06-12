@@ -1,14 +1,14 @@
 """控制策略模块。
 
 功能概述：根据赛道状态统一规划转向和速度。
-输入输出：输入 `TrackState`、时间戳和 fastest/safe 模式，输出 `ControlCmd`。
+输入输出：输入 `TrackState`、时间戳和兼容用 mode 字段，输出 `ControlCmd`。
 处理流程：计算风险分量，选择驾驶状态，生成目标转向和速度，再做平滑与变化率限制。
 """
 
 import math
 
 from controller.common import ControlCmd, TrackState, clamp
-from controller.params import BASIC_CONTROL_OVERRIDES, LINE_FOLLOW_PROFILE, get_profile
+from controller.params import LINE_FOLLOW_PROFILE, get_profile
 
 _LAST_STEERING = 0.0
 _LAST_SPEED = 0.0
@@ -34,6 +34,9 @@ _LAST_STRAIGHT_MEMORY_ACTIVE = False
 _LINE_STREAK = 0
 _LINE_LAST_OFFSET = 0.0
 _LINE_CORRECTION = 0.0
+_LINE_HOLD_FRAMES = 0
+_CORNER_RELIEF = 0.0
+_TURN_IN_LATCH = 0.0
 
 
 def reset_policy_state() -> None:
@@ -51,10 +54,13 @@ def reset_policy_state() -> None:
     global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
-    global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION
+    global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF, _TURN_IN_LATCH
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
+    _LINE_HOLD_FRAMES = 0
+    _CORNER_RELIEF = 0.0
+    _TURN_IN_LATCH = 0.0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -335,17 +341,73 @@ def _target_steering(track: TrackState, signals: dict, mode: str, profile: dict)
         + track.heading_error * profile["gain_heading"]
         + track.curvature * profile["gain_curve"]
     )
-    # 入弯时机门控：直道上车还居中、近处还直时（lateral/heading≈0），远处的路已弯会让前瞻项
-    # 提前打轮→切内线贴栏杆。用近处弯量衡量"弯到了没"，弯没到就压制前瞻项，弯真正到了再放开，
-    # 让车跟着中心线、到弯了再转。带保守下限，避免压过头变成转太晚冲外侧。
-    corner_arrival = clamp(
-        abs(track.lateral_error) / profile["turn_in_lateral_ref"]
-        + abs(track.heading_error) / profile["turn_in_heading_ref"],
-        0.0,
-        1.0,
+    # 入弯时机门控（R042 重做）：远处 road-mask 预瞄项是"切内线"的来源——它在直道接近段就因
+    # 远处的路已弯而变大，把车提前打进弯里。旧门控用 |heading| 当"弯到了没"的判据，但 heading
+    # 正是远处弯量、在接近段就涨起来，于是门提前全开、毫无迟滞（实测 t224 撞栏弯：heading=-0.39
+    # 时门已 0.94，而车还居中、还骑在白线上）。
+    # 正确判据是"车是否已经物理到达弯"——只看近处 lateral 漂移：直道接近段它≈0，只有当车跟着
+    # 直线开到弯口、真正开始偏离时才长起来。R043 删除 floor 后直接用 arrival 缩放远处预瞄项：
+    # 车未到弯口时可把预瞄项压到 0，沿线开进弯口、略外移（out-in-out），再触发"晚而狠"的转向。
+    # 不用 |line_offset| 当 arrival——它分不清"外移到弯口"和"已经切到内侧"，后者会把门开更大、越切越深。
+    # R046：删除 R044 的"弯有多急(curve_risk)"调制。它在入弯初期把弯误判成缓弯——接近段 curve_risk
+    # 还低（远处弯量没在视野里发育起来），sharpness 小 → arrival_ref 被放大 1.5x+ → 过度迟滞；等
+    # curve_risk 涨上来时车已深入弯里，才急打轮、半径反而很大、还冲到外侧、速度也掉。根因是
+    # "入弯瞬间没有信号能区分缓/急弯"，所以这种基于瞬时 curve_risk 的调制原理上就修不好，直接删。
+    # 回到纯近处 lateral 漂移驱动的门控。
+    # R047 速度耦合：过弯越快、半径越大——高速进弯时车在"门还没开"的入口段就冲出很远（实测
+    # line_offset 入口冲到 −0.59）。把入弯参考随速度收小（faster → ref 小 → arrival 早开 → 早转），
+    # 让"入弯提前量"随速度成比例，弥补高速多走的距离。speed_norm=0 时退化为纯 lateral 门控。
+    speed_norm = clamp(_LAST_SPEED / max(profile["max_speed"], 1e-6), 0.0, 1.0)
+    arrival_ref = max(
+        profile["turn_in_lateral_ref"] * (1.0 - profile["turn_in_speed_comp"] * speed_norm),
+        1e-3,
     )
-    turn_in_gate = profile["turn_in_floor"] + (1.0 - profile["turn_in_floor"]) * corner_arrival
-    lookahead_term *= turn_in_gate
+    instant_arrival = clamp(abs(track.lateral_error) / arrival_ref, 0.0, 1.0)
+    # R048 弯中保持 + 出弯迟滞：入弯门控是 lookahead_term 上的连续乘子，但 `lateral`（road-mask 近处
+    # 漂移）在弯中会反复回落到≈0（mask 重新对正路面），门控就把远处预瞄项收掉 → 车转一半忽然收轮、
+    # 转不到位、半径变大、还得事后找回中线（费速度）；出弯时远处看到直路、门控也跟着提前收。
+    # 用 latch 保持最近的 arrival 峰值并按 hold_decay 缓慢衰减：弯中 lateral 短暂回落不收门（持续转），
+    # 出弯远处项自然回落时再迟滞收轮（用户要的"出弯 lag"）。直道上远处项≈0，latch 高也不会乱打。
+    global _TURN_IN_LATCH
+    if mode == "hard_turn":
+        # 已进入弯（committed）：把门 ratchet 到最近峰值并保持，不让它在弯中随 lateral 回落而泄掉
+        # （否则长 hairpin 里门一直≈0.15、车整段欠转、半径大）。入弯延迟仍在——hard_turn 早段 lateral
+        # 还没长起来时 instant_arrival 小，latch 从小值起步、随 lateral 长大才 ratchet 上去。
+        _TURN_IN_LATCH = max(instant_arrival, _TURN_IN_LATCH)
+    else:
+        # 出弯/直道：按 hold_decay 迟滞收门（出弯 lag），同时仍跟随 instant（正常入弯延迟）。
+        _TURN_IN_LATCH = max(instant_arrival, _TURN_IN_LATCH * profile["turn_in_hold_decay"])
+    corner_arrival = _TURN_IN_LATCH
+    lookahead_term *= corner_arrival
+    # R040（2026-06-12，接触日志直接定位 t≈228.6 撞内栏）：弯中最大的舵角来自远处 road-mask
+    # 预瞄项（lookahead+heading 可达 -0.99），它把车拉到接近满左锁；可信白线却显示车已切到
+    # 内侧（offset 与远处项反号）。事后 ±0.34 有界修正顶不动 -0.76 的预瞄，只会和它打成
+    # 来回甩的极限环，最终过冲撞内栏。这里直接在源头按"白线证明车已多内侧 × 置信度"成比例
+    # 削弱远处项——既放大半径又消除那个来回甩。只缩远处转向项，不碰 risk/mode/速度/入弯门控，
+    # 保持 R013/R014 的"白线不污染主链路风险与速度"边界。**走线改动，需人上车终判。**
+    global _CORNER_RELIEF
+    instant_relief = 0.0
+    if (
+        profile.get("corner_relief_enable")
+        and track.red_environment
+        and mode == "hard_turn"
+        and track.line_confidence >= profile["corner_relief_conf_min"]
+        and abs(track.line_offset) >= profile["corner_relief_offset_min"]
+        and track.line_offset * lookahead_term < 0.0
+    ):
+        instant_relief = clamp(
+            (abs(track.line_offset) - profile["corner_relief_offset_min"]) * profile["corner_relief_gain"],
+            0.0,
+            profile["corner_relief_max"],
+        ) * clamp(track.line_confidence, 0.0, 1.0)
+    # R041 保持/迟滞：relief 瞬时触发后按 hold_decay 衰减保持，使 line_offset 在弯中来回穿 0 时
+    # 远处项仍被压住，不再被 road-mask 猛拉回 -0.76 → 打破撞内栏的极限环。离开 hard_turn 即清零。
+    if profile.get("corner_relief_enable") and track.red_environment and mode == "hard_turn":
+        _CORNER_RELIEF = max(instant_relief, _CORNER_RELIEF * profile["corner_relief_hold_decay"])
+    else:
+        _CORNER_RELIEF = 0.0
+    if _CORNER_RELIEF > 0.0:
+        lookahead_term *= 1.0 - _CORNER_RELIEF
     near_weight = profile["near_weight_base"] + signals["offset_risk"] * profile["near_weight_offset_boost"]
     far_weight = profile["far_weight_base"] + signals["curve_risk"] * profile["far_weight_curve_boost"]
     if center_term * lookahead_term < 0.0:
@@ -666,7 +728,7 @@ def _lane_line_correction(
     白车/斑马线（near_obstacle）、弯中错误线段（单帧出现、帧间突变、高弯量时直线拟合失真）。
     """
 
-    global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION
+    global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES
 
     normal_valid = (
         profile["enable"]
@@ -697,7 +759,8 @@ def _lane_line_correction(
 
     target = 0.0
     confirm_frames = int(profile["startup_confirm_frames"] if startup_valid and not normal_valid else profile["confirm_frames"])
-    if valid and _LINE_STREAK >= confirm_frames:
+    active = valid and _LINE_STREAK >= confirm_frames
+    if active:
         max_correction = profile["startup_max_correction"] if startup_valid and not normal_valid else profile["max_correction"]
         curve_gate = profile["startup_curve_gate"] if startup_valid and not normal_valid else profile["curve_gate"]
         offset_target = track.line_offset * profile["offset_gain"]
@@ -717,6 +780,40 @@ def _lane_line_correction(
             )
             if offset_floor * target <= 0.0 or abs(offset_floor) > abs(target):
                 target = offset_floor
+        # R039：弯中可信白线连续多帧显示车确在内侧（|offset| 大、与 heading 反号）时，curve_scale
+        # 会把上面的回中修正压得很弱，不足以抵消 road-mask 的弯道向内预判。叠加一个有界“向外辅助”，
+        # 方向恒为把车推回白线一侧（远离内栏），叠加后仍受 max_correction 钳制。
+        if (
+            profile["inside_assist_enable"]
+            and track.red_environment
+            and mode in {"hard_turn", "correcting"}
+            and _LINE_STREAK >= int(profile["inside_assist_streak_min"])
+            and abs(track.line_offset) >= profile["inside_assist_offset_min"]
+            and track.line_offset * track.line_heading < 0.0
+        ):
+            excess = abs(track.line_offset) - profile["inside_assist_offset_min"]
+            assist = math.copysign(
+                clamp(excess * profile["inside_assist_gain"], 0.0, profile["inside_assist_max"]),
+                track.line_offset,
+            )
+            if assist * target >= 0.0:
+                target = clamp(target + assist, -max_correction, max_correction)
+
+    # R039：弯中白线短暂丢置信（虚线间隙）时，保持上一段向外修正并衰减，避免空档里 road-mask
+    # 弯道预判继续把车往内切。只在 hard_turn/correcting 且上一段可信白线确显示车已偏到内侧时启用。
+    turn_mode = mode in {"hard_turn", "correcting"}
+    if active:
+        _LINE_HOLD_FRAMES = (
+            int(profile["hold_frames"])
+            if turn_mode and abs(_LINE_LAST_OFFSET) >= profile["hold_offset_min"]
+            else 0
+        )
+    elif _LINE_HOLD_FRAMES > 0 and turn_mode:
+        _LINE_HOLD_FRAMES -= 1
+        _LINE_CORRECTION *= profile["hold_decay"]
+        return clamp(_LINE_CORRECTION, -profile["max_correction"], profile["max_correction"])
+    else:
+        _LINE_HOLD_FRAMES = 0
 
     if startup_valid and not normal_valid:
         alpha = profile["startup_smoothing"]
@@ -765,17 +862,15 @@ def _update_policy_state(track: TrackState, steering: float, speed: float, mode:
 def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -> ControlCmd:
     """计算最终控制命令。
 
-    功能：按 fastest 或 safe 参数统一生成转向和速度。
-    参数：`track` 是赛道状态，`timestamp` 是平台时间，`mode` 是参数模式。
+    功能：按唯一策略生成转向和速度。
+    参数：`track` 是赛道状态，`timestamp` 是平台时间，`mode` 仅为接口兼容字段。
     返回：`ControlCmd`，包含 `steering` 和 `speed`。
-    逻辑：非法模式回退 fastest；内部用状态机协同转向、速度和恢复策略。
+    逻辑：所有 mode 和赛道都使用同一套参数；内部用状态机协同转向、速度和恢复策略。
     """
 
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
 
-    profile = get_profile(mode if mode in {"fastest", "safe"} else "fastest")
-    if not track.red_environment:
-        profile.update(BASIC_CONTROL_OVERRIDES)
+    profile = get_profile(mode)
     timestamp = float(timestamp)
     _maybe_reset_policy_by_timestamp(timestamp, profile)
     signals = _control_signals(track, profile)

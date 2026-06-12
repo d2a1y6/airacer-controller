@@ -13,13 +13,24 @@
 | 观察反馈 | 用户消息、AI 自跑观察、截图、`experiments/notes.md` | 判断真实现象，确定优先级 | 写进 notes.md 对应 R-id |
 | telemetry | `/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl` | 位置、速度、爬行段、事件 | 整场复制件只临时留存；长期写摘要或裁剪窗口 |
 | 控制日志 | `.tmp/run/control_*.jsonl` | 每帧内部状态、mode、目标控制量、最终输出 | 摘要写 notes；窗口可裁进 case |
+| **撞栏接触日志** | `.tmp/run/contact_*.jsonl` | **AI 可直接读的"撞没撞栏、在哪、多重"**——车身/栏杆接触的时间、世界坐标、点数 | 摘要写 notes；用 `scripts/analyze_contact_log.py` 看 episode |
 | 相机帧 | `.tmp/run/frames_*/*.png` | 逐帧看白线、道路 mask、障碍物、栏杆 | 整场 PNG 不进 git；关键帧渲染成 overlay 后裁进 case |
 | overlay | `.tmp/run/*overlay*` | 画面、mask、中心线、白线、边界证据 | 批量图看完即删；最多裁 1-3 张进 case |
 | debug 控制器 | `.tmp/run/team_controller_debug.py` | 本地带日志/存帧构建 | 可重建，不归档 |
 | controller console tee | `.tmp/run/webots_console/*.log` | team_controller 进程的 stdout/stderr | 不是完整 Webots/supervisor console，不保证包含碰栏/碰撞日志 |
-| Webots GUI / physics console | Webots 窗口或启动终端里的物理引擎提示 | 静态几何接触、接触点裁剪等提示 | 若出现“发生碰撞，只计算其中最重要的 N 个碰撞点”这类提示，按碰栏/静态几何接触记录 |
+| run_local/Webots launch log | `.tmp/run/webots_launch.log` | 外层启动终端 stdout/stderr | 可以保存部分 Webots 启动输出，但实测不稳定包含 GUI console 的物理接触提示，不能当作碰栏判据 |
+| Webots GUI / physics console | Webots 窗口里的物理引擎提示 | "Contact joints ... N deepest contact points" 这类撞栏提示 | 人类看到的提示现在**已可被结构化接触日志自动捕获**（见上面 `contact_*.jsonl`），不必再只靠肉眼 |
 
 `scripts/webots_run.sh` 默认就保存相机帧，所以正常情况下**每一轮都有整场帧可看，不需要为了看某个时刻重跑**。只有人类显式用 `--no-frames` 跑、或要看的窗口在 `--frame-window` 之外时才会缺帧。
+
+**撞栏接触日志（AI 终于能"看见"撞栏）**：`scripts/webots_run.sh` 默认开（`--no-contact` 关）。底层由 SDK supervisor 的 `AIRACER_CONTACT_LOG=1` 驱动，用 Webots `getContactPoints()` 记录车身-栏杆接触，写 `.tmp/run/contact_<world>.jsonl`，并往 telemetry 的 `events` 里插 `contact_start`/`contact_end`。先看汇总：
+
+```bash
+python scripts/analyze_contact_log.py .tmp/run/contact_complex.jsonl
+python scripts/analyze_contact_log.py .tmp/run/contact_complex.jsonl --window 224 231
+```
+
+判读：**峰值点数 ≥3 且 `zmax` > 0.6 = 实打实撞栏；孤立 1-2 点、`zmax`≈0.49 是发车点底盘伪接触，可忽略**。判定逻辑（接触点高于轮子簇、点数/高度/总数多信号）写在 supervisor 注释里。这是 telemetry `collision` event（只判车车）之外，唯一能判**撞栏/撞静态几何**的自动证据——优先看它，别再只靠 `lost`/`offset` 推断。
 
 调试构建命令（含 `open/json/np.save`，**禁上传**，跑 `run_local` 时配 `--skip-validate`）：
 
@@ -40,20 +51,27 @@ python scripts/build_submission.py --mode fastest \
 python scripts/analyze_telemetry.py --no-archive
 ```
 
-要一张能直接看的总览图（顶视轨迹按速度着色 + 速度-时间 + 卡住/事件标注），用：
+要一张能直接看的总览图（顶视轨迹按速度着色 + 速度-时间 + 卡住/事件/撞栏接触标注），用：
 
 ```bash
-python scripts/plot_run.py --telemetry <telemetry.jsonl> --out .tmp/run/trajectory.png --title "<R-id> <track>"
+python scripts/plot_run.py \
+  --telemetry <telemetry.jsonl> \
+  --contact-log .tmp/run/contact_<track>.jsonl \
+  --out .tmp/run/trajectory.png \
+  --title "<R-id> <track>"
 ```
 
 这张图也是报告里讲每个版本的总览图；要留进报告时按 `experiments/figures/README.md` 归档。
+接触标注规则：接触帧先按 0.3s 时间 gap 聚成 episode；如果多个 episode 的代表点在世界坐标里
+相距不超过 4.0，就合并成同一条标注，表示同一个弯角或同一段栏杆上的重复擦碰。
 
 记录：
 
 - telemetry 是否干净，是否 interleaved。
 - 末帧位置、最长爬行段、低速段。
 - 是否有 lap、finish、collision 事件。注意：本地 telemetry 的 collision 事件主要来自 supervisor 的车车距离判定；擦栏/碰栏可能不进入 telemetry 事件。
-- Webots/物理引擎 console 是否出现接触点提示。类似“发生碰撞，只计算其中最重要的 N 个碰撞点”的信息应单独记为栏杆/静态几何接触。
+- 不要要求 AI 从 `.tmp/run/webots_console/*.log` 或 `.tmp/run/webots_launch.log` 里找 Webots GUI 的接触点 warning。实测类似 `WARNING: Contact joints between materials 'default' and 'default' will only be created for the 10 deepest contact points instead of all the 12 contact points.` 的信息可能只显示在 GUI console，当前自动日志看不到。AI 离线复盘应主要看 telemetry、结构化 contact log、控制日志、帧和 overlay。
+- 若人类在 Webots GUI console 里看到接触点 warning，把它写成人工观察记录；它表示栏杆、路沿或其它静态几何接触的强线索，但自动复盘仍以 `.tmp/run/contact_*.jsonl` 为准。
 - 与观察反馈是否一致。
 
 再看控制器内部行为：
@@ -158,7 +176,7 @@ extract_observation → estimate_track → decide_control → clamp_cmd
 
 `.tmp` 的保留规则（吃过亏：R014 撞栏帧被提前清掉，下一轮只能重跑取证）：
 
-- **最近一次 run 的产物保留到被下一次 run 覆盖**。`scripts/webots_run.sh` 会自动把上一轮 `.tmp/run` 轮换成 `.tmp/run.prev`，再上一轮才删除。
+- **run 产物不会被下一次 run 覆盖，但会滚动清理**。`scripts/webots_run.sh` 会把旧 `.tmp/run` 移到 `.tmp/run.archive/run_<timestamp>/`，并把旧 SDK telemetry 移到 `.tmp/run.archive/telemetry_<world>_<timestamp>.jsonl`；同一前缀保留最新 10 个，删除第 11 个及更旧归档。`scripts/webots_jump_run.sh` 同理使用 `.tmp/jump_run.archive/`。
 - 清理前先看 `notes.md` 最新 R-id 的"下一步"：如果它依赖某个失败窗口的帧/日志，先裁进 `experiments/cases/<R-id>_<slug>/` 再删。
 - 结论写进 `experiments/` 且确认无依赖后，才做全量清理：
 

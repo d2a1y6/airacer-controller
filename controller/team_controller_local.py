@@ -10,7 +10,7 @@ from controller.estimator import estimate_track
 from controller.policy import decide_control
 from controller.perception import extract_observation
 
-PROFILE = "fastest"
+PROFILE = "unified"
 
 
 def control(left_img, right_img, timestamp):

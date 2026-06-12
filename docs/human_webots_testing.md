@@ -23,7 +23,7 @@ bash scripts/webots_run.sh basic --no-frames
 
 **默认就保存相机帧**：这样跑完后想看任意时间点都不用重跑。过去 codex 反复栽在「跑的时候没存帧 → 想看某个时刻只能开着帧再跑一整圈」上（R024→R025 就是这样浪费了一次 complex 实跑）。帧现在是无损 PNG，比旧的 `.npy` 小约 10 倍，整场默认保留也不会撑爆 `.tmp`。
 
-脚本会自动：清理孤儿 Webots / run_local 进程和旧遥测（避免 telemetry 交错）、把上一轮 `.tmp/run` 轮换成 `.tmp/run.prev`、构建带控制日志和帧存储的调试控制器、用 `--skip-validate` 启动 Webots。
+脚本会自动：清理孤儿 Webots / run_local 进程、把旧 SDK telemetry 移到 `.tmp/run.archive/`（避免 telemetry 交错）、把上一轮 `.tmp/run` 移到 `.tmp/run.archive/run_<timestamp>/`、滚动保留最近 10 个归档、构建带控制日志和帧存储的调试控制器、用 `--skip-validate` 启动 Webots。
 
 启动后终端会打印 team_controller stdout/stderr 镜像日志位置，例如：
 
@@ -37,12 +37,37 @@ AI 可以实时看：
 tail -f .tmp/run/webots_console/*.log
 ```
 
-跑完后同一个目录也能直接读取。这里抓的是 **team_controller/controller 进程里的 `stdout/stderr`**，包括学生控制器 `print` 和导入错误。它不是完整 Webots GUI console，也不是 supervisor 碰撞日志；擦栏/碰栏仍要靠肉眼、截图、overlay、车身位置和 telemetry 综合判断。
+外层 `run_local` / Webots 启动终端输出会保存到：
+
+```bash
+.tmp/run/webots_launch.log
+```
+
+这个文件能事后检索部分 Webots 启动输出，但实测不稳定包含 Webots GUI console 的物理接触提示。不要要求 AI 只靠这个文件判断碰栏。
+
+跑完后同一个目录也能直接读取。这里抓的是 **team_controller/controller 进程里的 `stdout/stderr`**，包括学生控制器 `print` 和导入错误。它不是完整 Webots GUI console，也不是 supervisor 碰撞日志；它之外的撞栏判据现在主要看下面的**结构化接触日志**。
 
 注意区分两类碰撞信号：
 
 - telemetry 的 `collision` event 主要来自 supervisor 的车车碰撞判定。
-- Webots/物理引擎 console 里类似“发生碰撞，只计算其中最重要的 N 个碰撞点”的提示，通常表示车体碰到了栏杆、路沿或其它静态几何。即使 telemetry 没有 collision event，也要把它记成碰栏/接触。
+- Webots GUI console 里那句
+  `WARNING: Contact joints between materials 'default' and 'default' will only be created for the 10 deepest contact points instead of all the N contact points.`
+  通常表示车体碰到了栏杆/路沿/静态几何。**现在这类撞栏已被结构化接触日志自动捕获**（见下），不必再只靠人眼盯 GUI console。
+
+### 撞栏接触日志（默认开，AI/人都能用）
+
+`scripts/webots_run.sh` 默认开启撞栏接触日志（要关加 `--no-contact`），跑完后产物：
+
+- `.tmp/run/contact_<world>.jsonl`：每帧车身-栏杆接触的时间、世界坐标、点数、最大高度。
+- telemetry 的 `events` 里也会插 `contact_start` / `contact_end`。
+
+跑完直接看汇总（人和 AI 都用这个，不用肉眼盯 console）：
+
+```bash
+python scripts/analyze_contact_log.py .tmp/run/contact_complex.jsonl
+```
+
+判读：**峰值点数 ≥3 且 `zmax` > 0.6 = 真撞栏**；孤立 1-2 点、`zmax`≈0.49 是发车点底盘伪接触，忽略。底层由 SDK supervisor 的 `AIRACER_CONTACT_LOG=1` 用 Webots `getContactPoints()` 实现，只在调试层、不进提交文件。
 
 调试构建含 `open/json/np.save`，只能本地跑。正式提交版不要带这些开关。
 
@@ -62,7 +87,7 @@ pkill -f webots; pkill -f run_local; sleep 1
 - 是否跑完一圈；如果没跑完，在哪里停住或撞上。
 - 车相对白线的位置：车身中心骑线、长期在线左、长期在线右、入弯切内线、出弯能否回线。
 - 撞车或撞栏对象：左/右栏杆、白车、黑车、其他。
-- Webots console 是否出现接触点提示，例如“发生碰撞，只计算其中最重要的 N 个碰撞点”。
+- 人眼是否看到 Webots GUI console 的接触点提示，例如 `WARNING: Contact joints between materials 'default' and 'default' will only be created for the 10 deepest contact points instead of all the 12 contact points.`。这条目前不是 AI 能从文件日志稳定读取的信号。
 - 异常行为：突然大幅打轮、无意义减速、原地挣扎、能否自行脱困。
 - 大致时间或位置：Webots 时间、起终点附近、第几个弯、截图。
 
@@ -105,12 +130,13 @@ R0xx human complex:
 跑完后，把观察结论告诉 AI，并说明 `.tmp/run/` 里有哪些产物。如果是 AI 自跑，也要把这些结论写进 notes 或下一步分析里，例如：
 
 - `.tmp/run/control_basic.jsonl`
-- `.tmp/run/webots_console/*.log`（team_controller stdout/stderr，不保证包含 Webots/supervisor 碰撞日志）
+- `.tmp/run/webots_console/*.log`（team_controller stdout/stderr，不包含完整 Webots/supervisor 碰撞日志）
+- `.tmp/run/webots_launch.log`（外层 run_local/Webots 启动终端输出；实测不能稳定读到 GUI console 的接触点 warning）
 - `.tmp/run/frames_basic/`
 - SDK telemetry：`/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl`
-- 如果 Webots GUI/物理引擎 console 出现接触点提示，也要把原文或大意写进反馈。
+- 如果人眼在 Webots GUI console 里看到接触点提示，也要把原文或大意写进反馈。
 
-**不要手动删 `.tmp`**。下一次 `scripts/webots_run.sh` 会自动轮换旧产物；全量清理由 AI 在确认结论已写入 `experiments/`、且 notes 的"下一步"不依赖这些产物后执行（见 `docs/ai_offline_review.md` 第 8 节）。
+**不要手动删 `.tmp`**。下一次 `scripts/webots_run.sh` 会把旧产物移到 `.tmp/run.archive/`，并滚动保留最近 10 个归档；全量清理由 AI 在确认结论已写入 `experiments/`、且 notes 的"下一步"不依赖这些产物后执行（见 `docs/ai_offline_review.md` 第 8 节）。
 
 ## 4. 正式提交版
 
@@ -119,7 +145,7 @@ R0xx human complex:
 ```bash
 python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
 python scripts/build_submission.py --mode fastest --out submissions/fastest/team_controller.py
-python scripts/build_submission.py --mode safe --out submissions/safe/team_controller.py
+python scripts/build_submission.py --mode safe --out submissions/safe/team_controller.py  # 兼容输出名；策略内容相同
 
 pytest -q
 python scripts/validate_submission.py submissions/final/team_controller.py

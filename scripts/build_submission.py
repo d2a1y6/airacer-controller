@@ -2,7 +2,7 @@
 
 功能概述：把 `controller/` 的模块化代码合并成单个 `team_controller.py`。
 输入输出：读取本地控制器源码，输出平台可上传的自包含文件。
-处理流程：按固定顺序拼接模块，删除本地 import，把 `PROFILE` 固定为命令传入的模式。
+处理流程：按固定顺序拼接模块，删除本地 import，保留统一策略入口。
 """
 
 from __future__ import annotations
@@ -223,16 +223,14 @@ def read_module(
     """读取并清理控制器模块。
 
     功能：按文件名读取 `controller/` 下的模块源码。
-    参数：`name` 是模块文件名，`mode` 是构建策略；调试参数非空时注入本地探针。
+    参数：`name` 是模块文件名，`mode` 仅决定默认输出路径；调试参数非空时注入本地探针。
     返回：可拼接到提交文件中的源码片段。
-    逻辑：读取文本后移除本地 import；入口模块里把 PROFILE 替换为固定模式，并按需注入调试日志。
+    逻辑：读取文本后移除本地 import；策略固定为 unified，并按需注入调试日志。
     """
 
     source = (CONTROLLER_DIR / name).read_text(encoding="utf-8")
     source = strip_local_imports(source)
     if name == "team_controller_local.py":
-        source = source.replace('PROFILE = "fastest"', f'PROFILE = "{mode}"')
-        source = source.replace('PROFILE = "safe"', f'PROFILE = "{mode}"')
         if debug_log or dump_frames:
             header_lines = _debug_console_tee_header()
             if debug_log:
@@ -286,8 +284,8 @@ def build_source(
 ) -> str:
     """构建单文件控制器源码。
 
-    功能：为指定模式生成自包含 Python 源码。
-    参数：`mode` 为构建模式；调试参数非空则生成本地调试构建。
+    功能：生成自包含 Python 源码。
+    参数：`mode` 仅决定默认输出路径；调试参数非空则生成本地调试构建。
     返回：完整源码字符串。
     逻辑：写入允许 import，再按契约顺序拼接所有控制器模块。
     """
@@ -323,7 +321,7 @@ def parse_args():
     功能：读取构建模式和输出路径。
     参数：无。
     返回：`argparse.Namespace`。
-    逻辑：模式只允许 fastest 和 safe，未指定输出时写入对应 submissions 目录。
+    逻辑：模式只允许 fastest 和 safe，未指定输出时写入对应 submissions 目录；策略内容统一。
     """
 
     parser = argparse.ArgumentParser(description="Build single-file AI Racer submission.")
