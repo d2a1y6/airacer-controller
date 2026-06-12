@@ -113,9 +113,9 @@ speed = 1.0：最大速度比例
 
 本组准备两套控制策略。两套策略使用完全相同的提交接口，区别在内部控制逻辑和参数选择。
 
-### 5.1 `fastest`：单车最快完赛
+### 5.1 `no_other_cars`：无其他车策略
 
-`fastest` 适用于只要求本车完成赛道、没有其他车辆同场干扰的考核方式。
+`no_other_cars` 适用于只要求本车完成赛道、没有其他车辆同场干扰的考核方式。当前仓库已经实现并主要维护这套策略。
 
 目标：
 
@@ -138,9 +138,9 @@ speed = 1.0：最大速度比例
 
 单车场景下不需要重点考虑其他车辆、抢线、避让和碰撞风险。因此可以更关注路线效率和速度上限。但过于激进的速度会导致弯道失控、丢线或冲出赛道，最终反而影响完赛。
 
-### 5.2 `safe`：多车/碰撞稳健
+### 5.2 `with_other_cars`：有其他车策略
 
-`safe` 适用于平台按正式竞赛规则运行、多辆车同场比赛的情况。
+`with_other_cars` 适用于平台按正式竞赛规则运行、多辆车同场比赛的情况。当前只保留接口名，避让和抢线逻辑还没有实现。
 
 目标：
 
@@ -166,7 +166,11 @@ speed = 1.0：最大速度比例
 
 ### 5.3 两套策略如何提交
 
-两套策略都写成 `team_controller.py` 形式，入口都是 `control()`。可以把不同版本上传到不同槽位：
+两套策略都写成 `team_controller.py` 形式，入口都是 `control()`。当前可生成的是 `no_other_cars`；`with_other_cars` 入口会显式报未实现，避免误以为已经有多车避让策略。
+
+平台或历史脚本里可能还会出现 `fastest`、`safe`、`final` 这些名字。它们现在只当作旧输出名或提交槽位名，不代表三套不同控制逻辑。需要上传时，把已经验证过的 `no_other_cars` 版本生成到对应槽位即可。
+
+平台槽位可以按比赛安排使用，例如：
 
 ```text
 main：稳定完赛版本
@@ -414,17 +418,19 @@ controller/policy.py      : TrackState -> ControlCmd
 - `TrackState`：横向偏移、方向误差、曲率、前瞻误差、置信度和丢线状态。
 - `ControlCmd`：转向和速度命令。
 
-生成策略版本：
+生成当前无其他车策略：
 
 ```bash
-python scripts/build_submission.py --mode fastest
-python scripts/build_submission.py --mode safe
+python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
 ```
 
-生成当前准备上传的最终版本：
+`with_other_cars` 还没实现。不要把旧的 `fastest` / `safe` 当成新策略目标；它们只用于兼容旧输出路径。
+
+生成旧输出名兼容文件时，可以显式指定输出路径：
 
 ```bash
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/fastest/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/safe/team_controller.py
 ```
 
 校验：

@@ -17,7 +17,7 @@ def _run_frozen(track: TrackState, frames: int = 80) -> float:
     t = 0.0
     for _ in range(frames):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(track, t, mode="fastest")
+        cmd = decide_control(track, t, mode="no_other_cars")
         max_speed = max(max_speed, cmd.speed)
     return max_speed
 
@@ -57,7 +57,7 @@ def test_pinned_left_margin_escapes_right_even_if_geometry_points_left():
     max_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck_left, t, mode="fastest")
+        cmd = decide_control(stuck_left, t, mode="no_other_cars")
         max_steer = max(max_steer, cmd.steering)
 
     assert max_steer >= CONTROL["max_abs_steering"] - 1e-6
@@ -82,7 +82,7 @@ def test_pinned_right_margin_escapes_left_even_if_geometry_points_right():
     min_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck_right, t, mode="fastest")
+        cmd = decide_control(stuck_right, t, mode="no_other_cars")
         min_steer = min(min_steer, cmd.steering)
 
     assert min_steer <= -CONTROL["max_abs_steering"] + 1e-6
@@ -105,7 +105,7 @@ def test_centered_frozen_view_does_not_force_pinned_escape():
     max_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(centered, t, mode="fastest")
+        cmd = decide_control(centered, t, mode="no_other_cars")
         max_steer = max(max_steer, abs(cmd.steering))
     assert max_steer < 0.3
 
@@ -132,7 +132,7 @@ def test_boundary_obstacle_stall_escapes_toward_open_margin():
     min_steer = 0.0
     for _ in range(40):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck, t, mode="fastest")
+        cmd = decide_control(stuck, t, mode="no_other_cars")
         max_speed = max(max_speed, cmd.speed)
         min_steer = min(min_steer, cmd.steering)
 
@@ -159,7 +159,7 @@ def test_near_obstacle_with_normal_margins_does_not_boundary_escape():
     max_steer = 0.0
     for _ in range(40):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(clear, t, mode="fastest")
+        cmd = decide_control(clear, t, mode="no_other_cars")
         max_steer = max(max_steer, abs(cmd.steering))
 
     assert max_steer < 0.30

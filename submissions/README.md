@@ -4,16 +4,17 @@
 
 | 目录 | 用途 |
 |---|---|
-| `final/` | 当前准备提交/正式验证的版本。 |
-| `fastest/` | fastest slot 版本。 |
-| `safe/` | safe slot 版本。当前参数通常和 fastest 相同，除非明确分流。 |
+| `final/` | 当前准备提交/正式验证的无其他车策略。 |
+| `fastest/` | 旧 fastest slot 兼容输出名；实际仍是 `no_other_cars`。 |
+| `safe/` | 旧 safe slot 兼容输出名；实际仍是 `no_other_cars`。 |
+| `with_other_cars/` | 预留给有其他车策略；目前未实现。 |
 
 常用构建：
 
 ```bash
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
-python scripts/build_submission.py --mode fastest --out submissions/fastest/team_controller.py
-python scripts/build_submission.py --mode safe --out submissions/safe/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/fastest/team_controller.py  # 兼容旧输出目录
+python scripts/build_submission.py --mode no_other_cars --out submissions/safe/team_controller.py     # 兼容旧输出目录
 ```
 
 提交前至少跑：

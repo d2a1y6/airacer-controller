@@ -22,25 +22,25 @@ def make_track(
     return TrackState(lateral, heading, curvature, lookahead, confidence, lost, red_environment)
 
 
-def warm_policy(track, mode="fastest", steps=24):
+def warm_policy(track, mode="no_other_cars", steps=24):
     cmd = None
     for index in range(steps):
         cmd = decide_control(track, index * 0.05, mode=mode)
     return cmd
 
 
-def test_high_confidence_straight_fastest_runs_fast_and_straight():
+def test_high_confidence_straight_no_other_cars_runs_fast_and_straight():
     reset_policy_state()
-    cmd = warm_policy(make_track(), mode="fastest")
+    cmd = warm_policy(make_track(), mode="no_other_cars")
     assert abs(cmd.steering) < 0.03
     assert cmd.speed > 0.55
 
 
 def test_lateral_offset_controls_sign():
     reset_policy_state()
-    right_cmd = warm_policy(make_track(lateral=0.35), mode="fastest")
+    right_cmd = warm_policy(make_track(lateral=0.35), mode="no_other_cars")
     reset_policy_state()
-    left_cmd = warm_policy(make_track(lateral=-0.35), mode="fastest")
+    left_cmd = warm_policy(make_track(lateral=-0.35), mode="no_other_cars")
 
     assert right_cmd.steering > 0.05
     assert left_cmd.steering < -0.05
@@ -48,11 +48,11 @@ def test_lateral_offset_controls_sign():
 
 def test_curves_control_sign_and_reduce_speed():
     reset_policy_state()
-    straight = warm_policy(make_track(), mode="fastest")
+    straight = warm_policy(make_track(), mode="no_other_cars")
     reset_policy_state()
-    right_curve = warm_policy(make_track(lateral=0.70, heading=0.25, curvature=0.35, lookahead=0.30), mode="fastest")
+    right_curve = warm_policy(make_track(lateral=0.70, heading=0.25, curvature=0.35, lookahead=0.30), mode="no_other_cars")
     reset_policy_state()
-    left_curve = warm_policy(make_track(lateral=-0.70, heading=-0.25, curvature=-0.35, lookahead=-0.30), mode="fastest")
+    left_curve = warm_policy(make_track(lateral=-0.70, heading=-0.25, curvature=-0.35, lookahead=-0.30), mode="no_other_cars")
 
     assert right_curve.steering > 0.05
     assert left_curve.steering < -0.05
@@ -71,7 +71,7 @@ def test_lost_track_uses_lost_speed():
             confidence=0.0,
             lost=True,
         ),
-        mode="fastest",
+        mode="no_other_cars",
         steps=6,
     )
     assert abs(cmd.speed - CONTROL["lost_speed"]) < 0.03
@@ -81,18 +81,18 @@ def test_lost_track_uses_lost_speed():
 def test_recent_straight_lost_track_keeps_speed():
     reset_policy_state()
     straight = make_track(confidence=0.85)
-    cmd = warm_policy(straight, mode="fastest", steps=32)
+    cmd = warm_policy(straight, mode="no_other_cars", steps=32)
     assert cmd.speed >= 0.90
 
     lost = make_track(confidence=0.0, lost=True)
-    coast = decide_control(lost, 1.70, mode="fastest")
+    coast = decide_control(lost, 1.70, mode="no_other_cars")
     assert coast.speed >= 0.90
 
 
 def test_centered_lost_straight_coasts_fast_without_memory():
     reset_policy_state()
     lost = make_track(confidence=0.0, lost=True)
-    cmd = warm_policy(lost, mode="fastest", steps=20)
+    cmd = warm_policy(lost, mode="no_other_cars", steps=20)
     assert cmd.speed >= 0.90
 
 
@@ -106,39 +106,33 @@ def test_lost_corner_does_not_use_straight_coast():
         confidence=0.0,
         lost=True,
     )
-    cmd = warm_policy(turn_lost, mode="fastest", steps=4)
+    cmd = warm_policy(turn_lost, mode="no_other_cars", steps=4)
     assert abs(cmd.speed - CONTROL["lost_speed"]) < 0.03
 
 
 def test_low_confidence_stays_slow():
     reset_policy_state()
     track = make_track(heading=0.24, curvature=0.28, lookahead=0.25, confidence=0.20)
-    cmd = warm_policy(track, mode="fastest", steps=12)
-    assert cmd.speed <= get_profile("fastest")["recovery_speed"]
+    cmd = warm_policy(track, mode="no_other_cars", steps=12)
+    assert cmd.speed <= get_profile("no_other_cars")["recovery_speed"]
 
 
-def test_all_profile_names_use_same_control_parameters():
-    track = make_track(lateral=0.20, heading=0.15, curvature=0.22, lookahead=0.18, confidence=0.85)
-    reset_policy_state()
-    fastest = warm_policy(track, mode="fastest")
-    reset_policy_state()
-    safe = warm_policy(track, mode="safe")
-    reset_policy_state()
-    unknown = warm_policy(track, mode="unknown")
-
-    assert safe.speed == fastest.speed
-    assert safe.steering == fastest.steering
-    assert unknown.speed == fastest.speed
-    assert unknown.steering == fastest.steering
+def test_legacy_profile_names_are_not_current_strategy_names():
+    for mode in ("fastest", "safe", "final", "unknown"):
+        try:
+            warm_policy(make_track(), mode=mode)
+        except ValueError:
+            continue
+        raise AssertionError(f"{mode} should not be accepted as a current strategy name")
 
 
 def test_basic_and_complex_flags_use_same_policy_parameters():
     base = make_track(lateral=0.18, heading=0.12, curvature=0.20, lookahead=0.16, confidence=0.80, red_environment=False)
     red = make_track(lateral=0.18, heading=0.12, curvature=0.20, lookahead=0.16, confidence=0.80, red_environment=True)
     reset_policy_state()
-    basic_cmd = warm_policy(base, mode="fastest")
+    basic_cmd = warm_policy(base, mode="no_other_cars")
     reset_policy_state()
-    complex_cmd = warm_policy(red, mode="safe")
+    complex_cmd = warm_policy(red, mode="no_other_cars")
 
     assert complex_cmd.speed == basic_cmd.speed
     assert complex_cmd.steering == basic_cmd.steering
@@ -146,17 +140,17 @@ def test_basic_and_complex_flags_use_same_policy_parameters():
 
 def test_timestamp_reset_discards_speed_state():
     reset_policy_state()
-    fast = warm_policy(make_track(), mode="fastest", steps=20)
+    fast = warm_policy(make_track(), mode="no_other_cars", steps=20)
     assert fast.speed > 0.45
 
-    reset_cmd = decide_control(make_track(), 0.10, mode="fastest")
+    reset_cmd = decide_control(make_track(), 0.10, mode="no_other_cars")
     assert reset_cmd.speed < fast.speed
     assert reset_cmd.speed <= 0.20
 
 
 def test_inside_margin_guard_is_noop_by_default():
     # R014 实车证明默认开启边界余量保护既没拦住撞栏又引入无意义打轮，默认参数应为 no-op。
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     normal = make_track(lateral=0.16, heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
     close_right = make_track(lateral=0.16, heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
     close_right.right_margin_near = profile["inside_margin_warning"] * 0.35
@@ -168,7 +162,7 @@ def test_inside_margin_guard_is_noop_by_default():
 
 
 def test_inside_margin_limits_steering_toward_guardrail_when_enabled():
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     profile["inside_margin_outward_gain"] = 0.32
     profile["inside_margin_steering_cap"] = 0.42
     normal = make_track(lateral=0.16, heading=0.24, curvature=0.32, lookahead=0.28, red_environment=True)
@@ -192,9 +186,9 @@ def test_confident_line_adds_bounded_post_hoc_steering_correction():
     lined.line_confidence = 0.80
 
     reset_policy_state()
-    base_cmd = warm_policy(base, mode="fastest")
+    base_cmd = warm_policy(base, mode="no_other_cars")
     reset_policy_state()
-    lined_cmd = warm_policy(lined, mode="fastest")
+    lined_cmd = warm_policy(lined, mode="no_other_cars")
 
     expected = (
         lined.line_offset * LINE_FOLLOW_PROFILE["offset_gain"]
@@ -217,8 +211,8 @@ def test_single_frame_line_detection_adds_no_correction():
     flicker.line_confidence = 0.80
 
     for index in range(20):
-        decide_control(base, index * 0.05, mode="fastest")
-    cmd = decide_control(flicker, 20 * 0.05, mode="fastest")
+        decide_control(base, index * 0.05, mode="no_other_cars")
+    cmd = decide_control(flicker, 20 * 0.05, mode="no_other_cars")
 
     assert abs(cmd.steering) < 0.02
 
@@ -233,9 +227,9 @@ def test_implausible_large_line_offset_is_rejected():
     rail.line_confidence = 0.80
 
     reset_policy_state()
-    base_cmd = warm_policy(make_track(), mode="fastest")
+    base_cmd = warm_policy(make_track(), mode="no_other_cars")
     reset_policy_state()
-    rail_cmd = warm_policy(rail, mode="fastest")
+    rail_cmd = warm_policy(rail, mode="no_other_cars")
 
     assert abs(rail_cmd.steering - base_cmd.steering) < 1e-6
 
@@ -250,9 +244,9 @@ def test_startup_line_acquisition_allows_right_side_line():
     lined.line_confidence = 0.80
 
     reset_policy_state()
-    base_cmd = warm_policy(base, mode="fastest", steps=8)
+    base_cmd = warm_policy(base, mode="no_other_cars", steps=8)
     reset_policy_state()
-    lined_cmd = warm_policy(lined, mode="fastest", steps=8)
+    lined_cmd = warm_policy(lined, mode="no_other_cars", steps=8)
 
     assert lined_cmd.steering > base_cmd.steering + 0.08
 
@@ -266,9 +260,9 @@ def test_trusted_offcenter_line_can_steer_left_after_phase2():
     lined.line_confidence = 0.80
 
     reset_policy_state()
-    base_cmd = warm_policy(make_track(red_environment=True), mode="fastest", steps=8)
+    base_cmd = warm_policy(make_track(red_environment=True), mode="no_other_cars", steps=8)
     reset_policy_state()
-    lined_cmd = warm_policy(lined, mode="fastest", steps=8)
+    lined_cmd = warm_policy(lined, mode="no_other_cars", steps=8)
 
     assert lined_cmd.steering < base_cmd.steering - 0.08
 
@@ -282,7 +276,7 @@ def test_offcenter_line_remains_valid_after_startup_window():
 
     reset_policy_state()
     for index in range(8):
-        cmd = decide_control(lined, 15.0 + index * 0.05, mode="fastest")
+        cmd = decide_control(lined, 15.0 + index * 0.05, mode="no_other_cars")
 
     assert cmd.steering > 0.08
 
@@ -295,9 +289,9 @@ def test_line_correction_suppressed_near_obstacle():
     blocked.near_obstacle = True
 
     reset_policy_state()
-    base_cmd = warm_policy(make_track(), mode="fastest")
+    base_cmd = warm_policy(make_track(), mode="no_other_cars")
     reset_policy_state()
-    blocked_cmd = warm_policy(blocked, mode="fastest")
+    blocked_cmd = warm_policy(blocked, mode="no_other_cars")
 
     assert abs(blocked_cmd.steering - base_cmd.steering) < 1e-6
 
@@ -311,9 +305,9 @@ def test_line_correction_suppressed_in_sharp_turn():
     lined_turn.line_confidence = 0.80
 
     reset_policy_state()
-    base_cmd = warm_policy(turn, mode="fastest")
+    base_cmd = warm_policy(turn, mode="no_other_cars")
     reset_policy_state()
-    lined_cmd = warm_policy(lined_turn, mode="fastest")
+    lined_cmd = warm_policy(lined_turn, mode="no_other_cars")
 
     assert abs(lined_cmd.steering - base_cmd.steering) < 1e-6
 
@@ -328,9 +322,9 @@ def test_large_offset_line_keeps_recenter_correction_in_left_turn():
     lined.line_confidence = 0.80
 
     reset_policy_state()
-    base_cmd = warm_policy(base, mode="fastest", steps=8)
+    base_cmd = warm_policy(base, mode="no_other_cars", steps=8)
     reset_policy_state()
-    lined_cmd = warm_policy(lined, mode="fastest", steps=8)
+    lined_cmd = warm_policy(lined, mode="no_other_cars", steps=8)
 
     assert lined_cmd.steering > base_cmd.steering + 0.05
 
@@ -341,7 +335,7 @@ def test_geometry_escape_requires_low_speed():
     reset_policy_state()
     cornering = make_track(heading=0.50, curvature=0.30, lookahead=0.50, red_environment=True)
     for index in range(60):
-        decide_control(cornering, index * 0.05, mode="fastest")
+        decide_control(cornering, index * 0.05, mode="no_other_cars")
         assert policy._LAST_MODE != "escaping"
 
 
@@ -357,7 +351,7 @@ def test_centered_complex_turn_in_keeps_wide_radius():
         confidence=0.53,
         red_environment=True,
     )
-    cmd = warm_policy(approach, mode="fastest", steps=10)
+    cmd = warm_policy(approach, mode="no_other_cars", steps=10)
     # 车几乎居中（lateral≈0）→ R044 入弯门控把远处项压到≈0 → 几乎不提前转（半径更大）。
     assert abs(cmd.steering) < 0.06
 
@@ -366,10 +360,10 @@ def test_hard_turn_requires_consecutive_frames():
     reset_policy_state()
     track = make_track(heading=0.28, curvature=0.35, lookahead=0.32, red_environment=True)
 
-    decide_control(track, 0.00, mode="fastest")
+    decide_control(track, 0.00, mode="no_other_cars")
     assert policy._LAST_MODE != "hard_turn"
 
-    decide_control(track, 0.05, mode="fastest")
+    decide_control(track, 0.05, mode="no_other_cars")
     assert policy._LAST_MODE == "hard_turn"
 
 
@@ -389,9 +383,9 @@ def test_sustained_inside_turn_line_strengthens_outward_correction():
     CONTROL["corner_relief_enable"] = False
     try:
         reset_policy_state()
-        base_cmd = warm_policy(base, mode="fastest", steps=10)
+        base_cmd = warm_policy(base, mode="no_other_cars", steps=10)
         reset_policy_state()
-        lined_cmd = warm_policy(lined, mode="fastest", steps=10)
+        lined_cmd = warm_policy(lined, mode="no_other_cars", steps=10)
     finally:
         CONTROL["corner_relief_enable"] = saved
 
@@ -410,13 +404,13 @@ def test_inside_turn_correction_holds_through_brief_line_dropout():
     turn.line_confidence = 0.85
 
     reset_policy_state()
-    warm_policy(turn, mode="fastest", steps=10)
+    warm_policy(turn, mode="no_other_cars", steps=10)
     held = policy._LINE_CORRECTION
     assert held > 0.10
 
     dropout = make_track(heading=-0.70, curvature=-0.30, lookahead=-0.45, confidence=0.6, red_environment=True)
     dropout.line_confidence = 0.0
-    decide_control(dropout, 10 * 0.05, mode="fastest")
+    decide_control(dropout, 10 * 0.05, mode="no_other_cars")
     assert policy._LINE_CORRECTION > held * 0.7
 
 
@@ -432,9 +426,9 @@ def test_inside_assist_inactive_when_line_and_heading_agree():
     lined.line_confidence = 0.85
 
     reset_policy_state()
-    base_cmd = warm_policy(base, mode="fastest", steps=10)
+    base_cmd = warm_policy(base, mode="no_other_cars", steps=10)
     reset_policy_state()
-    lined_cmd = warm_policy(lined, mode="fastest", steps=10)
+    lined_cmd = warm_policy(lined, mode="no_other_cars", steps=10)
 
     correction = lined_cmd.steering - base_cmd.steering
     # 同号时只有常规混合修正，不含 R039 向外辅助；上限不超过 max_correction。
@@ -446,7 +440,7 @@ def test_corner_relief_reduces_far_term_when_line_shows_inside():
     # 应在源头削弱远处项→同样几何下舵角更小（半径更大），而不是靠事后修正硬顶。
     from controller.params import get_profile
 
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     # 左弯：远处预瞄强烈向左（负），白线 offset 正（线在右=车在内侧左），二者反号 = 切内。
     inside = make_track(lateral=-0.30, heading=-0.65, curvature=0.0, lookahead=-0.55, confidence=0.7, red_environment=True)
     inside.line_offset = 0.55
@@ -469,7 +463,7 @@ def test_corner_relief_inactive_without_confident_line():
     # 守护：没有可信白线时 relief 不动远处项，正常急弯舵角不被削弱。
     from controller.params import get_profile
 
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     turn = make_track(heading=-0.65, curvature=0.0, lookahead=-0.55, confidence=0.7, red_environment=True)
     turn.line_confidence = 0.0
     signals = _control_signals(turn, profile)
@@ -487,7 +481,7 @@ def test_corner_relief_holds_through_offset_sign_flip():
     # 触发后应迟滞保持，使 trough 帧的远处项仍被压住——这正是 t≈228 撞内栏过冲的成因。
     from controller.params import get_profile
 
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     inside = make_track(lateral=-0.30, heading=-0.65, curvature=0.0, lookahead=-0.55, confidence=0.7, red_environment=True)
     inside.line_offset = 0.55
     inside.line_heading = -0.80
@@ -517,7 +511,7 @@ def test_turn_in_suppressed_when_car_still_centered_on_approach():
     # 舵角很小（晚转）。
     from controller.params import get_profile
 
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     approach = make_track(lateral=0.0, heading=-0.45, curvature=0.0, lookahead=-0.30,
                           confidence=0.7, red_environment=True)
     signals = _control_signals(approach, profile)
@@ -530,7 +524,7 @@ def test_turn_in_opens_once_car_has_drifted_into_corner():
     # R042：一旦车真的到弯口、开始偏离（lateral 长起来），门应放开，让车"晚而狠"地转。
     from controller.params import get_profile
 
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     arrived = make_track(lateral=-0.30, heading=-0.45, curvature=0.0, lookahead=-0.30,
                          confidence=0.7, red_environment=True)
     signals = _control_signals(arrived, profile)
@@ -544,7 +538,7 @@ def test_turn_in_latch_sustains_turn_through_midcorner_lateral_dip():
     # 否则车转一半忽然收轮、转不到位、半径变大。latch 保持 → trough 帧仍打实左舵。
     from controller.params import get_profile
 
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     deep = make_track(lateral=-0.40, heading=-0.80, curvature=0.0, lookahead=-0.60,
                       confidence=0.7, red_environment=True)        # 已深入弯、lateral 大
     dip = make_track(lateral=-0.03, heading=-0.80, curvature=0.0, lookahead=-0.60,
@@ -568,7 +562,7 @@ def test_turn_in_gate_is_pure_lateral_no_sharpness_modulation():
     # 与 curve_risk 无关——同样的 lateral 漂移，不论远处弯多急，门控缩放一致。
     from controller.params import get_profile
 
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
     gentle = make_track(lateral=-0.20, heading=-0.30, curvature=0.0, lookahead=-0.25,
                         confidence=0.7, red_environment=True)   # curve_risk ≈ 0.30
     sharp = make_track(lateral=-0.20, heading=-0.95, curvature=0.0, lookahead=-0.90,

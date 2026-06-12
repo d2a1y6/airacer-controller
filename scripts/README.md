@@ -6,13 +6,13 @@
 
 | 脚本 | 输入 | 输出 | 用途 |
 |---|---|---|---|
-| `build_submission.py` | `controller/` 源码、`--mode fastest|safe` | 单文件 `team_controller.py` | 生成上传版或调试版控制器；`--mode` 只决定默认输出路径，策略内容相同 |
+| `build_submission.py` | `controller/` 源码、`--mode no_other_cars|with_other_cars` | 单文件 `team_controller.py` | 生成上传版或调试版控制器；当前只实现 `no_other_cars`，`with_other_cars` 入口已留但未实现 |
 | `validate_submission.py` | 单文件 controller | 终端校验结果 | 本仓库接口、静态规则、mock 输出检查 |
 
 常用命令：
 
 ```bash
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
 python scripts/validate_submission.py submissions/final/team_controller.py
 pytest -q
 ```
@@ -20,7 +20,7 @@ pytest -q
 调试构建可以加控制日志和相机帧输出，但不能上传：
 
 ```bash
-python scripts/build_submission.py --mode fastest \
+python scripts/build_submission.py --mode no_other_cars \
   --debug-log .tmp/run/control_complex.jsonl \
   --dump-frames .tmp/run/frames_complex \
   --dump-frame-stride 10 \

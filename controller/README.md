@@ -26,7 +26,7 @@ left_img/right_img
 改控制行为前先读根目录 `CLAUDE.md` 和 `experiments/STATUS.md`。改完通常要跑：
 
 ```bash
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
 python scripts/validate_submission.py submissions/final/team_controller.py
 pytest -q
 ```

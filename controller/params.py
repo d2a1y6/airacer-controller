@@ -1,9 +1,12 @@
 """策略参数配置。
 
 功能概述：集中保存采样色卡、视觉、估计和控制策略参数。
-输入输出：输入任意 profile 名称，输出同一套控制参数。
-处理流程：先定义从 Webots 原图采样得到的颜色配置，再定义感知、估计和控制参数。
+输入输出：输入策略名称，输出对应控制参数。
+处理流程：先定义从 Webots 原图采样得到的颜色配置，再定义无其他车策略；有其他车策略仅留占位。
 """
+
+STRATEGY_NO_OTHER_CARS = "no_other_cars"
+STRATEGY_WITH_OTHER_CARS = "with_other_cars"
 
 COLOR_PROFILE = {
     # 采样来源：.tmp/color_sample/color_samples.json，来自 complex/basic 原始相机帧。
@@ -105,7 +108,7 @@ VISION_PROFILE = {
 }
 
 OPPONENT_PROFILE = {
-    "enable_opponent_avoidance": True,
+    "enable_opponent_avoidance": False,
     "near_obstacle_segment_gap": 28.0,
     "near_obstacle_min_timestamp": 0.0,
     "near_obstacle_scan_y_ratio": 0.54,
@@ -273,7 +276,7 @@ ESTIMATOR_PROFILE = {
     "timestamp_reset_gap": 2.0,
 }
 
-CONTROL = {
+NO_OTHER_CARS_CONTROL = {
     "base_speed": 0.96,
     "max_speed": 1.00,
     "min_speed": 0.16,
@@ -427,14 +430,24 @@ CONTROL = {
     "timestamp_reset_gap": 2.0,
 }
 
+# 有其他车策略尚未实现。这里保留命名入口，避免继续把旧名字当成策略名。
+WITH_OTHER_CARS_CONTROL = None
+
+# 兼容旧测试和局部脚本里直接导入 CONTROL 的用法。新代码应使用 NO_OTHER_CARS_CONTROL。
+CONTROL = NO_OTHER_CARS_CONTROL
+
 def get_profile(name: str) -> dict:
     """读取控制 profile。
 
-    功能：为顶层控制器提供当前唯一维护的控制参数。
-    参数：`name` 保留兼容构建脚本和提交文件中的旧模式标记。
-    返回：`CONTROL` 参数字典的浅拷贝。
-    逻辑：所有模式、赛道和提交文件都返回同一套参数；不再维护 basic/fastest/safe 分支。
+    功能：为顶层控制器提供当前选择的策略参数。
+    参数：`name` 是策略名，目前只接受 no_other_cars / with_other_cars。
+    返回：策略参数字典的浅拷贝。
+    逻辑：当前只实现无其他车策略；有其他车策略保留名称但显式报未实现。
     """
 
-    del name
-    return dict(CONTROL)
+    profile_name = str(name)
+    if profile_name == STRATEGY_NO_OTHER_CARS:
+        return dict(NO_OTHER_CARS_CONTROL)
+    if profile_name == STRATEGY_WITH_OTHER_CARS:
+        raise NotImplementedError("with_other_cars strategy is not implemented yet")
+    raise ValueError(f"unknown strategy profile: {name}")

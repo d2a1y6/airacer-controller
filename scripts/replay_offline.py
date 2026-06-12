@@ -67,7 +67,7 @@ def iter_frame_pairs(frame_dir: Path) -> list[tuple[float, Path, Path]]:
     return pairs
 
 
-def replay_frames(frame_dir: Path, out_path: Path, mode: str = "fastest", limit: int | None = None) -> int:
+def replay_frames(frame_dir: Path, out_path: Path, mode: str = "no_other_cars", limit: int | None = None) -> int:
     """执行开环回放并写出 control 日志同 schema JSONL。
 
     功能：把保存帧转成可被 `analyze_control_log.py` 直接分析的日志。
@@ -165,7 +165,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="离线开环回放 P2.5 保存的左右相机帧。")
     parser.add_argument("frames", type=Path, help="包含 frame_<t>_left.png/right.png 的目录")
     parser.add_argument("--out", type=Path, required=True, help="输出 control 同 schema JSONL")
-    parser.add_argument("--mode", choices=("fastest", "safe"), default="fastest")
+    parser.add_argument(
+        "--mode",
+        choices=("no_other_cars", "with_other_cars"),
+        default="no_other_cars",
+        help="策略名；with_other_cars 尚未实现",
+    )
     parser.add_argument("--limit", type=int, default=None, help="最多回放多少帧，默认不限")
     return parser.parse_args()
 

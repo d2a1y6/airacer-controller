@@ -20,10 +20,10 @@ def control(left_img, right_img, timestamp):
 pip install -r requirements.txt
 
 # 修改 controller/ 后重新构建
-python scripts/build_submission.py --mode fastest
+python scripts/build_submission.py --mode no_other_cars
 
 # 生成准备上传的最终版本
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
 
 # 本地校验 + 测试
 python scripts/validate_submission.py submissions/final/team_controller.py
@@ -54,6 +54,8 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 官方 SDK 和 Webots 安装见 [docs/official_testing.md](docs/official_testing.md)。AI 或人类跑 Webots 时读 [docs/human_webots_testing.md](docs/human_webots_testing.md)；AI 用日志、telemetry、帧和截图复盘时读 [docs/ai_offline_review.md](docs/ai_offline_review.md)。脚本入口和诊断工具速查见 [scripts/README.md](scripts/README.md)。
 
 **新会话接手前先读 [experiments/STATUS.md](experiments/STATUS.md)**：它是唯一的活动交接文档（当前状态、铁律、未解问题、下一步），每轮工作结束时就地更新，不要另建 handoff 文件。实验目录怎么留档见 [experiments/README.md](experiments/README.md)；case 和 figure 的细则分别见 `experiments/cases/README.md`、`experiments/figures/README.md`。
+
+**每个有意义的 Webots / 平台 run 分析完后，AI 默认要同步记账**：结构化结果写 `experiments/runs.csv`，叙事诊断写 `experiments/notes.md`。不需要用户单独提醒。误启动、脚本没真正开始、超短无信息、重复跑同一版本且没有新现象，可以不记，但要在回复里说清楚为什么不记。
 
 ## 工作约定（经验为主，不限制"改哪里"）
 
@@ -89,13 +91,13 @@ left_img, right_img
 | `opponent.py` | 近处车身检测 | 道路分割或控制决策 |
 | `team_controller_local.py` | 接线、异常兜底、最终限幅 | 算法实现 |
 
-`opponent.py` 的 `detect_near_vehicle_obstacle` 由 `OPPONENT_PROFILE["enable_opponent_avoidance"]` 控制；当前为开启，用于 basic/complex 近处静态车避让。
+`opponent.py` 的 `detect_near_vehicle_obstacle` 只作为后续有其他车策略的感知工具保留；当前 `no_other_cars` 策略默认不启用它。
 
 ## 关键约定
 
 **误差符号**：左负右正。图像坐标按 OpenCV：`x` 向右，`y` 向下。
 
-**参数唯一源**：所有控制参数集中在 `params.py`，不在模块内硬编码调参值。当前只维护一套 unified 策略；`fastest` / `safe` / `basic` 不再有独立参数分支。
+**参数唯一源**：所有控制参数集中在 `params.py`，不在模块内硬编码调参值。当前实现的是 `no_other_cars` 策略；`with_other_cars` 只留命名入口，尚未实现。`fastest` / `safe` / `final` 只可能出现在旧输出目录、平台槽位或历史记录里，不再是策略名。
 
 **场景感知**：`estimator.py` 会在连续红色环境帧后锁存 `red_environment = True`（写入 `TrackState`）。它现在是感知/诊断特征，不再用于切换 basic/complex 控制参数。单帧误检不会触发锁存；`reset_estimator_state()` 或时间戳回退会清空。
 
@@ -103,12 +105,12 @@ left_img, right_img
 
 ## 构建机制
 
-`scripts/build_submission.py` 按固定顺序拼接 `controller/` 各模块（`common → params → opponent → perception → estimator → policy → team_controller_local`），删除本地 import，输出自包含的单文件。`--mode` 只保留为旧工作流和默认输出路径兼容，不再改变策略内容。
+`scripts/build_submission.py` 按固定顺序拼接 `controller/` 各模块（`common → params → opponent → perception → estimator → policy → team_controller_local`），删除本地 import，输出自包含的单文件。`--mode no_other_cars` 是当前主入口；`with_other_cars` 入口已留但会显式报未实现。需要写入旧目录时，用 `--mode no_other_cars --out submissions/fastest/team_controller.py` 这类显式输出路径。
 
 ## Baseline 与实验记录
 
 `baselines/` 保存已实跑确认的策略快照（单文件 + 参数摘要 + 证据说明），供对比和回退。
 
-平台或 Webots 测试后，结构化结果写入 `experiments/runs.csv`（`date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finish_reason,notes`），较长观察写入 `experiments/notes.md`。AI 自跑和人类实跑都按 `docs/human_webots_testing.md` 留下可复盘产物；AI 机制分析按 `docs/ai_offline_review.md` 取证。
+平台或 Webots 测试后，结构化结果写入 `experiments/runs.csv`（`date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finish_reason,notes`），较长观察写入 `experiments/notes.md`。AI 自跑和人类实跑都按 `docs/human_webots_testing.md` 留下可复盘产物；AI 机制分析按 `docs/ai_offline_review.md` 取证。判断一个 run 是否“有意义”的标准见 `experiments/notes.md` 顶部记录规范。
 
 可视化产物分两类归档：复现某个 bug 的最小失败窗口进 `experiments/cases/`；要放进最终报告或回查的精选图（整场轨迹/速度图用 `scripts/plot_run.py`，关键感知标注帧用 `scripts/analyze_perception_dump.py --at`）进 `experiments/figures/`。规则见两个目录各自的 `README.md`。

@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT))
 
 from controller.common import ControlCmd, PerceptionObs, TrackState, clamp_cmd
 from controller.estimator import estimate_track, reset_estimator_state
-from controller.params import OPPONENT_PROFILE, VISION_PROFILE
+from controller.params import OPPONENT_PROFILE, VISION_PROFILE, get_profile
 from controller.policy import decide_control, reset_policy_state
 import controller.perception as perception
 from controller.perception import extract_observation
@@ -41,15 +41,15 @@ def test_module_contracts_on_mock_lane():
     assert -1.0 <= track.lateral_error <= 1.0
     assert 0.0 <= track.confidence <= 1.0
 
-    cmd = decide_control(track, 0.0, mode="fastest")
+    cmd = decide_control(track, 0.0, mode="no_other_cars")
     assert isinstance(cmd, ControlCmd)
     steering, speed = clamp_cmd(cmd)
     assert -1.0 <= steering <= 1.0
     assert 0.0 <= speed <= 1.0
 
 
-def test_opponent_detection_is_enabled_for_static_cars(monkeypatch):
-    assert OPPONENT_PROFILE["enable_opponent_avoidance"] is True
+def test_no_other_cars_strategy_does_not_call_opponent_detection(monkeypatch):
+    assert OPPONENT_PROFILE["enable_opponent_avoidance"] is False
     assert "near_obstacle_min_timestamp" not in VISION_PROFILE
     called = {"value": False}
 
@@ -60,9 +60,17 @@ def test_opponent_detection_is_enabled_for_static_cars(monkeypatch):
     monkeypatch.setattr(perception, "detect_near_vehicle_obstacle", mark_called)
     image = make_lane_image()
     obs = extract_observation(image, image, 999.0)
-    assert called["value"] is True
+    assert called["value"] is False
     assert isinstance(obs, PerceptionObs)
     assert len(obs.center_points) >= 4
+
+
+def test_with_other_cars_strategy_is_named_but_not_implemented():
+    try:
+        get_profile("with_other_cars")
+    except NotImplementedError:
+        return
+    raise AssertionError("with_other_cars should stay an explicit placeholder until implemented")
 
 
 def test_estimator_lost_contract_on_empty_observation():
@@ -82,9 +90,11 @@ def test_estimator_lost_contract_on_too_few_points():
     assert track.lost is True
 
 
-def test_policy_invalid_mode_uses_fastest_defaults():
+def test_policy_invalid_mode_is_rejected():
     reset_policy_state()
     track = TrackState(0.0, 0.0, 0.0, 0.0, 1.0, False)
-    cmd = decide_control(track, 2.0, mode="unknown")
-    assert isinstance(cmd, ControlCmd)
-    assert 0.0 <= cmd.speed <= 1.0
+    try:
+        decide_control(track, 2.0, mode="unknown")
+    except ValueError:
+        return
+    raise AssertionError("unknown strategy names should be rejected")

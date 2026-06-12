@@ -2,7 +2,7 @@
 
 功能概述：按固定流水线串接感知、估计和控制策略模块。
 输入输出：输入平台同形态的左右图像和时间戳，输出 `(steering, speed)`。
-处理流程：提取观测，估计赛道，按 profile 决策控制量，最后限幅返回。
+处理流程：提取观测，估计赛道，按策略 profile 决策控制量，最后限幅返回。
 """
 
 from controller.common import clamp_cmd
@@ -10,7 +10,8 @@ from controller.estimator import estimate_track
 from controller.policy import decide_control
 from controller.perception import extract_observation
 
-PROFILE = "unified"
+# 当前实现是“无其他车”策略；“有其他车”策略只保留命名入口，尚未实现。
+PROFILE = "no_other_cars"
 
 
 def control(left_img, right_img, timestamp):

@@ -23,12 +23,14 @@ def _load_module(path: Path):
 
 
 def test_normal_build_source_has_no_frame_dump_probe():
-    source = build_submission.build_source("fastest")
+    source = build_submission.build_source("no_other_cars")
 
     assert "cv2.imwrite" not in source
     assert "_DBG_FRAME_DIR" not in source
     assert "_DBG_FH" not in source
     assert "AIRACER_CONTROLLER_CONSOLE_LOG_DIR" not in source
+    assert "功能概述" not in source
+    assert "\n\\\n" not in source
 
 
 def test_debug_build_can_dump_left_and_right_frames(tmp_path):
@@ -36,7 +38,7 @@ def test_debug_build_can_dump_left_and_right_frames(tmp_path):
     dump_dir.mkdir()
     module_path = tmp_path / "team_controller_debug.py"
     module_path.write_text(
-        build_submission.build_source("fastest", dump_frames=str(dump_dir), dump_frame_stride=1),
+        build_submission.build_source("no_other_cars", dump_frames=str(dump_dir), dump_frame_stride=1),
         encoding="utf-8",
     )
     module = _load_module(module_path)
@@ -56,7 +58,7 @@ def test_debug_build_can_dump_left_and_right_frames(tmp_path):
 
 
 def test_debug_frame_dump_defaults_to_stride_ten():
-    source = build_submission.build_source("fastest", dump_frames="/tmp/frames")
+    source = build_submission.build_source("no_other_cars", dump_frames="/tmp/frames")
 
     assert "_DBG_FRAME_STRIDE = 10" in source
 
@@ -67,7 +69,7 @@ def test_debug_frame_dump_respects_time_window(tmp_path):
     module_path = tmp_path / "team_controller_debug.py"
     module_path.write_text(
         build_submission.build_source(
-            "fastest",
+            "no_other_cars",
             dump_frames=str(dump_dir),
             dump_frame_stride=1,
             dump_frame_start=10.0,
@@ -93,7 +95,7 @@ def test_debug_build_can_tee_controller_console(tmp_path):
     console_dir = tmp_path / "console"
     module_path = tmp_path / "team_controller_debug.py"
     module_path.write_text(
-        build_submission.build_source("fastest", debug_log=str(tmp_path / "control.jsonl")),
+        build_submission.build_source("no_other_cars", debug_log=str(tmp_path / "control.jsonl")),
         encoding="utf-8",
     )
     env = {**os.environ, "AIRACER_CONTROLLER_CONSOLE_LOG_DIR": str(console_dir)}

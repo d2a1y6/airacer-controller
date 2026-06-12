@@ -6,7 +6,9 @@
 ## 记录规范（2026-06-11 起）
 
 - 一次真实 Webots / 平台测试 = 一个 Run ID；**只有跑了测试才建区块**，纯代码改动不建。
-- 每个区块对应 runs.csv 中同 Run ID 的一行（该行 `notes` 以 `R0xx |` 开头）。
+- AI 每次分析完一轮有意义的 run 后，必须默认同步更新 `experiments/runs.csv` 和本文件；不要等用户单独提醒。若这轮 run 只是在误启动、超短失败、重复跑同一版本且没有新信息，明确说明“不记 run”的原因。
+- “有意义”的判断：验证了一个新版本、暴露/排除了一个问题、覆盖了一个历史风险窗口、产生了会影响下一步调参的证据、或被用户标为当前最佳。重复跑同一版本但结论完全相同、脚本没真正启动、只跑几秒且没有新现象，不进台账。
+- 每个区块对应 runs.csv 中同 Run ID 的一行（该行 `notes` 以 `R0xx |` 开头）。少量同一编号下的参数分支可用 `R0xx-b`，但要在 notes 里说明为什么没有单独升级为下一个整数编号。
 - runs.csv 的 `notes` 只写一两句结论 + `详见 notes.md R0xx`，**不要**把整段叙事复制进 csv（历史行曾双写导致维护成本和漂移，新行不再这样）。
 - 叙事、诊断、下一步只写在本文件；当前总体状态和未解问题清单维护在 `experiments/STATUS.md`（就地更新）。
 - 新区块加在「当前记录」**最上面**（倒序，最新在上）。
@@ -34,24 +36,25 @@
 
 ## 当前记录（新格式，最新在上）
 
-### R049 — 定向提速（中等弯）+ 解释"同结构弯半径为何不同" (2026-06-13, complex, 待人工跑)
+### R049 — 定向提速（中等弯）+ 解释"同结构弯半径为何不同" (2026-06-13, complex, ✅当前最佳)
 - **R048 实跑（用户）**：转弯不撞了，但"开头第一个左弯半径大、几乎贴右栏（外）；老撞车的 90° 左弯半径小、感觉要擦左栏（内）"。两弯结构相似却表现相反。
 - **为何不同（数据）**：半径不由几何直接决定，而是 `curve_risk → 速度 → 物理半径`。t29 第一个左弯 `curve_risk=1.00` → 减速到 0.53、打舵 0.40 → 偏紧（但会甩到 −0.79 再回）；t63 那个"宽"左弯 `curve_risk=0.43`（感知判成缓弯）→ 不减速保持 0.75、只打 0.23 → 走宽偏外。**根因是两个相似弯被感知估出不同 curve_risk**（弯在视野里发育多少、apex 遮挡、白线可见度），下游速度/半径就分叉。这是感知一致性问题，非控制 bug。
 - **速度现状（R048 run）**：mean 0.83（R047 前是 0.62）、69% 时间≥0.75、仅 4%<0.55。慢在弯里（binding：curve 54%/confidence 46%，hard_turn 占 42%，急弯降到 0.53）。**急弯已接近速度-半径物理上限**，再快就更宽/撞。
 - **R049 定向提速（只提中等弯、不动急弯）**：① `curve_power 1.18→1.5`——`curve_factor=1−curve_slowdown×curve_risk^power`，提高指数让中等弯(curve_risk 0.4-0.8)的因子升、急弯(=1.0)不变（实测 cr1.0 仍 0.58）。② `hard_turn_speed 0.62→0.72`（cap 抬高，主要放开中等弯；急弯被 curve_factor 限在 cap 之下不受影响）。③ `min_confidence_factor 0.90→0.95`（彻底解耦感知置信对快段的微压速）。④ `max_speed_increase_per_sec 3.5→5.0`（出弯更快回速）。
 - **离线估算**：median 0.85→0.90、mean +5%。全套 125 测试 + validator 通过。MD5 `79ffbdbfe1259cc41824123e296bd49b`。
+- **R049 实跑结果**：用户实跑确认为当前最佳。mean command speed≈0.850、median≈0.893、lost=0；contact 7 个 episode，全部 peak=3 / `zmax≤0.50`，无硬撞。末段轻擦静止黑车，归因于缺 opponent avoidance，不再归到入弯半径。
 - **诚实**：+5% 偏小——赛道已快，大头在 R047 拿到了；剩余被速度-半径物理卡住（急弯不能再快）。要继续提速只能改善感知一致性（让中等弯也被正确识别为该减速/该多打舵），或接受更宽的弯。
-- **待办（人工跑）**：看均速/lap 是否再快一点、中等弯有没有因更快变更宽/撞（contact 日志）、急弯是否仍稳。
+- **下一步**：优先做 opponent avoidance；继续提速前先处理感知一致性。
 
-### R048 — 入弯门控加 latch：弯中保持 + 出弯迟滞（修"转一半收轮/半径大"） (2026-06-13, complex, 待人工跑)
+### R048 — 入弯门控加 latch：弯中保持 + 出弯迟滞（修"转一半收轮/半径大"） (2026-06-13, complex, 用户实跑)
 - **用户观察**：① 车在弯的一半忽然不转、开始收轮甚至直走，转不到位 → 半径很大；② 半径大导致转过来后不在中线，过一会才发现丢线、找回中线，费速度。用户猜是"车转到一半视野里已经是直路，低估了要转的弯"，问能否给出弯也加 lag。
 - **数据（R047 run 左 hairpin t30-38）**：`heading`/`lookahead` 全程 −0.7~−1.0（远处一直要求硬左），但 `steering` 反复掉到 ≈0。真因：入弯门控 `lookahead_term *= |lateral|/ref` 是**连续乘子**，而 `lateral`（road-mask 近处）在弯中反复回落到 ≈0（mask 重新对正路面），门控就把远处项收掉 → 欠转。不是"看到直路"（远处仍 −1.0），而是 lateral 信号在弯中塌掉。
 - **R048 改动（`policy._target_steering`）**：给门控加跨帧 latch（`_TURN_IN_LATCH`）。**hard_turn 里 ratchet 到 arrival 峰值并保持**（不随 lateral 回落泄掉）→ 弯中门一直开着、车持续转、转到位；**离开 hard_turn 后按 `turn_in_hold_decay=0.92` 迟滞衰减** → 出弯 lag（用户要的）。入弯延迟仍在：hard_turn 早段 lateral 还小→instant_arrival 小→latch 从小起步、随 lateral 长大才 ratchet 上去。
 - **离线验证**（同 hairpin）：corner_arrival 中位 **0.15→0.95**、最小 **0.00→0.23**——远处预瞄项从"被门收没、整段欠转"变成"全程保持、跟着路转"。新增 1 latch 测试、改 1 处测试 helper，全套 125 测试 + 本地/官方 validator 通过。MD5 `c1327b694c6af49ea4936c0a21d6c14f`。
-- **手册仍暂不改**（入弯门控连续在动，等跑通稳定再更）。
-- **待办（人工跑）**：看 (a) 弯中是否不再"转一半收轮"、能转到位（`line_offset`/`lateral` 出弯回中）；(b) 有无因 latch 保持过久→出弯过转/切内（调小 `turn_in_hold_decay`）；(c) 均速是否因少了"找回中线"而提升。
+- **R048 实跑结果**：用户确认转弯不撞，但出现两个相似左弯半径差异：第一个左弯偏外、老撞车的 90° 左弯偏内但都不撞。分析发现两弯的 `curve_risk` 感知差异很大，进而导致速度和物理半径不同。R048 mean command speed≈0.83，约 69% 时间 ≥0.75，只有约 4% <0.55。
+- **结论/下一步**：入弯 latch 有效；剩余慢点在弯道，尤其是中等弯。促成 R049 用 `curve_power` 定向提中等弯速度。
 
-### R047 — 过弯"偏外"真因=速度耦合：入弯随速度提前 + 放松高速收舵 + 再提速 (2026-06-12, complex, 待人工跑)
+### R047 — 过弯"偏外"真因=速度耦合：入弯随速度提前 + 放松高速收舵 + 再提速 (2026-06-12, complex, 用户实跑)
 - **用户观察**：删了 gentle 后还是偏外，怀疑跟"过弯速度被上调"有关（过弯快→半径大）。**数据确认**（R046+speed run 第一个 90° 左弯 t29-34）：① 入口段（t29.5-30.8）车以 0.6-0.8 高速进弯，但入弯门控把 steer 压得很小（−0.1），车高速冲过入口、`line_offset` 冲到 **−0.59（外侧）**；② 深处（t32-33）target_steer 要 −0.76 却被高速收舵 cap 砍到 −0.63（"CAP"），打不动、恢复不及。两处都和速度强相关——用户判断正确。
 - **机制**：入弯门控 `corner_arrival=|lateral|/ref` 是**几何**判据，但高速下车在 |lateral| 长起来之前就已冲出很远（走的距离=速度×时间）。所以同一几何门在高速下"开得太晚"。
 - **R047 改动**：
@@ -60,16 +63,18 @@
   3. **再提速**（用户觉得过弯仍慢）：`hard_turn_speed 0.55→0.62`、`curve_slowdown 0.50→0.42`。
 - 全套 124 测试 + 本地/官方 validator 通过。MD5 `fc8a706570fc67ac9b74d4384ea5afa1`。
 - **手册暂不改**：入弯门控两轮内改了 4 次（R044→R046→R047），按维护约定先等跑通稳定再更新 3.3a（现仍写"纯 lateral"，R047 在其上加了速度提前量）。
-- **待办（人工跑）**：看 (a) 过弯入口是否还冲外（`line_offset` 入口峰值是否不再到 −0.5）；(b) 均速/过弯速度是否更快；(c) contact 日志有无因更快出现新撞栏/冲出。仍偏外→调大 `turn_in_speed_comp`；某弯太快冲出→该弯 curve_slowdown 或 speed_comp 微调。
+- **R047 实跑结果**：用户观察到新问题：车在弯中途突然收轮甚至直走，导致半径变大；转过来后不在中线，需要花时间找线回中，损失速度。日志显示远处 `heading/lookahead` 仍在要求继续转，真正塌掉的是连续 gate：`lateral` 弯中回落到 0 后把 lookahead 项收没。
+- **结论/下一步**：R047 解决了速度导致的入口偏外，但暴露连续 gate 的弯中收轮问题，促成 R048 latch。
 
-### R046 — 删除 R044 的"弯有多急(curve_risk)"调制（原理性缺陷） (2026-06-12, complex, 待人工跑)
+### R046 — 删除 R044 的"弯有多急(curve_risk)"调制（原理性缺陷） (2026-06-12, complex, 用户实跑)
 - **用户观察 + 数据确认**：gentle 调制让弯"入弯初期被判成缓弯 → 转得非常晚 → 深入弯里才急打轮、半径反而很大、还冲外侧、掉速"。
 - **数据证据（.tmp/run 第一个 90° 左弯 t27-30）**：接近段 cruise 时 `curve_risk` 在 0.06-0.5 noisy/偏低 → `sharpness` 0.1-0.45 → gentle 乘子把 `arrival_ref` 放大 **1.4-1.97×** 整个接近段，车几乎不转（steer≈0、lateral≈0）；`curve_risk` 直到 t29.4+ 才涨到 0.7（已深入弯）。然后 t31.9-33 `lateral` 突涨到 −0.46、steer 突到 −0.6、`line_offset` 到 **−0.5（外侧）**、速度掉到 0.41。完全吻合用户描述。
 - **根因（原理性）**：**入弯瞬间没有信号能区分缓弯/急弯**——远处弯量（curve_risk 的来源）在视野里还没发育起来，所有弯的"入口"看起来都是低 curve_risk = 缓弯。所以基于瞬时 curve_risk 的调制必然在每个弯的入口过度迟滞，原理上修不好。用户已把 gentle_extra 从 1.5 降到 0.5 仍有问题，印证这一点。
 - **R046 改动**：**删除 sharpness/gentle 调制**（`policy._target_steering` 的 sharpness/arrival_ref 段、`params` 的 `turn_in_sharp_ref`/`turn_in_gentle_extra`），回到纯近处 lateral 门控：`corner_arrival = clamp(|lateral|/turn_in_lateral_ref, 0, 1)`。`turn_in_lateral_ref` 保留为唯一旋钮（当前 0.75）。删 2 个测试、加 1 个守护测试，全套 124 测试 + 本地/官方 validator 通过。MD5 `b5e8751771ab2d200f29e6709c3bf4d1`。已同步技术手册 3.3a 与 case。
-- **遗留观察（下一步若仍 late-snap）**：纯 lateral 门控仍有一个较轻的"晚 snap"——road-mask `lateral` 会滞后/低估车的真实漂移（车已跑到外侧 `line_offset≈−0.5` 时 `lateral` 仍≈−0.05，门没开），等 `lateral` 终于涨起来才 snap。若删 gentle 后这个仍明显，下一步考虑：调小 `turn_in_lateral_ref` 让门更早开，或让门也参考白线漂移（注意 inside/outside 符号）。先跑删 gentle 这版看程度。
+- **R046 实跑结果**：用户反馈仍偏外；数据确认这和删 gentle 本身不矛盾，而是速度上调后同一 lateral gate 在高速下物理上开得太晚。入口段速度 0.6–0.8，steer 仍被门控压小，`line_offset` 到约 −0.59；深处 target steering 又被高速 cap 从约 −0.76 剪到 −0.63。
+- **结论/下一步**：纯 lateral gate 需要和速度绑定。促成 R047 `turn_in_speed_comp` 与高速 steering cap 回调。
 
-### R045 — 入弯回调 + 速度提升 4 阶段（激进） (2026-06-12, complex, 待人工跑)
+### R045 — 入弯回调 + 速度提升 4 阶段（激进） (2026-06-12, code/offline，无独立 run)
 - **R044 实跑结论（用户）**：半径整体不错；`gentle_extra=1.5` 略过头——急弯偶有外偏（line_offset 偶到 −0.79）、缓弯 line_offset 中位 −0.07（略偏外）。末段蹭到右侧静止黑车（半径略大的副作用，非切内；当前无避让逻辑，后续单加，不为它改半径）。**转弯半径已不是根本问题。**
 - **回调（R044-b）**：`turn_in_lateral_ref 1.0→0.9`、`turn_in_gentle_extra 1.5→1.0`（迟滞略收）。
 - **速度提升（用户指示：直接把 4 个点都改好、激进调参）**。基于 R044 run 速度分析：均速 cmd 0.62、~28% 时间<0.45、hard_turn 占 58%、限速 binding 因子 curve 53% / confidence 47%。
@@ -78,19 +83,19 @@
   3. **弯道降速整体减弱**：`curve_slowdown 0.70→0.50`、`offset_slowdown 0.38→0.28`、`steering_slowdown 0.18→0.12`。
   4. **更快回速**：`max_speed_increase_per_sec 1.85→3.5`。
 - **离线估算**（同情境重算 target_speed）：median +43%、mean +38%、91% 帧目标速度 +0.1 以上。这是激进提速（教训：之前 0.2/0.3 微调没用）。全套 125 测试 + 本地/官方 validator 通过。MD5 `9ee21b47a5b31044796500276708308f`。
-- **待办（人工跑）**：`bash scripts/webots_run.sh complex` → 看 (a) 均速/lap 是否明显提升；(b) contact 日志有没有因为快了而出现**新的撞栏/冲出**（提速的唯一风险=弯里来不及）；(c) 回调后急/缓弯 line_offset 是否回到≈0。若某弯因为快而切/撞→该弯单独再收点速度或回调对应因子；若还能更快→继续推 Phase 1/3 的因子。顺序铁律：半径稳了才提速（已满足）。
+- **后续**：这不是独立实跑，不占 `runs.csv`。它的速度改动在后续 R046/R047/R048/R049 run 中逐步暴露影响并被修正。
 
-### R044 — 入弯门控叠加"弯有多急"调制 + 简化（删 heading_ref） (2026-06-12, complex, 待人工跑)
+### R044 — 入弯门控叠加"弯有多急"调制 + 简化（删 heading_ref） (2026-06-12, complex, 用户实跑+代码改动)
 - **R043（用户）背景**：删除 `turn_in_floor`，`lookahead_term *= corner_arrival` 直接缩放；`turn_in_lateral_ref`=1。**90° 急弯半径已基本不用再改**（实跑确认）。参数统一：`BASIC_CONTROL_OVERRIDES` 移除、`get_profile` 只返回 `CONTROL`、basic/fastest/safe 不再分叉。
 - **R043 实跑数据（按弯分类）**：急弯（peak|look|0.7-0.9）`line_offset` 峰值≈0（已修好）；缓弯（peak|look|0.4-0.55）`line_offset` 峰值 +0.27~+0.41（仍偏内）。缓弯段 margin 左右相等、contact 无撞栏 → 缓弯是"半径偏小/略偏"不贴栏。真正还在轻擦的是中等急度弯（peak|look|≈0.6，contact 峰值 3、zmax≈0.48，远轻于 R041 的 z0.90）。
 - **机制**：缓弯里近处 `|lateral|` 涨得慢 → `corner_arrival=|lateral|/ref` 偏小 → 远处预瞄项压制不足 → 仍偏早转 → 半径偏小。急弯 lateral 涨得快、本就晚转，无需额外迟滞。
 - **R044 改动（`policy._target_steering`）**：按 `curve_risk` 调制 arrival 参考——`sharpness=clamp(curve_risk/turn_in_sharp_ref)`，`arrival_ref=turn_in_lateral_ref×(1+turn_in_gentle_extra×(1−sharpness))`。急弯（`curve_risk≥sharp_ref`，sharpness=1）参考不变；缓弯参考放大 → 同 lateral 下 arrival 更小、更晚转、半径更大。默认 `sharp_ref=0.7`、`gentle_extra=1.5`。
 - **简化（回答用户 1d）**：`turn_in_lateral_ref=1` **不等于**删除它（它仍是 arrival 参考基准、有用的调参旋钮，且现在被 sharpness 因子相乘）。真正能删的是 **`turn_in_heading_ref`**——heading 早已只贡献 `/6` 的微量，R044 把它彻底移出 arrival，arrival 现在纯由 `lateral`（+ sharpness 调制）决定。入弯门控参数：`turn_in_lateral_ref` / `turn_in_sharp_ref` / `turn_in_gentle_extra`。
 - **离线验证**：真帧回放，缓弯（curve_risk 0.36）median|steer| 0.091→0.082（更晚转），急弯（0.99）0.024→0.023（不变）。新增 2 条 R044 回归测试 + 改 3 条受影响测试，全套 125 测试 + 本地/官方 validator 通过。MD5 `c5e8b547b2fd3e18b4687141651cf522`。
-- **待办（人工跑）**：`bash scripts/webots_run.sh complex` → 看缓弯 `line_offset` 峰值是否下降、急弯是否仍 0 撞栏、有无新的**弯外侧**撞栏（迟滞过头）。仍偏内→调大 `turn_in_gentle_extra`；冲外侧→调小它或调大 `turn_in_sharp_ref`。归档见 `experiments/cases/R042_turn_in_too_early/`（已更新 R042→R044 演进 + 急/缓弯证据 + 缓弯 overlay）。
+- **R044 实跑结果**：半径整体不错，但 `gentle_extra=1.5` 略过头：急弯偶有外偏，缓弯 line_offset 中位约 −0.07。末段擦右侧静止黑车，归因于无避让逻辑。该结果促成 R045 的回调和提速设计。
 
 ### R042 — 找到"入弯太早"真因：门控用 heading 当 arrival 判据（自废） (2026-06-12, complex, ✅最紧弯已验证)
-- **✅ 人工实跑验证（floor 0.25）**：最紧 t≈230 弯从 R041 的**撞栏 12 点**变成**无剐蹭通过**（R042 run 该弯 contact 0 次）。入弯 commit 从 t224.16（lat≈0，车还居中）推迟到 t227.14（lat=−0.14，车真到弯口），弯中 line_offset 峰值 0.65→0.23。**残留**：t230 仍"非常 close"、更小的弯（R042 run x≈153,y≈124，t≈101-102）仍轻擦（contact 峰值 3、zmax≈0.47）。R042-b 改到 `turn_in_floor=0.11` 仍轻擦。→ **R043** 按用户要求删除 `turn_in_floor`，远处预瞄项直接乘 `corner_arrival`，并把 `turn_in_lateral_ref` 调到 0.65（待跑）。
+- **✅ 人工实跑验证（floor 0.25）**：最紧 t≈230 弯从 R041 的**撞栏 12 点**变成**无剐蹭通过**（R042 run 该弯 contact 0 次）。入弯 commit 从 t224.16（lat≈0，车还居中）推迟到 t227.14（lat=−0.14，车真到弯口），弯中 line_offset 峰值 0.65→0.23。**残留**：t230 仍"非常 close"、更小的弯（R042 run x≈153,y≈124，t≈101-102）仍轻擦（contact 峰值 3、zmax≈0.47）。R042-b 改到 `turn_in_floor=0.11` 仍轻擦。→ **R043** 按用户要求删除 `turn_in_floor`，远处预瞄项直接乘 `corner_arrival`，后续实跑确认 90° 急弯半径大幅改善，但缓/中等弯仍需处理。
 - **归档**：根因 case `experiments/cases/R042_turn_in_too_early/`（R041 bug 窗 + R042 fix 窗 + 撞栏接触）；对照图在该 case 的 turn_in_before_after.png。
 
 - **用户 R041 实跑结论**：那个位置仍剐蹭（GUI 报 18 接触点 + physics step 警告 = 硬撞），"和上次没区别"，仍系统性半径太小。用户判断："应该晚点再转，此时即便满舵也行；所有半径不足都是入弯太早。"——正确。

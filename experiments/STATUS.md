@@ -1,20 +1,20 @@
 # 当前状态（接手从这里开始）
 
-最后更新：2026-06-13（R049 当前最佳，已存 baseline）。当前分支：`codex/perception-dropout`。
+最后更新：2026-06-13（R049 当前最佳，已存 baseline）。当前分支：`main`。
 
 ## 一句话结论
 
-转弯半径/入弯时机问题已**系统性解决并实跑确认**，速度也大幅提上来了。当前 `submissions/final/team_controller.py`（MD5 `79ffbdbfe1259cc41824123e296bd49b`）= **R049 当前最佳**，已存快照 `baselines/R049_turn_in_speed_best_2026-06-13/`。
+转弯半径/入弯时机问题已**系统性解决并实跑确认**，速度也大幅提上来了。当前 `submissions/final/team_controller.py`（MD5 `a4cbd68a14362d8deb7d68e5becffb60`）由 R049 控制器源码重新生成，行为口径仍是 **R049 当前最佳**；实跑确认时的单文件快照保存在 `baselines/R049_turn_in_speed_best_2026-06-13/`。
 实跑：转弯不撞、全程明显更快（mean 速度 0.85 / median 0.90、0 lost）、contact 日志无硬撞（全是轻擦）。
 
 **控制器整体逻辑见 `docs/technical_manual.md`（交付版，已较稳定）。** 入弯门控的演进细节见下「核心机制」。
 
 ## 当前最好版本
 
-- 提交文件：`submissions/final/team_controller.py`（R049，MD5 `79ffbdbfe1259cc41824123e296bd49b`）。统一策略：`fastest/safe/basic` 不再分叉，`get_profile` 只返回 `CONTROL`。
+- 提交文件：`submissions/final/team_controller.py`（R049 源码重新生成，MD5 `a4cbd68a14362d8deb7d68e5becffb60`）。统一策略：`fastest/safe/basic` 不再分叉，`get_profile("no_other_cars")` 返回当前控制参数；`with_other_cars` 仍显式未实现。
 - baseline 快照：`baselines/R049_turn_in_speed_best_2026-06-13/`（含 README + 单文件）。
 - 回退点：`baselines/R038_phase22_best_human_2026-06-12/`（更保守、更慢的上一代）。
-- 全套测试 + 本地/官方 validator 通过；提交文件不含调试 I/O。
+- 全套测试 + 本地/官方 validator 通过；提交文件不含调试 I/O。官方 validator 仍有 W014 性能软警告（本次 mock p95 约 36ms，高于 20ms 软上限），后续若准备线上高频测试，应单独做性能压测和优化。
 
 ## 核心机制（接手必读：入弯门控是这几轮的重点）
 
@@ -38,6 +38,7 @@
 1. **避让其他车（最优先的新功能）**：当前**完全没有**对手车避让逻辑（`opponent.py` 只做近处车身检测）。R049 末段会蹭一辆右侧静止黑车——这不是半径问题，是缺避让。后续单独加一层。
 2. **个别中等弯偏宽/偏内**：根因是两个结构相似的弯被感知估出不同 `curve_risk`（弯在视野里发育多少、apex 遮挡、白线可见度）→ 不同速度 → 不同半径。这是**感知一致性**问题（见 notes.md R049）。继续提速也卡在这里：要更快只能让中等弯被正确识别，或接受更宽的弯。
 3. **继续提速**：急弯已接近速度-半径物理上限，再快就更宽/撞。剩余空间在改善感知一致性 + 更好的过弯走线。
+4. **性能软警告**：官方 validator 通过但提示 `control()` p95 超过 20ms 软上限。当前能提交校验，但线上若按严格耗时惩罚，建议先 profile `perception.py` 的每帧图像处理。
 
 ## 工作约定（经验，不限制"改哪里"）
 
@@ -47,11 +48,13 @@
 
 经验：① 驾驶质量以 Webots 实跑为准，`lost` 率不是质量指标；② 撞栏看 `contact_*.jsonl`，别只靠肉眼盯 GUI console；③ 走线/policy/感知改动最好跑一次 Webots 再下结论，默认流程 **AI 改 → 人跑 → 人报完成 → AI 读日志**（省 token）；④ **技术手册不要每次改参数就更新**，等结构稳定、人明确要求时再改（见手册顶部维护约定）；⑤ 改 `controller/common.py` 字段要同步所有调用方/测试/文档。
 
+**记录纪律**：AI 读完每个有意义 run 后，默认同步更新 `experiments/runs.csv` 和 `experiments/notes.md`。有意义 run 包括：验证新版本、暴露/排除问题、覆盖历史风险窗口、产生会影响下一步调参的证据、或被用户标为当前最佳。误启动、脚本未真正开始、超短无信息、重复跑同一版本且无新现象，不进台账，但要说明原因。
+
 ## 常用命令
 
 ```bash
 pytest -q
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
 python scripts/validate_submission.py submissions/final/team_controller.py
 bash scripts/webots_run.sh complex          # 实跑（默认存帧 + 撞栏接触日志）
 python scripts/analyze_contact_log.py .tmp/run/contact_complex.jsonl

@@ -82,6 +82,8 @@ experiments/figures/
     stereo_000145_700.png           # 可选
     live_view.png                   # 可选
     CAPTION.md                      # 必有：每张图一条说明
+  R042_to_R049_turn_in_evolution/   # 跨版本主题图组：入弯调试
+  R045_to_R049_speed_evolution/     # 跨版本主题图组：提速调试
   compare/
     R011_vs_R024_inner_rail.png
     CAPTION.md
@@ -94,8 +96,9 @@ experiments/figures/
 
 ## 选择标准（留多少、怎么选）
 
-1. **建哪个 run 的目录**：只给「值得写进报告或之后会回查」的 run 建目录——里程碑/baseline 版本、
-   揭示关键机制的失败 run、报告里要做对比的版本。普通一次性调参、回归小跑**不建**。
+1. **建哪个目录**：只给「值得写进报告或之后会回查」的内容建目录。单次 run 用 `<R-id>_<slug>/`；
+   像 R042→R049 这种跨版本机制复盘，可以按主题建目录，例如 `*_turn_in_evolution/`、`*_speed_evolution/`。
+   普通一次性调参、回归小跑**不建**。
 2. **每个目录留多少**：轨迹图 ×1（必），关键 overlay 0–4 张，stereo/live_view 合计 ≤2，整目录控制在**几 MB 内**。
    如果觉得要留 5 张以上 overlay，多半是还没想清楚报告里到底讲哪个点——先收敛结论再选图。
 3. **`CAPTION.md` 是硬门槛**：每张图一条，写清三件事——

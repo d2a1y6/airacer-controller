@@ -15,6 +15,8 @@
 
 只有真实 Webots/platform run 才分配 R-id 并写入 `runs.csv`。离线回放、脚本分析和开环试验只写进对应 R-id 的 notes 或临时 `.tmp`，不单独建 R-id。
 
+AI 分析完每个有意义 run 后，默认要同步更新 `runs.csv` 和 `notes.md`，不等用户提醒。有意义 run 指：验证新版本、暴露/排除问题、覆盖历史风险窗口、产生会影响下一步调参的证据、或被标为当前最佳。误启动、脚本未真正开始、超短无信息、重复跑同一版本且没有新现象，可以不记，但要在回复中说明。
+
 ## cases 和 figures 的区别
 
 | 目录 | 存什么 | 目的 | 生命周期 |
@@ -30,21 +32,23 @@
 
 当前重要 case：
 
-- `cases/R026_first_left_tight_radius/`：第一左弯半径过小历史失败，open。
-- `cases/R038_residual_tight_radius/`：当前 best 的残留弯中半径偏小窗口，open。
+- `cases/R042_turn_in_too_early/`：R041 撞栏到 R049 当前最佳的入弯/半径完整演进。
+- `cases/R026_first_left_tight_radius/`：第一左弯半径过小历史失败，保留作早期对照。
 
 当前重要 figure：
 
-- `figures/R038_best_human_residual_tight_radius/`：当前最好版本 R038 的总览和关键 overlay。
+- `figures/R042_to_R049_turn_in_evolution/`：入弯调试报告图组。
+- `figures/R045_to_R049_speed_evolution/`：提速调试报告图组。
 
 ## 一轮 run 后怎么记录
 
 1. AI 或人类按 `docs/human_webots_testing.md` 跑 Webots，记录观察现象；关键验收节点再请人类肉眼确认。
 2. AI 按 `docs/ai_offline_review.md` 看 telemetry、控制日志、帧和 overlay。
-3. 在 `runs.csv` 追加一行，`notes` 以 `R0xx |` 开头，只写短结论。
-4. 在 `notes.md` 顶部追加对应 R-id 的完整叙事。
-5. 如果有可复现失败窗口，按 `cases/README.md` 裁剪；如果有报告图，按 `figures/README.md` 归档。
-6. 更新 `STATUS.md`，只保留当前接手需要知道的状态和下一步。
+3. 判断这轮是否有意义。有意义就继续；误启动/超短无信息/完全重复无新结论则不记，并说明原因。
+4. 在 `runs.csv` 追加一行，`notes` 以 `R0xx |` 开头，只写短结论。
+5. 在 `notes.md` 顶部追加对应 R-id 的完整叙事。
+6. 如果有可复现失败窗口，按 `cases/README.md` 裁剪；如果有报告图，按 `figures/README.md` 归档。
+7. 更新 `STATUS.md`，只保留当前接手需要知道的状态和下一步。
 
 ## 清理原则
 
@@ -54,4 +58,4 @@
 - 报告要用的图已经进 `figures/`。
 - 当前最好版本如果需要回退，已经快照到 `baselines/`。
 
-R038 已完成这些归档，所以本轮 `.tmp` 可清理。
+R049 当前最佳和 R042→R049 报告图已经完成归档；清 `.tmp` 前仍要确认没有新的未裁剪窗口。

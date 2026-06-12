@@ -2,12 +2,13 @@
 
 功能概述：把 `controller/` 的模块化代码合并成单个 `team_controller.py`。
 输入输出：读取本地控制器源码，输出平台可上传的自包含文件。
-处理流程：按固定顺序拼接模块，删除本地 import，保留统一策略入口。
+处理流程：按固定顺序拼接模块，删除本地 import，保留“无其他车 / 有其他车”策略命名入口。
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import io
 import tokenize
 from pathlib import Path
@@ -15,8 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER_DIR = ROOT / "controller"
 DEFAULT_OUTPUTS = {
-    "fastest": ROOT / "submissions" / "fastest" / "team_controller.py",
-    "safe": ROOT / "submissions" / "safe" / "team_controller.py",
+    "no_other_cars": ROOT / "submissions" / "final" / "team_controller.py",
+    "with_other_cars": ROOT / "submissions" / "with_other_cars" / "team_controller.py",
 }
 MODULE_ORDER = [
     "common.py",
@@ -59,28 +60,31 @@ def strip_local_imports(source: str) -> str:
 def strip_submission_text(source: str) -> str:
     """压缩提交源码里的说明文本。
 
-    功能：删除注释和独立字符串 docstring，降低最终单文件大小。
+    功能：删除注释和独立字符串表达式，降低最终单文件大小。
     参数：`source` 是已经拼好的提交源码。
     返回：保留可执行代码后的源码。
-    逻辑：用 tokenizer 处理，避免误删字符串字面量里的 `#` 或中文内容。
+    逻辑：先用 AST 找到独立字符串表达式的行号，再用 tokenizer 去注释，避免误删普通字符串字面量。
     """
 
+    tree = ast.parse(source)
+    docstring_lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            for line_no in range(node.lineno, getattr(node, "end_lineno", node.lineno) + 1):
+                docstring_lines.add(line_no)
+
+    without_docstrings = "\n".join(
+        line
+        for line_no, line in enumerate(source.splitlines(), start=1)
+        if line_no not in docstring_lines
+    )
+
     kept_tokens = []
-    previous_type = tokenize.INDENT
-    for token in tokenize.generate_tokens(io.StringIO(source).readline):
-        token_type, token_text, start, end, line = token
+    for token in tokenize.generate_tokens(io.StringIO(without_docstrings).readline):
+        token_type, token_text, _, _, _ = token
         if token_type == tokenize.COMMENT and not token_text.startswith("# ----"):
             continue
-        if token_type == tokenize.STRING and previous_type in {
-            tokenize.INDENT,
-            tokenize.NEWLINE,
-            tokenize.NL,
-        }:
-            previous_type = token_type
-            continue
-        kept_tokens.append((token_type, token_text, start, end, line))
-        if token_type not in {tokenize.NL, tokenize.COMMENT}:
-            previous_type = token_type
+        kept_tokens.append(token)
     stripped = tokenize.untokenize(kept_tokens)
     return "\n".join(line.rstrip() for line in stripped.splitlines())
 
@@ -223,9 +227,9 @@ def read_module(
     """读取并清理控制器模块。
 
     功能：按文件名读取 `controller/` 下的模块源码。
-    参数：`name` 是模块文件名，`mode` 仅决定默认输出路径；调试参数非空时注入本地探针。
+    参数：`name` 是模块文件名，`mode` 是策略名；调试参数非空时注入本地探针。
     返回：可拼接到提交文件中的源码片段。
-    逻辑：读取文本后移除本地 import；策略固定为 unified，并按需注入调试日志。
+    逻辑：读取文本后移除本地 import；默认策略为 no_other_cars，并按需注入调试日志。
     """
 
     source = (CONTROLLER_DIR / name).read_text(encoding="utf-8")
@@ -285,7 +289,7 @@ def build_source(
     """构建单文件控制器源码。
 
     功能：生成自包含 Python 源码。
-    参数：`mode` 仅决定默认输出路径；调试参数非空则生成本地调试构建。
+    参数：`mode` 是策略名；调试参数非空则生成本地调试构建。
     返回：完整源码字符串。
     逻辑：写入允许 import，再按契约顺序拼接所有控制器模块。
     """
@@ -318,14 +322,14 @@ def build_source(
 def parse_args():
     """解析命令行参数。
 
-    功能：读取构建模式和输出路径。
+    功能：读取构建策略和输出路径。
     参数：无。
     返回：`argparse.Namespace`。
-    逻辑：模式只允许 fastest 和 safe，未指定输出时写入对应 submissions 目录；策略内容统一。
+    逻辑：只暴露 no_other_cars / with_other_cars 两个策略名；旧输出路径用 --out 指定。
     """
 
     parser = argparse.ArgumentParser(description="Build single-file AI Racer submission.")
-    parser.add_argument("--mode", choices=sorted(DEFAULT_OUTPUTS), default="fastest")
+    parser.add_argument("--mode", choices=sorted(DEFAULT_OUTPUTS), default="no_other_cars")
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--debug-log", type=Path, default=None,
                         help="本地调试构建：把每帧内部状态与命令写到该 JSONL（含 open/json，禁止上传）")
@@ -343,13 +347,15 @@ def parse_args():
 def main() -> int:
     """脚本入口。
 
-    功能：生成指定模式的提交文件。
+    功能：生成指定策略的提交文件。
     参数：来自命令行。
     返回：进程退出码。
     逻辑：确定输出路径，创建父目录，写入源码并打印结果摘要。
     """
 
     args = parse_args()
+    if args.mode == "with_other_cars":
+        raise SystemExit("with_other_cars strategy is not implemented yet")
     output = args.out or DEFAULT_OUTPUTS[args.mode]
     output = output if output.is_absolute() else ROOT / output
     output.parent.mkdir(parents=True, exist_ok=True)

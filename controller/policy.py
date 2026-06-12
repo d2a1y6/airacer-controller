@@ -1,7 +1,7 @@
 """控制策略模块。
 
 功能概述：根据赛道状态统一规划转向和速度。
-输入输出：输入 `TrackState`、时间戳和兼容用 mode 字段，输出 `ControlCmd`。
+输入输出：输入 `TrackState`、时间戳和策略 profile 名称，输出 `ControlCmd`。
 处理流程：计算风险分量，选择驾驶状态，生成目标转向和速度，再做平滑与变化率限制。
 """
 
@@ -859,7 +859,7 @@ def _update_policy_state(track: TrackState, steering: float, speed: float, mode:
     _LAST_MODE = mode
 
 
-def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -> ControlCmd:
+def decide_control(track: TrackState, timestamp: float, mode: str = "no_other_cars") -> ControlCmd:
     """计算最终控制命令。
 
     功能：按唯一策略生成转向和速度。
