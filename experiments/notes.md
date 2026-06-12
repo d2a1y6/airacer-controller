@@ -34,6 +34,15 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R038 — 人工复跑确认当前最佳，但残留弯中半径偏小 (2026-06-12, complex)
+- **构建**: commit `ab58b74`，直接使用当前 `submissions/final/team_controller.py`；MD5 `f4b79c09f6811580817ecfe04d1fb11a`。已复制到 `baselines/R038_phase22_best_human_2026-06-12/`，作为后续回退基线。
+- **配置**: 用户人工 Webots 复跑，world=complex, car_1。记录位于 `.tmp/run/control_complex.jsonl` 和 SDK live telemetry。
+- **记录完整性**: 控制日志与 telemetry 均为 10317 帧，`t=0.03→330.14s`，干净对齐；相机帧在 `.tmp/run/frames_complex/`，已按规则沉淀精选图和最小 case。
+- **结果**: telemetry 无 collision/checkpoint 等事件，无近停；末帧 `x≈58.59,y≈-29.24,speed≈5.79,status=normal`。控制日志 lost 占比 0，`mean|lat|=0.069`，低命令速度 `<0.3` 约 1%。
+- **现象**: 用户观察为当前效果最好：绝大多数弯不再剐蹭，但转弯半径仍偏小，车身会在弯中落到白线内侧；有一处轻蹭但能自行擦出，没有卡住。数据支持这个判断：`t>5s` 后 hard_turn 中 `line_conf=0` 约 2.2%，`line_conf<0.45` 约 9.2%；有多段 `|line_offset|>0.35`，其中 `t=226.0→230.2` 窗口 `line_offset` 中位数 `+0.374`、最高 `+0.754`。
+- **归档**: 报告图在 `experiments/figures/R038_best_human_residual_tight_radius/`；open case 在 `experiments/cases/R038_residual_tight_radius/`，窗口为 `t=226.0→230.2`，含裁剪日志和 3 张 overlay。case 不能标完成。
+- **结论/下一步**: “增大转弯半径”难，是因为这里没有一个独立半径旋钮。弯中真实白线是虚线、稀疏、会短暂低置信；如果简单减小全局左舵，会过不了真实急弯或跑到外侧；如果继续放宽白线，又可能把栏杆/车身/路牙当中心线。R038 的残留机制更像：白线短暂不足时 road-mask 仍按弯道预判向内切，等白线重新稳定时车已经在线内侧。下一步应做“低置信弯中保持上一段可信白线/向外保守”的小改，而不是全局收舵或继续堆 escape。
+
 ### R037 — 正式 final 单文件 basic 回归：红色环境兜底未污染 basic (2026-06-12, basic)
 - **构建**: commit `39b6cfe`，直接使用 `submissions/final/team_controller.py`，不使用 debug 构建；md5 与 fastest 相同，为 `f4b79c09f6811580817ecfe04d1fb11a`。
 - **配置**: 官方 `run_local.py --code-path submissions/final/team_controller.py --world basic --car-slot car_1`，通过官方 validator 后启动 Webots；AI 跑到 `t≈150.69s` 主动停止。

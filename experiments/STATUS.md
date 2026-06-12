@@ -6,7 +6,7 @@
 > **更新规则**：每轮工作结束时就地更新本文件（覆盖过时内容），不要再新建 `handoff_<date>.md`。
 > 历史叙事查 `notes.md`（按 R-id 倒序）、`runs.csv` 和 git log。
 
-最后更新：2026-06-12（白线感知 **Phase 2.2 候选已实现并完成 AI 短测 R029/R030/R031/R032/R033/R034/R035/R036/R037**：R028 通过第一个左弯窗口，但 `t≈32→35` 仍有短暂白线掉线和低速硬左。R029 查明原因是弯中稀疏虚线横向跳变略超门槛、单侧相机短时凑不齐双目条件。当前候选只在 complex 红色环境启用低置信单目白线兜底，放宽曲线虚线 `max_center_jump_ratio 0.24→0.32`、`min_y_span 70→60`，并把 offset-heading 冲突的回中优先阈值 `0.30→0.18`。AI complex 长跑 R035 到 `t≈399.7s`，通过第一个左弯、旧 R024/R025 后段、R018 风险窗、旧 R024 `x≈-42,y≈124`、旧起点前 `x≈-10,y≈-27` / `x≈28,y≈-28`，并进入下一轮早段；无事件、无近停，overlay 未见栏杆/车辆误锁。R035 白线居中审计显示 `t>5s` 且 `line_conf>=0.6` 时 `|line_offset|` 中位数 `0.043`、p90 `0.288`，旧起点前和下一轮早段中位数分别为 `0.026` / `0.004`。R036 用实际 `submissions/final/team_controller.py` 复跑 complex 到 `t≈360.3s`，关键旧窗口同样 normal、无近停；R037 用同一个 final 跑 basic 到 `t≈150.7s`，无事件、无近停，median speed `6.09`。**这是目前最强 AI 证据，但走线/驾驶改动仍需人眼终判视觉上是否沿中间白色虚线；R026/R027 第一个左弯 case 仍 open，未合 main。**
+最后更新：2026-06-12（R038 人工 Webots 复跑确认：当前 `ab58b74` / `submissions/final/team_controller.py` 是目前效果最好的 Phase 2.2 版本，已保存到 `baselines/R038_phase22_best_human_2026-06-12/`。本轮 `t=0.03→330.14s` 无 telemetry 事件、无近停，人工观察为“绝大多数弯不再剐蹭，轻蹭也能自行擦出”。但问题没有完成：弯中转弯半径仍偏小，车身会落到中间白线内侧，至少一处轻蹭。数据上 hard_turn 中 `line_conf=0` 仍约 `2.2%`、`line_conf<0.45` 约 `9.2%`，代表窗口 `t=226.0→230.2` 的 `line_offset` 中位数 `+0.374`、最高 `+0.754`。R038 已归档 report figures 和 open case：`experiments/figures/R038_best_human_residual_tight_radius/`、`experiments/cases/R038_residual_tight_radius/`。**不要把 R026/R038 case 标完成，也不要合 main。下一步应针对“低置信弯中保住上一段可信白线/向外保守”小改，不要用全局收舵或堆 escape 代替。**
 
 之前（2026-06-11 仓库整理）：相机帧改无损 PNG 且 `webots_run.sh` **默认每轮存帧**，跳完不用为看某时刻重跑；删除废弃 `docs/debug_tools.md`；README 加文档地图；新增报告可视化归档 `experiments/figures/` + 生成器 `scripts/plot_run.py` / `analyze_perception_dump.py --at`。上一轮实验结论：R024 证明 complex 旧 `x≈169,y≈111` 低速/内切问题仍会复现，不能合 main。
 
@@ -31,7 +31,8 @@
 
 | 版本 | 位置 | 实车结论 |
 |---|---|---|
-| **当前分支最新状态** | `codex/perception-dropout` | Phase 2.2 候选已提交并连续 AI 短测。R035 从头跑到 `t≈399.7s`，通过历史内切/卡边窗口和旧起点前卡点，并进入下一轮早段；无事件、无近停。**还缺人眼终判，不能合 main。** |
+| **R038 当前最佳** | commit `ab58b74`，快照 `baselines/R038_phase22_best_human_2026-06-12/` | 人工复跑确认当前最好：多数弯不剐蹭，轻蹭能自行脱离；但弯中半径仍偏小，车会落到白线内侧。**这是回退基线，不是完成版。** |
+| **当前分支最新状态** | `codex/perception-dropout` | 控制代码仍是 Phase 2.2 候选；R035/R036/R037 给出 AI/正式单文件回归证据，R038 给出人眼残留问题。**不能合 main。** |
 | **上一提交** | `313e882` | 已有 Webots controller console 捕获和限时存帧调试开关。控制策略包含 R021 采样色卡与 R022/R023 半径/escape 分离修复，但 R024 证明 complex 旧低速窗口仍会复现。 |
 | **R011/R012 版**（白线位置优先后置修正） | commit `16ae3f3`，已快照 `baselines/R011_line_posfirst_2026-06-11/` | basic 用户验证最佳：≈259.8s 高速通过车阵不撞 car5；complex 能过第一左弯但后段 `x≈-10,y≈-27` 近停。 |
 | **C004**（曲率可信度门控） | commit `0fc367e` | 更早的实车验证可靠基线（无白线逻辑），过弯不再反向打轮。 |
