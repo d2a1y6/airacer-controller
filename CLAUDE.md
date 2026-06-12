@@ -50,9 +50,9 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
   --world basic --car-slot car_1
 ```
 
-官方 SDK 和 Webots 安装见 [docs/official_testing.md](docs/official_testing.md)。人类守着 Webots 实跑时读 [docs/human_webots_testing.md](docs/human_webots_testing.md)；AI 复盘人类跑出的日志、telemetry、帧和截图时读 [docs/ai_offline_review.md](docs/ai_offline_review.md)。
+官方 SDK 和 Webots 安装见 [docs/official_testing.md](docs/official_testing.md)。人类守着 Webots 实跑时读 [docs/human_webots_testing.md](docs/human_webots_testing.md)；AI 复盘人类跑出的日志、telemetry、帧和截图时读 [docs/ai_offline_review.md](docs/ai_offline_review.md)。脚本入口和诊断工具速查见 [scripts/README.md](scripts/README.md)。
 
-**新会话接手前先读 [experiments/STATUS.md](experiments/STATUS.md)**：它是唯一的活动交接文档（当前状态、铁律、未解问题、下一步），每轮工作结束时就地更新，不要另建 handoff 文件。
+**新会话接手前先读 [experiments/STATUS.md](experiments/STATUS.md)**：它是唯一的活动交接文档（当前状态、铁律、未解问题、下一步），每轮工作结束时就地更新，不要另建 handoff 文件。实验目录怎么留档见 [experiments/README.md](experiments/README.md)；case 和 figure 的细则分别见 `experiments/cases/README.md`、`experiments/figures/README.md`。
 
 ## 工作铁律（详见 STATUS.md，每条都吃过亏）
 
