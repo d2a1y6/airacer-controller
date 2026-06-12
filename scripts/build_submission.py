@@ -96,12 +96,13 @@ _DEBUG_CONTROL_BLOCK = '''    try:
 
 
 def _debug_console_tee_header() -> list[str]:
-    """生成 controller console 文件镜像代码。
+    """生成 team_controller stdout/stderr 镜像代码。
 
-    功能：让 Webots controller 进程里的 stdout/stderr 同步写入本地日志文件。
+    功能：让 team_controller 所在进程的 stdout/stderr 同步写入本地日志文件。
     参数：无。
     返回：可插入调试构建头部的源码行。
     逻辑：仅在环境变量指定目录时启用；失败只打印警告，不影响控制器导入。
+        它不捕获 Webots GUI 或 supervisor 进程日志，不能当作碰栏/碰撞日志来源。
     """
 
     return [

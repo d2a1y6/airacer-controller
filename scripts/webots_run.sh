@@ -13,7 +13,7 @@
 # 产物：
 #   .tmp/run/control_<world>.jsonl       控制日志（始终开启）
 #   .tmp/run/frames_<world>/             相机帧 PNG（默认开启，可用 --no-frames 关闭）
-#   .tmp/run/webots_console/*.log        Webots controller console 输出
+#   .tmp/run/webots_console/*.log        team_controller stdout/stderr 镜像；不是 supervisor/Webots 碰撞日志
 #   .tmp/run.prev/                       上一轮产物（自动轮换保留一轮，再上一轮删除）
 set -euo pipefail
 
@@ -68,7 +68,7 @@ if [[ -d .tmp/run ]]; then
 fi
 mkdir -p .tmp/run
 mkdir -p .tmp/run/webots_console
-echo "Webots controller console → $PWD/.tmp/run/webots_console/*.log"
+echo "team_controller stdout/stderr tee → $PWD/.tmp/run/webots_console/*.log"
 
 # 3. 构建 debug 控制器（含 open/json/cv2.imwrite，禁止上传）
 python scripts/build_submission.py --mode fastest \

@@ -31,7 +31,7 @@ python scripts/build_submission.py --mode fastest \
 
 | 脚本 | 用途 | 关键点 |
 |---|---|---|
-| `webots_run.sh` | 从头跑 `basic` 或 `complex`，自动构建 debug controller、清理孤儿进程、保存日志和帧 | 默认每 10 帧保存一对 PNG 到 `.tmp/run/frames_<world>/` |
+| `webots_run.sh` | 从头跑 `basic` 或 `complex`，自动构建 debug controller、清理孤儿进程、保存日志和帧 | 默认每 10 帧保存一对 PNG；`webots_console` 只镜像 team_controller stdout/stderr，不是 supervisor 碰撞日志 |
 | `webots_jump_run.sh` | 从已有 telemetry 的某个 `x/y/heading` 近似启动，观察当前代码从该姿态会怎么开 | 只恢复位置和朝向，不是严格续跑 |
 | `make_teleport_world.py` | 给 jump run 生成临时 Webots world | 通常由 `webots_jump_run.sh` 调用 |
 

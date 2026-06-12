@@ -25,10 +25,10 @@ bash scripts/webots_run.sh basic --no-frames
 
 脚本会自动：清理孤儿 Webots / run_local 进程和旧遥测（避免 telemetry 交错）、把上一轮 `.tmp/run` 轮换成 `.tmp/run.prev`、构建带控制日志和帧存储的调试控制器、用 `--skip-validate` 启动 Webots。
 
-启动后终端会打印 Webots controller console 日志位置，例如：
+启动后终端会打印 team_controller stdout/stderr 镜像日志位置，例如：
 
 ```bash
-Webots controller console → /.../airacer-controller/.tmp/run/webots_console/*.log
+team_controller stdout/stderr tee → /.../airacer-controller/.tmp/run/webots_console/*.log
 ```
 
 AI 可以实时看：
@@ -37,7 +37,7 @@ AI 可以实时看：
 tail -f .tmp/run/webots_console/*.log
 ```
 
-跑完后同一个目录也能直接读取。这里抓的是 controller 进程里的 `stdout/stderr`，包括学生控制器 `print` 和 Webots controller 侧的 Python 提示。
+跑完后同一个目录也能直接读取。这里抓的是 **team_controller/controller 进程里的 `stdout/stderr`**，包括学生控制器 `print` 和导入错误。它不是完整 Webots GUI console，也不是 supervisor 碰撞日志；擦栏/碰栏仍要靠肉眼、截图、overlay、车身位置和 telemetry 综合判断。
 
 调试构建含 `open/json/np.save`，只能本地跑。正式提交版不要带这些开关。
 
@@ -99,7 +99,7 @@ R0xx human complex:
 跑完后，把观察结论告诉 AI，并说明 `.tmp/run/` 里有哪些产物。如果是 AI 自跑，也要把这些结论写进 notes 或下一步分析里，例如：
 
 - `.tmp/run/control_basic.jsonl`
-- `.tmp/run/webots_console/*.log`
+- `.tmp/run/webots_console/*.log`（team_controller stdout/stderr，不保证包含 Webots/supervisor 碰撞日志）
 - `.tmp/run/frames_basic/`
 - SDK telemetry：`/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl`
 

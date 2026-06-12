@@ -16,6 +16,7 @@
 | 相机帧 | `.tmp/run/frames_*/*.png` | 逐帧看白线、道路 mask、障碍物、栏杆 | 整场 PNG 不进 git；关键帧渲染成 overlay 后裁进 case |
 | overlay | `.tmp/run/*overlay*` | 画面、mask、中心线、白线、边界证据 | 批量图看完即删；最多裁 1-3 张进 case |
 | debug 控制器 | `.tmp/run/team_controller_debug.py` | 本地带日志/存帧构建 | 可重建，不归档 |
+| controller console tee | `.tmp/run/webots_console/*.log` | team_controller 进程的 stdout/stderr | 不是完整 Webots/supervisor console，不保证包含碰栏/碰撞日志 |
 
 `scripts/webots_run.sh` 默认就保存相机帧，所以正常情况下**每一轮都有整场帧可看，不需要为了看某个时刻重跑**。只有人类显式用 `--no-frames` 跑、或要看的窗口在 `--frame-window` 之外时才会缺帧。
 
@@ -50,7 +51,7 @@ python scripts/plot_run.py --telemetry <telemetry.jsonl> --out .tmp/run/trajecto
 
 - telemetry 是否干净，是否 interleaved。
 - 末帧位置、最长爬行段、低速段。
-- 是否有 lap、finish、collision 事件。
+- 是否有 lap、finish、collision 事件。注意：本地 telemetry 的 collision 事件主要来自 supervisor 的车车距离判定；擦栏/碰栏可能不进入 telemetry 事件。
 - 与观察反馈是否一致。
 
 再看控制器内部行为：
