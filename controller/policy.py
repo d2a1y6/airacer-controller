@@ -45,6 +45,8 @@ _FORCE_ESCAPE_FRAMES = 0
 _FORCE_ESCAPE_SPEED = 0.0
 _FORCE_ESCAPE_STEERING = 0.0
 _FORCE_ESCAPE_SIGN = 1.0
+# 指令速度接近零计数器：物理卡死检测（速度被平台压到≈0 即物理卡死，不依赖丢线判断）
+_ZERO_SPEED_STREAK = 0
 
 
 def reset_policy_state() -> None:
@@ -63,7 +65,7 @@ def reset_policy_state() -> None:
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF, _TURN_IN_LATCH
-    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN
+    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _ZERO_SPEED_STREAK
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
@@ -77,6 +79,7 @@ def reset_policy_state() -> None:
     _FORCE_ESCAPE_SPEED = 0.0
     _FORCE_ESCAPE_STEERING = 0.0
     _FORCE_ESCAPE_SIGN = 1.0
+    _ZERO_SPEED_STREAK = 0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -546,9 +549,12 @@ def _target_speed(
         target = max(target, profile["straight_speed"])
     if timestamp < profile["start_caution_seconds"]:
         target = min(target, profile["start_speed"])
-    # 多车：近处有对手车时降速，给反应时间
+    # 多车：近处有对手车时降速
     if track.near_obstacle:
         target *= profile.get("opponent_speed_factor", 0.72)
+        # 弯道+对手车：更激进减速，防止多车弯道碰撞卡死
+        if signals["curve_risk"] >= profile.get("opponent_corner_curve_threshold", 0.25):
+            target *= profile.get("opponent_corner_speed_factor", 0.55)
     return clamp(target, profile["min_speed"], profile["max_speed"])
 
 
@@ -613,7 +619,11 @@ def _escape_if_stalled(
 
     if _ESCAPE_FRAMES > 0:
         _ESCAPE_FRAMES -= 1
-        escape_steering = _ESCAPE_STEERING_SIGN * _ESCAPE_STEERING_MAGNITUDE
+        # 脱困期间交替打轮（左右摆动），打破物理卡死的静摩擦。
+        # 每 10 帧切换一次方向，叠加在已设置的基准舵角上。
+        wiggle = 1.0 if (_ESCAPE_FRAMES // 10) % 2 == 0 else -1.0
+        wiggle_amplitude = float(profile.get("escape_wiggle_amplitude", 0.20))
+        escape_steering = _ESCAPE_STEERING_SIGN * (_ESCAPE_STEERING_MAGNITUDE + wiggle * wiggle_amplitude)
         max_abs = profile["max_abs_steering"]
         return (
             clamp(escape_steering, -max_abs, max_abs),
@@ -889,7 +899,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED
-    global _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES
+    global _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES, _ZERO_SPEED_STREAK
 
     profile = get_profile(mode)
     timestamp = float(timestamp)
@@ -947,16 +957,26 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
             _LOST_STREAK = 0
             _NOT_STUCK_FRAMES = 0
 
-    # 触发：丢线 ≥ 60 帧（~2s）且仿真已运行足够时间
-    lost_streak_threshold = int(profile.get("force_reverse_lost_streak", 60))
-    if _LOST_STREAK >= lost_streak_threshold and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
+    # 触发A：丢线持续过久
+    lost_streak_threshold = int(profile.get("force_reverse_lost_streak", 45))
+    # 触发B：指令速度接近零持续过久（物理卡死，即使不丢线也强制脱困）
+    zero_speed_frames = int(profile.get("force_reverse_zero_speed_frames", 120))
+    zero_speed_threshold = float(profile.get("force_reverse_zero_speed_threshold", 0.05))
+    if speed <= zero_speed_threshold and drive_mode != "escaping":
+        _ZERO_SPEED_STREAK += 1
+    else:
+        _ZERO_SPEED_STREAK = 0
+    _zero_trigger = _ZERO_SPEED_STREAK >= zero_speed_frames
+
+    if (_LOST_STREAK >= lost_streak_threshold or _zero_trigger) and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
         _FORCE_ESCAPE_ACTIVE = True
-        _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 90))
-        _FORCE_ESCAPE_SPEED = float(profile.get("force_reverse_lost_speed", 0.28))
-        _FORCE_ESCAPE_STEERING = float(profile.get("force_reverse_lost_steering", 0.82))
+        _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 120))
+        _FORCE_ESCAPE_SPEED = float(profile.get("force_reverse_lost_speed", 0.35))
+        _FORCE_ESCAPE_STEERING = float(profile.get("force_reverse_lost_steering", 0.88))
         _FORCE_ESCAPE_SIGN = _road_direction_sign(track)
         _LOST_STREAK = 0
         _NOT_STUCK_FRAMES = 0
+        _ZERO_SPEED_STREAK = 0
 
     # ── 对手车主动避让转向：基于左右边界余量差，朝开阔侧加舵角偏置 ──
     if (

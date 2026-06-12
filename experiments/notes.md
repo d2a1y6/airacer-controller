@@ -34,6 +34,22 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R052 — 6车 complex 多圈成功完赛（2026-06-13, complex, 6-car, multi-car 分支）
+- **构建**: R051 + 多车脱困增强
+- **配置**: complex, 6 车 (car_1=fastest 本车, car_2-6 对手), practice, batch+fast
+- **结果**:
+  - **car_1 成功完赛 3-4 圈**（t=0→275+s 实时监控，最后帧 t=275.9s speed=5.79）
+  - CP3 弯只短暂卡死一次：t=191.0s speed=0.05 → t=192.8s speed=5.77（~2s 自救成功）
+  - 最大速度 5.80，巡航速度稳定在 5.5-5.8
+  - 其他车：thunder/nova 也在跑，viper/frost/shadow 在不同位置卡死
+- **关键改动（R051→R052）**:
+  1. **弯道+对手车激进减速**: `opponent_corner_speed_factor=0.55`（curve_risk≥0.25 时叠加在 opponent_speed_factor=0.72 之上 → 总减速因子 0.40）
+  2. **脱困增强**: 转向摆动(wiggle 0.30)、低速脱困转向 0.95、顶栏脱困转向 0.92
+  3. **物理卡死检测**: speed≤0.08 持续 60 帧即触发 force_escape（不依赖丢线判断）
+  4. **降低脱困置信门槛**: escape_min_confidence 0.48→0.25（多车遮挡时感知置信常偏低）
+- **现象**: CP3 6车拥堵处车会短暂撞栏（~2s），新脱困摆动策略成功让车"摇出来"，然后恢复正常行驶
+- **结论**: 多车极端场景策略验证通过。car_1 在 6 车 complex 中稳定完赛多圈。详见 notes.md R052
+
 ### R051 — 多车安全策略修复 + 主动避让转向（2026-06-13, multi-car 分支）
 - **构建**: multi-car 分支 R050 基础上
 - **修复**: `force_reverse`（speed=-0.42）改为 `force_escape`（speed=0.28 + steering=0.82 forward）

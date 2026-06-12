@@ -381,7 +381,7 @@ CONTROL = {
     # 速度提升 Phase 4（激进）：出弯后更快回速，缩短低速段。
     "max_speed_increase_per_sec": 5.0,
     "max_speed_decrease_per_sec": 4.80,
-    "escape_min_confidence": 0.48,
+    "escape_min_confidence": 0.25,
     "escape_curve_threshold": 0.45,
     "escape_steering_threshold": 0.70,
     "escape_offset_threshold": 0.62,
@@ -390,9 +390,11 @@ CONTROL = {
     "escape_offset_curve_abs_max": 0.30,
     "escape_offset_lookahead_alignment": 0.30,
     "escape_offset_trigger_frames": 14,
-    "escape_low_speed_threshold": 0.22,
-    "escape_low_speed_trigger_frames": 120,
-    "escape_signature_delta": 0.13,
+    "escape_low_speed_threshold": 0.28,
+    "escape_low_speed_trigger_frames": 45,
+    "escape_signature_delta": 0.35,
+    # 脱困摆动幅度：脱困期间每10帧翻转方向，叠加在基准舵角上的额外幅度
+    "escape_wiggle_amplitude": 0.30,
     # 几何（急弯卡边）脱困必须同时满足低指令速度：平稳巡弯也会出现"高弯量+签名稳定"
     # （complex R 实跑 t≈37.2 在正常左弯中误触发 escape，直接导致撞左栏），真卡边时
     # 指令速度必然已被弯道/转向因子压低。
@@ -404,28 +406,31 @@ CONTROL = {
     "escape_offset_frames": 72,
     "escape_offset_steering": 0.74,
     "escape_offset_speed": 0.78,
-    "escape_low_speed_frames": 120,
-    "escape_low_speed_steering": 0.74,
-    "escape_low_speed_speed": 0.90,
-    "escape_pinned_lateral_min": 0.45,
-    "escape_pinned_steering_min": 0.55,
-    "escape_pinned_speed_max": 0.55,
-    "escape_pinned_trigger_frames": 20,
-    "escape_pinned_frames": 28,
-    "escape_pinned_steering": 0.80,
-    "escape_pinned_speed": 0.62,
+    "escape_low_speed_frames": 90,
+    "escape_low_speed_steering": 0.95,
+    "escape_low_speed_speed": 0.35,
+    "escape_pinned_lateral_min": 0.38,
+    "escape_pinned_steering_min": 0.48,
+    "escape_pinned_speed_max": 0.60,
+    "escape_pinned_trigger_frames": 12,
+    "escape_pinned_frames": 40,
+    "escape_pinned_steering": 0.92,
+    "escape_pinned_speed": 0.35,
     # complex 后段静态车 + 单侧边界贴住时，画面冻结但指令速度可能仍高于 low_speed 阈值；
     # 这条只在红色环境、近障碍、单侧余量为 0 附近时启用，避免普通巡弯误触发。
     "escape_boundary_margin_risk": 0.90,
     "escape_boundary_margin_max": 0.08,
     "escape_boundary_speed_max": 0.46,
     "escape_boundary_min_confidence": 0.35,
-    "escape_boundary_trigger_frames": 8,
-    "escape_boundary_frames": 72,
-    "escape_boundary_steering": 0.86,
-    "escape_boundary_speed": 0.86,
+    "escape_boundary_trigger_frames": 6,
+    "escape_boundary_frames": 90,
+    "escape_boundary_steering": 0.92,
+    "escape_boundary_speed": 0.45,
     # ── 多车安全 ──
     "opponent_speed_factor": 0.72,
+    # 弯道中近处有对手车时额外减速（防止多车弯道碰撞卡死）
+    "opponent_corner_speed_factor": 0.55,
+    "opponent_corner_curve_threshold": 0.25,
     # 对手车主动避让转向：基于边界余量差，朝远离障碍方向加舵角偏置
     "opponent_avoid_steering_enable": True,
     "opponent_avoid_steering_gain": 0.40,
@@ -433,10 +438,13 @@ CONTROL = {
     # ── 丢线强制脱困（多车/卡死安全网）──
     # 持续丢线后朝路面方向打硬舵+低速前进，作为所有几何脱困的兜底。
     # 不依赖特定速度/偏移/余量条件，只靠丢线持续时间触发。
-    "force_reverse_lost_streak": 60,
-    "force_reverse_lost_frames": 90,
-    "force_reverse_lost_speed": 0.28,
-    "force_reverse_lost_steering": 0.82,
+    "force_reverse_lost_streak": 45,
+    "force_reverse_lost_frames": 120,
+    "force_reverse_lost_speed": 0.40,
+    "force_reverse_lost_steering": 0.95,
+    # 物理卡死检测：指令速度≤此值持续过多帧即触发 force_escape（不依赖丢线）
+    "force_reverse_zero_speed_threshold": 0.08,
+    "force_reverse_zero_speed_frames": 60,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }

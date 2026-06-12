@@ -490,7 +490,7 @@ CONTROL = {
 
     "max_speed_increase_per_sec": 5.0,
     "max_speed_decrease_per_sec": 4.80,
-    "escape_min_confidence": 0.48,
+    "escape_min_confidence": 0.25,
     "escape_curve_threshold": 0.45,
     "escape_steering_threshold": 0.70,
     "escape_offset_threshold": 0.62,
@@ -499,9 +499,11 @@ CONTROL = {
     "escape_offset_curve_abs_max": 0.30,
     "escape_offset_lookahead_alignment": 0.30,
     "escape_offset_trigger_frames": 14,
-    "escape_low_speed_threshold": 0.22,
-    "escape_low_speed_trigger_frames": 120,
-    "escape_signature_delta": 0.13,
+    "escape_low_speed_threshold": 0.28,
+    "escape_low_speed_trigger_frames": 45,
+    "escape_signature_delta": 0.35,
+
+    "escape_wiggle_amplitude": 0.30,
 
 
 
@@ -513,28 +515,31 @@ CONTROL = {
     "escape_offset_frames": 72,
     "escape_offset_steering": 0.74,
     "escape_offset_speed": 0.78,
-    "escape_low_speed_frames": 120,
-    "escape_low_speed_steering": 0.74,
-    "escape_low_speed_speed": 0.90,
-    "escape_pinned_lateral_min": 0.45,
-    "escape_pinned_steering_min": 0.55,
-    "escape_pinned_speed_max": 0.55,
-    "escape_pinned_trigger_frames": 20,
-    "escape_pinned_frames": 28,
-    "escape_pinned_steering": 0.80,
-    "escape_pinned_speed": 0.62,
+    "escape_low_speed_frames": 90,
+    "escape_low_speed_steering": 0.95,
+    "escape_low_speed_speed": 0.35,
+    "escape_pinned_lateral_min": 0.38,
+    "escape_pinned_steering_min": 0.48,
+    "escape_pinned_speed_max": 0.60,
+    "escape_pinned_trigger_frames": 12,
+    "escape_pinned_frames": 40,
+    "escape_pinned_steering": 0.92,
+    "escape_pinned_speed": 0.35,
 
 
     "escape_boundary_margin_risk": 0.90,
     "escape_boundary_margin_max": 0.08,
     "escape_boundary_speed_max": 0.46,
     "escape_boundary_min_confidence": 0.35,
-    "escape_boundary_trigger_frames": 8,
-    "escape_boundary_frames": 72,
-    "escape_boundary_steering": 0.86,
-    "escape_boundary_speed": 0.86,
+    "escape_boundary_trigger_frames": 6,
+    "escape_boundary_frames": 90,
+    "escape_boundary_steering": 0.92,
+    "escape_boundary_speed": 0.45,
 
     "opponent_speed_factor": 0.72,
+
+    "opponent_corner_speed_factor": 0.55,
+    "opponent_corner_curve_threshold": 0.25,
 
     "opponent_avoid_steering_enable": True,
     "opponent_avoid_steering_gain": 0.40,
@@ -542,10 +547,13 @@ CONTROL = {
 
 
 
-    "force_reverse_lost_streak": 60,
-    "force_reverse_lost_frames": 90,
-    "force_reverse_lost_speed": 0.28,
-    "force_reverse_lost_steering": 0.82,
+    "force_reverse_lost_streak": 45,
+    "force_reverse_lost_frames": 120,
+    "force_reverse_lost_speed": 0.40,
+    "force_reverse_lost_steering": 0.95,
+
+    "force_reverse_zero_speed_threshold": 0.08,
+    "force_reverse_zero_speed_frames": 60,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }
@@ -2180,6 +2188,8 @@ _FORCE_ESCAPE_SPEED = 0.0
 _FORCE_ESCAPE_STEERING = 0.0
 _FORCE_ESCAPE_SIGN = 1.0
 
+_ZERO_SPEED_STREAK = 0
+
 
 def reset_policy_state() -> None:
 \
@@ -2197,7 +2207,7 @@ def reset_policy_state() -> None:
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF, _TURN_IN_LATCH
-    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN
+    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _ZERO_SPEED_STREAK
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
@@ -2211,6 +2221,7 @@ def reset_policy_state() -> None:
     _FORCE_ESCAPE_SPEED = 0.0
     _FORCE_ESCAPE_STEERING = 0.0
     _FORCE_ESCAPE_SIGN = 1.0
+    _ZERO_SPEED_STREAK = 0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -2683,6 +2694,9 @@ def _target_speed(
 
     if track.near_obstacle:
         target *= profile.get("opponent_speed_factor", 0.72)
+
+        if signals["curve_risk"] >= profile.get("opponent_corner_curve_threshold", 0.25):
+            target *= profile.get("opponent_corner_speed_factor", 0.55)
     return clamp(target, profile["min_speed"], profile["max_speed"])
 
 
@@ -2747,7 +2761,11 @@ def _escape_if_stalled(
 
     if _ESCAPE_FRAMES > 0:
         _ESCAPE_FRAMES -= 1
-        escape_steering = _ESCAPE_STEERING_SIGN * _ESCAPE_STEERING_MAGNITUDE
+
+
+        wiggle = 1.0 if (_ESCAPE_FRAMES // 10) % 2 == 0 else -1.0
+        wiggle_amplitude = float(profile.get("escape_wiggle_amplitude", 0.20))
+        escape_steering = _ESCAPE_STEERING_SIGN * (_ESCAPE_STEERING_MAGNITUDE + wiggle * wiggle_amplitude)
         max_abs = profile["max_abs_steering"]
         return (
             clamp(escape_steering, -max_abs, max_abs),
@@ -3023,7 +3041,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED
-    global _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES
+    global _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES, _ZERO_SPEED_STREAK
 
     profile = get_profile(mode)
     timestamp = float(timestamp)
@@ -3082,15 +3100,25 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
             _NOT_STUCK_FRAMES = 0
 
 
-    lost_streak_threshold = int(profile.get("force_reverse_lost_streak", 60))
-    if _LOST_STREAK >= lost_streak_threshold and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
+    lost_streak_threshold = int(profile.get("force_reverse_lost_streak", 45))
+
+    zero_speed_frames = int(profile.get("force_reverse_zero_speed_frames", 120))
+    zero_speed_threshold = float(profile.get("force_reverse_zero_speed_threshold", 0.05))
+    if speed <= zero_speed_threshold and drive_mode != "escaping":
+        _ZERO_SPEED_STREAK += 1
+    else:
+        _ZERO_SPEED_STREAK = 0
+    _zero_trigger = _ZERO_SPEED_STREAK >= zero_speed_frames
+
+    if (_LOST_STREAK >= lost_streak_threshold or _zero_trigger) and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
         _FORCE_ESCAPE_ACTIVE = True
-        _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 90))
-        _FORCE_ESCAPE_SPEED = float(profile.get("force_reverse_lost_speed", 0.28))
-        _FORCE_ESCAPE_STEERING = float(profile.get("force_reverse_lost_steering", 0.82))
+        _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 120))
+        _FORCE_ESCAPE_SPEED = float(profile.get("force_reverse_lost_speed", 0.35))
+        _FORCE_ESCAPE_STEERING = float(profile.get("force_reverse_lost_steering", 0.88))
         _FORCE_ESCAPE_SIGN = _road_direction_sign(track)
         _LOST_STREAK = 0
         _NOT_STUCK_FRAMES = 0
+        _ZERO_SPEED_STREAK = 0
 
 
     if (
