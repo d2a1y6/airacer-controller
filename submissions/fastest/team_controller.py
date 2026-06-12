@@ -536,10 +536,16 @@ CONTROL = {
 
     "opponent_speed_factor": 0.72,
 
+    "opponent_avoid_steering_enable": True,
+    "opponent_avoid_steering_gain": 0.40,
+    "opponent_avoid_steering_max": 0.18,
+
+
+
     "force_reverse_lost_streak": 60,
-    "force_reverse_lost_frames": 70,
-    "force_reverse_lost_speed": -0.42,
-    "force_reverse_lost_steering": 0.75,
+    "force_reverse_lost_frames": 90,
+    "force_reverse_lost_speed": 0.28,
+    "force_reverse_lost_steering": 0.82,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }
@@ -2168,11 +2174,11 @@ _TURN_IN_LATCH = 0.0
 
 _LOST_STREAK = 0
 _NOT_STUCK_FRAMES = 0
-_FORCE_REVERSE_ACTIVE = False
-_FORCE_REVERSE_FRAMES = 0
-_FORCE_REVERSE_SPEED = 0.0
-_FORCE_REVERSE_STEERING = 0.0
-_FORCE_REVERSE_SIGN = 1.0
+_FORCE_ESCAPE_ACTIVE = False
+_FORCE_ESCAPE_FRAMES = 0
+_FORCE_ESCAPE_SPEED = 0.0
+_FORCE_ESCAPE_STEERING = 0.0
+_FORCE_ESCAPE_SIGN = 1.0
 
 
 def reset_policy_state() -> None:
@@ -2191,7 +2197,7 @@ def reset_policy_state() -> None:
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF, _TURN_IN_LATCH
-    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_REVERSE_ACTIVE, _FORCE_REVERSE_FRAMES, _FORCE_REVERSE_SPEED, _FORCE_REVERSE_STEERING, _FORCE_REVERSE_SIGN
+    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
@@ -2200,11 +2206,11 @@ def reset_policy_state() -> None:
     _TURN_IN_LATCH = 0.0
     _LOST_STREAK = 0
     _NOT_STUCK_FRAMES = 0
-    _FORCE_REVERSE_ACTIVE = False
-    _FORCE_REVERSE_FRAMES = 0
-    _FORCE_REVERSE_SPEED = 0.0
-    _FORCE_REVERSE_STEERING = 0.0
-    _FORCE_REVERSE_SIGN = 1.0
+    _FORCE_ESCAPE_ACTIVE = False
+    _FORCE_ESCAPE_FRAMES = 0
+    _FORCE_ESCAPE_SPEED = 0.0
+    _FORCE_ESCAPE_STEERING = 0.0
+    _FORCE_ESCAPE_SIGN = 1.0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -3016,24 +3022,24 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 
 
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
-    global _FORCE_REVERSE_ACTIVE, _FORCE_REVERSE_FRAMES, _FORCE_REVERSE_SPEED
-    global _FORCE_REVERSE_STEERING, _FORCE_REVERSE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES
+    global _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED
+    global _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES
 
     profile = get_profile(mode)
     timestamp = float(timestamp)
     _maybe_reset_policy_by_timestamp(timestamp, profile)
 
 
-    if _FORCE_REVERSE_ACTIVE:
-        if _FORCE_REVERSE_FRAMES > 0:
-            _FORCE_REVERSE_FRAMES -= 1
-            rev_steering = _FORCE_REVERSE_SIGN * _FORCE_REVERSE_STEERING
-            steering_out = clamp(rev_steering, -1.0, 1.0)
-            speed_out = _FORCE_REVERSE_SPEED
+    if _FORCE_ESCAPE_ACTIVE:
+        if _FORCE_ESCAPE_FRAMES > 0:
+            _FORCE_ESCAPE_FRAMES -= 1
+            esc_steering = _FORCE_ESCAPE_SIGN * _FORCE_ESCAPE_STEERING
+            steering_out = clamp(esc_steering, -1.0, 1.0)
+            speed_out = _FORCE_ESCAPE_SPEED
             _update_policy_state(track, steering_out, speed_out, "escaping", timestamp, profile)
             return ControlCmd(steering_out, speed_out)
         else:
-            _FORCE_REVERSE_ACTIVE = False
+            _FORCE_ESCAPE_ACTIVE = False
             _LOST_STREAK = 0
 
     signals = _control_signals(track, profile)
@@ -3077,14 +3083,27 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 
 
     lost_streak_threshold = int(profile.get("force_reverse_lost_streak", 60))
-    if _LOST_STREAK >= lost_streak_threshold and not _FORCE_REVERSE_ACTIVE and timestamp > 3.0:
-        _FORCE_REVERSE_ACTIVE = True
-        _FORCE_REVERSE_FRAMES = int(profile.get("force_reverse_lost_frames", 70))
-        _FORCE_REVERSE_SPEED = float(profile.get("force_reverse_lost_speed", -0.42))
-        _FORCE_REVERSE_STEERING = float(profile.get("force_reverse_lost_steering", 0.75))
-        _FORCE_REVERSE_SIGN = _road_direction_sign(track)
+    if _LOST_STREAK >= lost_streak_threshold and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
+        _FORCE_ESCAPE_ACTIVE = True
+        _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 90))
+        _FORCE_ESCAPE_SPEED = float(profile.get("force_reverse_lost_speed", 0.28))
+        _FORCE_ESCAPE_STEERING = float(profile.get("force_reverse_lost_steering", 0.82))
+        _FORCE_ESCAPE_SIGN = _road_direction_sign(track)
         _LOST_STREAK = 0
         _NOT_STUCK_FRAMES = 0
+
+
+    if (
+        profile.get("opponent_avoid_steering_enable", True)
+        and track.near_obstacle
+        and not track.lost
+        and track.confidence >= 0.30
+    ):
+        margin_diff = track.right_margin_near - track.left_margin_near
+        avoid_gain = float(profile.get("opponent_avoid_steering_gain", 0.40))
+        avoid_max = float(profile.get("opponent_avoid_steering_max", 0.18))
+        avoid_bias = clamp(margin_diff * avoid_gain, -avoid_max, avoid_max)
+        final_steering = clamp(final_steering + avoid_bias, -1.0, 1.0)
 
     return ControlCmd(final_steering, speed)
 

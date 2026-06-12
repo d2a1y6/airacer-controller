@@ -426,11 +426,17 @@ CONTROL = {
     "escape_boundary_speed": 0.86,
     # ── 多车安全 ──
     "opponent_speed_factor": 0.72,
-    # ── 丢线强制倒车（多车/卡死安全网）──
+    # 对手车主动避让转向：基于边界余量差，朝远离障碍方向加舵角偏置
+    "opponent_avoid_steering_enable": True,
+    "opponent_avoid_steering_gain": 0.40,
+    "opponent_avoid_steering_max": 0.18,
+    # ── 丢线强制脱困（多车/卡死安全网）──
+    # 持续丢线后朝路面方向打硬舵+低速前进，作为所有几何脱困的兜底。
+    # 不依赖特定速度/偏移/余量条件，只靠丢线持续时间触发。
     "force_reverse_lost_streak": 60,
-    "force_reverse_lost_frames": 70,
-    "force_reverse_lost_speed": -0.42,
-    "force_reverse_lost_steering": 0.75,
+    "force_reverse_lost_frames": 90,
+    "force_reverse_lost_speed": 0.28,
+    "force_reverse_lost_steering": 0.82,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }

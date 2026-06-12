@@ -34,6 +34,7 @@ python scripts/build_submission.py --mode fastest \
 | `webots_run.sh` | 从头跑 `basic` 或 `complex`，自动构建 debug controller、清理孤儿进程、保存日志、帧和**撞栏接触日志** | 默认每 10 帧保存一对 PNG（`--no-frames` 关）；默认开撞栏接触日志 → `.tmp/run/contact_<world>.jsonl`（`--no-contact` 关）；新 run 开始前会把旧 `.tmp/run` 和旧 SDK telemetry 移到 `.tmp/run.archive/`，滚动保留最近 10 个 |
 | `webots_jump_run.sh` | 从已有 telemetry 的某个 `x/y/heading` 近似启动，观察当前代码从该姿态会怎么开 | 只恢复位置和朝向，不是严格续跑；新 jump run 开始前会把旧 `.tmp/jump_run` 和旧 SDK telemetry 移到 `.tmp/jump_run.archive/`，滚动保留最近 10 个 |
 | `make_teleport_world.py` | 给 jump run 生成临时 Webots world | 通常由 `webots_jump_run.sh` 调用 |
+| `webots_multicar_run.sh` | 双车 Webots 测试（多车极端场景） | 构建两车 debug 控制器并启动；默认 car_1=fastest, car_2=safe；产物在 `.tmp/multicar/`；极端场景说明见 `docs/multicar_extreme_tests.md` |
 
 常用命令：
 
@@ -45,6 +46,9 @@ bash scripts/webots_run.sh complex --no-frames
 
 bash scripts/webots_jump_run.sh complex 226.5 --duration 6 \
   --telemetry /Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl
+
+bash scripts/webots_multicar_run.sh basic
+bash scripts/webots_multicar_run.sh complex --no-frames
 ```
 
 ## 诊断一轮 run

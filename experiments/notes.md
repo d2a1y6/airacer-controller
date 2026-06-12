@@ -34,6 +34,22 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R051 — 多车安全策略修复 + 主动避让转向（2026-06-13, multi-car 分支）
+- **构建**: multi-car 分支 R050 基础上
+- **修复**: `force_reverse`（speed=-0.42）改为 `force_escape`（speed=0.28 + steering=0.82 forward）
+  - 原因：`clamp_cmd` 和平台接口都要求 speed ∈ [0,1]，负速度永远不会到达车辆
+  - 改为朝路面方向硬舵 + 低速前进脱困，效果等价（只是 forward 替代 reverse）
+  - 帧数从 70 增至 90（forward 需要更多帧补偿方向差异）
+- **新增对手主动避让转向**: `opponent_avoid_steering`
+  - `near_obstacle=True` 时，基于左右 margin 差朝开阔侧加舵角偏置（gain=0.40, max=0.18）
+  - 只在高置信、非丢线时启用
+  - 此前只有降速（×0.72），没有转向避让
+- **新增多车测试基建**:
+  - `scripts/webots_multicar_run.sh` — 一键双车 Webots 测试
+  - `docs/multicar_extreme_tests.md` — 三大极端场景（堵路/被撞/卡栏杆）的测试方法和预期行为
+- **测试结果**: pytest 122/122 passed, build+validate 通过
+- **结论/下一步**: 需要 Webots 实跑验证多车极端场景（见 `docs/multicar_extreme_tests.md`）
+
 ### R050 — 上游合并 + 多车安全改进（2026-06-13, 分支 multi-car-v2）
 - **构建**: working-tree（基于 upstream/main R049），单一 CONTROL profile
 - **合并**: 从 upstream/main (a9ba0a1) 创建 multi-car-v2 分支，整合上游全部改进：
