@@ -39,3 +39,4 @@ config/local/
 results/**
 !results/
 !results/.gitkeep
+pkudsa.airacer/

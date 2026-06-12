@@ -91,6 +91,7 @@ VISION_PROFILE = {
     "max_segment_width_ratio": 0.90,
     "wide_segment_localize_ratio": 0.58,
     "wide_segment_window_ratio": 0.34,
+    "temporal_anchor_window_ratio": 0.38,
     "max_center_jump_ratio": 0.35,
     "min_valid_scans": 4,
     "min_camera_confidence": 0.12,
@@ -423,6 +424,13 @@ CONTROL = {
     "escape_boundary_frames": 72,
     "escape_boundary_steering": 0.86,
     "escape_boundary_speed": 0.86,
+    # ── 多车安全 ──
+    "opponent_speed_factor": 0.72,
+    # ── 丢线强制倒车（多车/卡死安全网）──
+    "force_reverse_lost_streak": 60,
+    "force_reverse_lost_frames": 70,
+    "force_reverse_lost_speed": -0.42,
+    "force_reverse_lost_steering": 0.75,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }

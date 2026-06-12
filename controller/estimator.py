@@ -546,6 +546,12 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     confidence = _geometry_confidence(obs, points, y_span, fit_score)
     if line_trust > 0.0:
         confidence = max(confidence, obs.line_confidence * ESTIMATOR_PROFILE["line_target_confidence_scale"])
+
+    # 红色环境（complex 赛道）感知难度更大，自然置信度偏低，
+    # 给小幅加成减少误丢线，但仅在几何本身不算太差时生效。
+    if red_environment and confidence > ESTIMATOR_PROFILE["lost_confidence"] * 0.6:
+        confidence = min(confidence + 0.08, 1.0)
+
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
         track = _lost_track(confidence, red_environment, obs)
         _LAST_TRACK = track

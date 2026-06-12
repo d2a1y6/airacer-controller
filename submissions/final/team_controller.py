@@ -200,6 +200,7 @@ VISION_PROFILE = {
     "max_segment_width_ratio": 0.90,
     "wide_segment_localize_ratio": 0.58,
     "wide_segment_window_ratio": 0.34,
+    "temporal_anchor_window_ratio": 0.38,
     "max_center_jump_ratio": 0.35,
     "min_valid_scans": 4,
     "min_camera_confidence": 0.12,
@@ -532,6 +533,13 @@ CONTROL = {
     "escape_boundary_frames": 72,
     "escape_boundary_steering": 0.86,
     "escape_boundary_speed": 0.86,
+
+    "opponent_speed_factor": 0.72,
+
+    "force_reverse_lost_streak": 60,
+    "force_reverse_lost_frames": 70,
+    "force_reverse_lost_speed": -0.42,
+    "force_reverse_lost_steering": 0.75,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }
@@ -618,6 +626,34 @@ def detect_near_vehicle_obstacle(image: np.ndarray, profile: dict | None = None)
 
 
 _RED_ENVIRONMENT_FLAG = 32
+
+
+
+_LAST_FRAME_CENTERS: list[tuple[float, float]] | None = None
+_LAST_FRAME_TIMESTAMP: float | None = None
+
+
+def _save_frame_centers(centers: list[tuple[float, float]]) -> None:
+
+    global _LAST_FRAME_CENTERS
+    if not centers:
+        _LAST_FRAME_CENTERS = None
+    else:
+        _LAST_FRAME_CENTERS = list(centers)
+
+
+def _maybe_reset_perception_by_timestamp(timestamp: float | None) -> None:
+
+    global _LAST_FRAME_CENTERS, _LAST_FRAME_TIMESTAMP
+    if timestamp is None:
+        _LAST_FRAME_CENTERS = None
+        _LAST_FRAME_TIMESTAMP = None
+        return
+    if _LAST_FRAME_TIMESTAMP is not None:
+        elapsed = float(timestamp) - float(_LAST_FRAME_TIMESTAMP)
+        if elapsed < 0.0 or elapsed > 2.0:
+            _LAST_FRAME_CENTERS = None
+    _LAST_FRAME_TIMESTAMP = float(timestamp)
 
 
 @dataclass
@@ -1195,6 +1231,25 @@ def _pick_segment(
         return None, used_fallback
 
     best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+
+
+    temporal_anchor: float | None = None
+    if wide_localize_enabled and _LAST_FRAME_CENTERS:
+        height = road_mask.shape[0]
+        best_y_dist = float("inf")
+        for cx, cy in _LAST_FRAME_CENTERS:
+            dist = abs(cy - float(y))
+            if dist < best_y_dist:
+                best_y_dist = dist
+                temporal_anchor = cx
+        best_candidate_width = max(c[1] - c[0] for c in candidates)
+        temporal_window = float(width) * VISION_PROFILE.get("temporal_anchor_window_ratio", 0.38)
+        if best_candidate_width > float(width) * VISION_PROFILE["wide_segment_localize_ratio"] * 0.7:
+            if temporal_anchor is not None and abs(temporal_anchor - previous_center) > temporal_window * 0.5:
+                previous_center = previous_center * 0.35 + temporal_anchor * 0.65
+
+                best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+
     best = _localize_wide_segment(best, previous_center, width, enabled=wide_localize_enabled)
     center = (best[0] + best[1]) * 0.5
     max_jump = float(width) * VISION_PROFILE["max_center_jump_ratio"]
@@ -1277,8 +1332,10 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
 
 
     if not _valid_image(image):
+        _save_frame_centers([])
         return _empty_scan()
 
+    _maybe_reset_perception_by_timestamp(timestamp)
     road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp)
     red_environment = _is_red_environment(image)
     wide_localize_enabled = red_environment
@@ -1323,6 +1380,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
             fallback_count += 1
 
     if not centers:
+        _save_frame_centers([])
         debug_flags = 4 if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92 else 1
         scan = _empty_scan(debug_flags=debug_flags)
         scan.near_obstacle = bool(near_obstacle)
@@ -1338,6 +1396,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
     )
     if red_environment:
         debug_flags |= _RED_ENVIRONMENT_FLAG
+    _save_frame_centers(centers)
     return _CameraScan(
         np.array(centers, dtype=np.float32),
         np.array(left_edges, dtype=np.float32),
@@ -1451,6 +1510,19 @@ def _with_line_state(obs: PerceptionObs, left_img, right_img, timestamp=None) ->
     obs.line_heading = line_heading
     obs.line_confidence = line_confidence
     return obs
+
+
+def reset_perception_state() -> None:
+\
+\
+\
+\
+\
+\
+
+    global _LAST_FRAME_CENTERS, _LAST_FRAME_TIMESTAMP
+    _LAST_FRAME_CENTERS = None
+    _LAST_FRAME_TIMESTAMP = None
 
 
 def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
@@ -2015,6 +2087,12 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
     confidence = _geometry_confidence(obs, points, y_span, fit_score)
     if line_trust > 0.0:
         confidence = max(confidence, obs.line_confidence * ESTIMATOR_PROFILE["line_target_confidence_scale"])
+
+
+
+    if red_environment and confidence > ESTIMATOR_PROFILE["lost_confidence"] * 0.6:
+        confidence = min(confidence + 0.08, 1.0)
+
     if confidence < ESTIMATOR_PROFILE["lost_confidence"]:
         track = _lost_track(confidence, red_environment, obs)
         _LAST_TRACK = track
@@ -2088,6 +2166,14 @@ _LINE_HOLD_FRAMES = 0
 _CORNER_RELIEF = 0.0
 _TURN_IN_LATCH = 0.0
 
+_LOST_STREAK = 0
+_NOT_STUCK_FRAMES = 0
+_FORCE_REVERSE_ACTIVE = False
+_FORCE_REVERSE_FRAMES = 0
+_FORCE_REVERSE_SPEED = 0.0
+_FORCE_REVERSE_STEERING = 0.0
+_FORCE_REVERSE_SIGN = 1.0
+
 
 def reset_policy_state() -> None:
 \
@@ -2105,12 +2191,20 @@ def reset_policy_state() -> None:
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF, _TURN_IN_LATCH
+    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_REVERSE_ACTIVE, _FORCE_REVERSE_FRAMES, _FORCE_REVERSE_SPEED, _FORCE_REVERSE_STEERING, _FORCE_REVERSE_SIGN
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
     _LINE_HOLD_FRAMES = 0
     _CORNER_RELIEF = 0.0
     _TURN_IN_LATCH = 0.0
+    _LOST_STREAK = 0
+    _NOT_STUCK_FRAMES = 0
+    _FORCE_REVERSE_ACTIVE = False
+    _FORCE_REVERSE_FRAMES = 0
+    _FORCE_REVERSE_SPEED = 0.0
+    _FORCE_REVERSE_STEERING = 0.0
+    _FORCE_REVERSE_SIGN = 1.0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -2580,6 +2674,9 @@ def _target_speed(
         target = max(target, profile["straight_speed"])
     if timestamp < profile["start_caution_seconds"]:
         target = min(target, profile["start_speed"])
+
+    if track.near_obstacle:
+        target *= profile.get("opponent_speed_factor", 0.72)
     return clamp(target, profile["min_speed"], profile["max_speed"])
 
 
@@ -2919,10 +3016,26 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 
 
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
+    global _FORCE_REVERSE_ACTIVE, _FORCE_REVERSE_FRAMES, _FORCE_REVERSE_SPEED
+    global _FORCE_REVERSE_STEERING, _FORCE_REVERSE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES
 
     profile = get_profile(mode)
     timestamp = float(timestamp)
     _maybe_reset_policy_by_timestamp(timestamp, profile)
+
+
+    if _FORCE_REVERSE_ACTIVE:
+        if _FORCE_REVERSE_FRAMES > 0:
+            _FORCE_REVERSE_FRAMES -= 1
+            rev_steering = _FORCE_REVERSE_SIGN * _FORCE_REVERSE_STEERING
+            steering_out = clamp(rev_steering, -1.0, 1.0)
+            speed_out = _FORCE_REVERSE_SPEED
+            _update_policy_state(track, steering_out, speed_out, "escaping", timestamp, profile)
+            return ControlCmd(steering_out, speed_out)
+        else:
+            _FORCE_REVERSE_ACTIVE = False
+            _LOST_STREAK = 0
+
     signals = _control_signals(track, profile)
     drive_mode = _select_mode(track, signals, timestamp, profile)
     straight_memory_active = _update_straight_memory(track, signals, drive_mode, profile)
@@ -2951,6 +3064,28 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     _update_policy_state(track, steering, speed, drive_mode, timestamp, profile)
     line_correction = _lane_line_correction(track, signals, drive_mode, LINE_FOLLOW_PROFILE, timestamp)
     final_steering = clamp(steering + line_correction, -1.0, 1.0)
+
+
+    if track.lost:
+        _LOST_STREAK += 1
+        _NOT_STUCK_FRAMES = 0
+    else:
+        _NOT_STUCK_FRAMES += 1
+        if _NOT_STUCK_FRAMES > 90:
+            _LOST_STREAK = 0
+            _NOT_STUCK_FRAMES = 0
+
+
+    lost_streak_threshold = int(profile.get("force_reverse_lost_streak", 60))
+    if _LOST_STREAK >= lost_streak_threshold and not _FORCE_REVERSE_ACTIVE and timestamp > 3.0:
+        _FORCE_REVERSE_ACTIVE = True
+        _FORCE_REVERSE_FRAMES = int(profile.get("force_reverse_lost_frames", 70))
+        _FORCE_REVERSE_SPEED = float(profile.get("force_reverse_lost_speed", -0.42))
+        _FORCE_REVERSE_STEERING = float(profile.get("force_reverse_lost_steering", 0.75))
+        _FORCE_REVERSE_SIGN = _road_direction_sign(track)
+        _LOST_STREAK = 0
+        _NOT_STUCK_FRAMES = 0
+
     return ControlCmd(final_steering, speed)
 
 

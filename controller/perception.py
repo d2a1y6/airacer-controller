@@ -16,6 +16,34 @@ from controller.params import COLOR_PROFILE, LINE_FOLLOW_PROFILE, OPPONENT_PROFI
 
 _RED_ENVIRONMENT_FLAG = 32
 
+# 跨帧轨迹记忆：存储上一帧的扫描中心点，用于在道路合并（超宽段）时
+# 通过时间连续性区分正确道路和干扰道路（如 complex CP3 区域）。
+_LAST_FRAME_CENTERS: list[tuple[float, float]] | None = None
+_LAST_FRAME_TIMESTAMP: float | None = None
+
+
+def _save_frame_centers(centers: list[tuple[float, float]]) -> None:
+    """保存本帧扫描中心，供下一帧跨帧锚定使用。"""
+    global _LAST_FRAME_CENTERS
+    if not centers:
+        _LAST_FRAME_CENTERS = None
+    else:
+        _LAST_FRAME_CENTERS = list(centers)
+
+
+def _maybe_reset_perception_by_timestamp(timestamp: float | None) -> None:
+    """时间戳回退或跳跃过大时清空跨帧记忆。"""
+    global _LAST_FRAME_CENTERS, _LAST_FRAME_TIMESTAMP
+    if timestamp is None:
+        _LAST_FRAME_CENTERS = None
+        _LAST_FRAME_TIMESTAMP = None
+        return
+    if _LAST_FRAME_TIMESTAMP is not None:
+        elapsed = float(timestamp) - float(_LAST_FRAME_TIMESTAMP)
+        if elapsed < 0.0 or elapsed > 2.0:
+            _LAST_FRAME_CENTERS = None
+    _LAST_FRAME_TIMESTAMP = float(timestamp)
+
 
 @dataclass
 class _CameraScan:
@@ -592,6 +620,25 @@ def _pick_segment(
         return None, used_fallback
 
     best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+
+    # ── 跨帧轨迹锚定：超宽段（道路合并）时，优先选靠近上一帧同高度中心的分段 ──
+    temporal_anchor: float | None = None
+    if wide_localize_enabled and _LAST_FRAME_CENTERS:
+        height = road_mask.shape[0]
+        best_y_dist = float("inf")
+        for cx, cy in _LAST_FRAME_CENTERS:
+            dist = abs(cy - float(y))
+            if dist < best_y_dist:
+                best_y_dist = dist
+                temporal_anchor = cx
+        best_candidate_width = max(c[1] - c[0] for c in candidates)
+        temporal_window = float(width) * VISION_PROFILE.get("temporal_anchor_window_ratio", 0.38)
+        if best_candidate_width > float(width) * VISION_PROFILE["wide_segment_localize_ratio"] * 0.7:
+            if temporal_anchor is not None and abs(temporal_anchor - previous_center) > temporal_window * 0.5:
+                previous_center = previous_center * 0.35 + temporal_anchor * 0.65
+                # 重新选最佳分段（因为 previous_center 已调整）
+                best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+
     best = _localize_wide_segment(best, previous_center, width, enabled=wide_localize_enabled)
     center = (best[0] + best[1]) * 0.5
     max_jump = float(width) * VISION_PROFILE["max_center_jump_ratio"]
@@ -674,8 +721,10 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
     """
 
     if not _valid_image(image):
+        _save_frame_centers([])
         return _empty_scan()
 
+    _maybe_reset_perception_by_timestamp(timestamp)
     road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp)
     red_environment = _is_red_environment(image)
     wide_localize_enabled = red_environment
@@ -720,6 +769,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
             fallback_count += 1
 
     if not centers:
+        _save_frame_centers([])
         debug_flags = 4 if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92 else 1
         scan = _empty_scan(debug_flags=debug_flags)
         scan.near_obstacle = bool(near_obstacle)
@@ -735,6 +785,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
     )
     if red_environment:
         debug_flags |= _RED_ENVIRONMENT_FLAG
+    _save_frame_centers(centers)
     return _CameraScan(
         np.array(centers, dtype=np.float32),
         np.array(left_edges, dtype=np.float32),
@@ -848,6 +899,19 @@ def _with_line_state(obs: PerceptionObs, left_img, right_img, timestamp=None) ->
     obs.line_heading = line_heading
     obs.line_confidence = line_confidence
     return obs
+
+
+def reset_perception_state() -> None:
+    """重置感知跨帧状态。
+
+    功能：清空跨帧轨迹记忆。
+    参数：无。
+    返回：无。
+    逻辑：测试或新仿真开始前调用。
+    """
+    global _LAST_FRAME_CENTERS, _LAST_FRAME_TIMESTAMP
+    _LAST_FRAME_CENTERS = None
+    _LAST_FRAME_TIMESTAMP = None
 
 
 def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:

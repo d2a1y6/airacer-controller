@@ -37,6 +37,14 @@ _LINE_CORRECTION = 0.0
 _LINE_HOLD_FRAMES = 0
 _CORNER_RELIEF = 0.0
 _TURN_IN_LATCH = 0.0
+# 丢线驱动的强制倒车安全网（多车/复杂场景兜底）
+_LOST_STREAK = 0
+_NOT_STUCK_FRAMES = 0
+_FORCE_REVERSE_ACTIVE = False
+_FORCE_REVERSE_FRAMES = 0
+_FORCE_REVERSE_SPEED = 0.0
+_FORCE_REVERSE_STEERING = 0.0
+_FORCE_REVERSE_SIGN = 1.0
 
 
 def reset_policy_state() -> None:
@@ -55,12 +63,20 @@ def reset_policy_state() -> None:
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF, _TURN_IN_LATCH
+    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_REVERSE_ACTIVE, _FORCE_REVERSE_FRAMES, _FORCE_REVERSE_SPEED, _FORCE_REVERSE_STEERING, _FORCE_REVERSE_SIGN
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
     _LINE_HOLD_FRAMES = 0
     _CORNER_RELIEF = 0.0
     _TURN_IN_LATCH = 0.0
+    _LOST_STREAK = 0
+    _NOT_STUCK_FRAMES = 0
+    _FORCE_REVERSE_ACTIVE = False
+    _FORCE_REVERSE_FRAMES = 0
+    _FORCE_REVERSE_SPEED = 0.0
+    _FORCE_REVERSE_STEERING = 0.0
+    _FORCE_REVERSE_SIGN = 1.0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -530,6 +546,9 @@ def _target_speed(
         target = max(target, profile["straight_speed"])
     if timestamp < profile["start_caution_seconds"]:
         target = min(target, profile["start_speed"])
+    # 多车：近处有对手车时降速，给反应时间
+    if track.near_obstacle:
+        target *= profile.get("opponent_speed_factor", 0.72)
     return clamp(target, profile["min_speed"], profile["max_speed"])
 
 
@@ -869,10 +888,26 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     """
 
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
+    global _FORCE_REVERSE_ACTIVE, _FORCE_REVERSE_FRAMES, _FORCE_REVERSE_SPEED
+    global _FORCE_REVERSE_STEERING, _FORCE_REVERSE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES
 
     profile = get_profile(mode)
     timestamp = float(timestamp)
     _maybe_reset_policy_by_timestamp(timestamp, profile)
+
+    # ── 丢线强制倒车安全网：最高优先级 ──
+    if _FORCE_REVERSE_ACTIVE:
+        if _FORCE_REVERSE_FRAMES > 0:
+            _FORCE_REVERSE_FRAMES -= 1
+            rev_steering = _FORCE_REVERSE_SIGN * _FORCE_REVERSE_STEERING
+            steering_out = clamp(rev_steering, -1.0, 1.0)
+            speed_out = _FORCE_REVERSE_SPEED
+            _update_policy_state(track, steering_out, speed_out, "escaping", timestamp, profile)
+            return ControlCmd(steering_out, speed_out)
+        else:
+            _FORCE_REVERSE_ACTIVE = False
+            _LOST_STREAK = 0
+
     signals = _control_signals(track, profile)
     drive_mode = _select_mode(track, signals, timestamp, profile)
     straight_memory_active = _update_straight_memory(track, signals, drive_mode, profile)
@@ -901,4 +936,26 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     _update_policy_state(track, steering, speed, drive_mode, timestamp, profile)
     line_correction = _lane_line_correction(track, signals, drive_mode, LINE_FOLLOW_PROFILE, timestamp)
     final_steering = clamp(steering + line_correction, -1.0, 1.0)
+
+    # ── 卡死检测：丢线累加，持续恢复正常才重置 ──
+    if track.lost:
+        _LOST_STREAK += 1
+        _NOT_STUCK_FRAMES = 0
+    else:
+        _NOT_STUCK_FRAMES += 1
+        if _NOT_STUCK_FRAMES > 90:
+            _LOST_STREAK = 0
+            _NOT_STUCK_FRAMES = 0
+
+    # 触发：丢线 ≥ 60 帧（~2s）且仿真已运行足够时间
+    lost_streak_threshold = int(profile.get("force_reverse_lost_streak", 60))
+    if _LOST_STREAK >= lost_streak_threshold and not _FORCE_REVERSE_ACTIVE and timestamp > 3.0:
+        _FORCE_REVERSE_ACTIVE = True
+        _FORCE_REVERSE_FRAMES = int(profile.get("force_reverse_lost_frames", 70))
+        _FORCE_REVERSE_SPEED = float(profile.get("force_reverse_lost_speed", -0.42))
+        _FORCE_REVERSE_STEERING = float(profile.get("force_reverse_lost_steering", 0.75))
+        _FORCE_REVERSE_SIGN = _road_direction_sign(track)
+        _LOST_STREAK = 0
+        _NOT_STUCK_FRAMES = 0
+
     return ControlCmd(final_steering, speed)
