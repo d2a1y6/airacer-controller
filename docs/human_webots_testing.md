@@ -39,6 +39,11 @@ tail -f .tmp/run/webots_console/*.log
 
 跑完后同一个目录也能直接读取。这里抓的是 **team_controller/controller 进程里的 `stdout/stderr`**，包括学生控制器 `print` 和导入错误。它不是完整 Webots GUI console，也不是 supervisor 碰撞日志；擦栏/碰栏仍要靠肉眼、截图、overlay、车身位置和 telemetry 综合判断。
 
+注意区分两类碰撞信号：
+
+- telemetry 的 `collision` event 主要来自 supervisor 的车车碰撞判定。
+- Webots/物理引擎 console 里类似“发生碰撞，只计算其中最重要的 N 个碰撞点”的提示，通常表示车体碰到了栏杆、路沿或其它静态几何。即使 telemetry 没有 collision event，也要把它记成碰栏/接触。
+
 调试构建含 `open/json/np.save`，只能本地跑。正式提交版不要带这些开关。
 
 practice 模式跑完一圈通常不会自动停，会继续第二圈。看够后退出 Webots，再清一次进程：
@@ -57,6 +62,7 @@ pkill -f webots; pkill -f run_local; sleep 1
 - 是否跑完一圈；如果没跑完，在哪里停住或撞上。
 - 车相对白线的位置：车身中心骑线、长期在线左、长期在线右、入弯切内线、出弯能否回线。
 - 撞车或撞栏对象：左/右栏杆、白车、黑车、其他。
+- Webots console 是否出现接触点提示，例如“发生碰撞，只计算其中最重要的 N 个碰撞点”。
 - 异常行为：突然大幅打轮、无意义减速、原地挣扎、能否自行脱困。
 - 大致时间或位置：Webots 时间、起终点附近、第几个弯、截图。
 
@@ -102,6 +108,7 @@ R0xx human complex:
 - `.tmp/run/webots_console/*.log`（team_controller stdout/stderr，不保证包含 Webots/supervisor 碰撞日志）
 - `.tmp/run/frames_basic/`
 - SDK telemetry：`/Users/day/Desktop/Github/pkudsa.airacer/sdk/.local/recordings/telemetry.jsonl`
+- 如果 Webots GUI/物理引擎 console 出现接触点提示，也要把原文或大意写进反馈。
 
 **不要手动删 `.tmp`**。下一次 `scripts/webots_run.sh` 会自动轮换旧产物；全量清理由 AI 在确认结论已写入 `experiments/`、且 notes 的"下一步"不依赖这些产物后执行（见 `docs/ai_offline_review.md` 第 8 节）。
 

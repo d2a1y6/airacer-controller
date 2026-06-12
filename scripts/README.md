@@ -31,7 +31,7 @@ python scripts/build_submission.py --mode fastest \
 
 | 脚本 | 用途 | 关键点 |
 |---|---|---|
-| `webots_run.sh` | 从头跑 `basic` 或 `complex`，自动构建 debug controller、清理孤儿进程、保存日志和帧 | 默认每 10 帧保存一对 PNG；`webots_console` 只镜像 team_controller stdout/stderr，不是 supervisor 碰撞日志 |
+| `webots_run.sh` | 从头跑 `basic` 或 `complex`，自动构建 debug controller、清理孤儿进程、保存日志和帧 | 默认每 10 帧保存一对 PNG；`webots_console` 只镜像 team_controller stdout/stderr，不是 Webots 物理引擎接触点提示 |
 | `webots_jump_run.sh` | 从已有 telemetry 的某个 `x/y/heading` 近似启动，观察当前代码从该姿态会怎么开 | 只恢复位置和朝向，不是严格续跑 |
 | `make_teleport_world.py` | 给 jump run 生成临时 Webots world | 通常由 `webots_jump_run.sh` 调用 |
 
@@ -85,3 +85,5 @@ python scripts/replay_offline.py .tmp/run/frames_complex \
 - 当前最好版本的单文件快照进 `baselines/`。
 
 归档规则见 `experiments/README.md`、`experiments/cases/README.md`、`experiments/figures/README.md`。
+
+碰撞信号不要混用：telemetry `collision` 主要是车车碰撞；Webots/物理引擎 console 中类似“发生碰撞，只计算其中最重要的 N 个碰撞点”的提示要按栏杆/静态几何接触记录。
