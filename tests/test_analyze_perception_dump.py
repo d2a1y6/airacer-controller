@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.perception import extract_observation
+from controller.params import get_profile
 from scripts.analyze_perception_dump import analyze_dump
 
 
@@ -19,6 +20,12 @@ def _lane_image() -> np.ndarray:
     image[220:, 200:440, :] = (95, 95, 95)
     image[220:, 200:207, :] = 255
     image[220:, 433:440, :] = 255
+    return image
+
+
+def _obstacle_image() -> np.ndarray:
+    image = _lane_image()
+    image[300:450, 260:380, :] = 10
     return image
 
 
@@ -32,7 +39,7 @@ def test_analyze_dump_reproduces_control_log_fields(tmp_path):
     frame_dir.mkdir()
     image = _lane_image()
     _save_pair(frame_dir, "000000_096", image)
-    obs = extract_observation(image, image, 0.096)
+    obs = extract_observation(image, image, 0.096, profile=get_profile("no_other_cars"))
     control_log = tmp_path / "control.jsonl"
     control_log.write_text(
         json.dumps({
@@ -70,3 +77,31 @@ def test_overlay_at_forces_overlay_on_non_lost_frame(tmp_path):
     )
     assert len(forced_metrics["overlay_paths"]) == 1
     assert Path(forced_metrics["overlay_paths"][0]).is_file()
+
+
+def test_analyze_dump_respects_profile_mode(tmp_path):
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    image = _obstacle_image()
+    _save_pair(frame_dir, "000000_096", image)
+    control_log = tmp_path / "control.jsonl"
+
+    obs = extract_observation(image, image, 0.096, profile=get_profile("with_other_cars"))
+    control_log.write_text(
+        json.dumps({
+            "t": 0.096,
+            "obs_points": int(len(obs.center_points)),
+            "obs_conf": round(float(obs.confidence), 4),
+            "debug_flags": int(obs.debug_flags),
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    wrong_mode = analyze_dump(frame_dir, control_log, mode="no_other_cars")
+    matching_mode = analyze_dump(frame_dir, control_log, mode="with_other_cars")
+
+    assert wrong_mode["frames"][0]["near_obstacle"] is False
+    assert wrong_mode["frames"][0]["frame_motion"] >= 100.0
+    assert matching_mode["frames"][0]["near_obstacle"] is True
+    assert matching_mode["frames"][0]["frame_motion"] < 1.0
+    assert matching_mode["mismatch_count"] == 0

@@ -37,12 +37,12 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --list-worlds
 
 | 测试 | 命令 | 是否跑 Webots | 作用 |
 |---|---|---:|---|
-| 官方 validator | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py --code-path submissions/final/team_controller.py --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml` | 否 | 检查语法、文件大小、禁用 import、禁用内置、`control()` 接口、mock 调用耗时和返回值。 |
-| `run_local --validate-only` | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --code-path submissions/final/team_controller.py --validate-only` | 否 | 走 `run_local.py` 的本地入口，只做校验，不启动仿真。适合提交前快速确认。 |
-| 单车 `basic` | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --code-path submissions/final/team_controller.py --world basic --car-slot car_1 --fast --minimize` | 是 | 默认赛道实跑。用于确认能否基础完赛。 |
-| 单车 `complex` | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --code-path submissions/final/team_controller.py --world complex --car-slot car_1 --fast --minimize` | 是 | 复杂赛道实跑。用于验证策略是否只过拟合 `basic`。 |
-| 单车 `airacer` | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --code-path submissions/final/team_controller.py --world airacer --car-slot car_1 --fast --minimize` | 是 | 旧 demo world。可作为兼容性观察，不建议作为主指标。 |
-| 多车本地测试 | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --world basic --car "$PWD/submissions/final/team_controller.py:car_1:ours" --car "$PWD/submissions/final/team_controller.py:car_2:copy"` | 是 | 本地观察多车启动、配置和基本交互。不能完全代表线上碰撞惩罚和赛制。 |
+| 官方 validator | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py --code-path submissions/no_other_cars/team_controller.py --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml` | 否 | 检查语法、文件大小、禁用 import、禁用内置、`control()` 接口、mock 调用耗时和返回值。 |
+| `run_local --validate-only` | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --code-path submissions/no_other_cars/team_controller.py --validate-only` | 否 | 走 `run_local.py` 的本地入口，只做校验，不启动仿真。适合提交前快速确认。 |
+| 单车 `basic` | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --code-path submissions/no_other_cars/team_controller.py --world basic --car-slot car_1 --fast --minimize` | 是 | 默认赛道实跑。用于确认能否基础完赛。 |
+| 单车 `complex` | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --code-path submissions/no_other_cars/team_controller.py --world complex --car-slot car_1 --fast --minimize` | 是 | 复杂赛道实跑。用于验证策略是否只过拟合 `basic`。 |
+| 单车 `airacer` | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --code-path submissions/no_other_cars/team_controller.py --world airacer --car-slot car_1 --fast --minimize` | 是 | 旧 demo world。可作为兼容性观察，不建议作为主指标。 |
+| 多车本地测试 | `python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --world basic --car "$PWD/submissions/with_other_cars/team_controller.py:car_1:ours" --car "$PWD/submissions/with_other_cars/team_controller.py:car_2:opp"` | 是 | 本地观察多车启动、配置和基本交互。不能完全代表线上碰撞惩罚和赛制。 |
 
 `run_local.py` 还支持：
 

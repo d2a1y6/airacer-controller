@@ -46,14 +46,14 @@ BANNED_NAMES = {
 
 
 def test_generated_submission_static_contract():
-    path = ROOT / "submissions" / "final" / "team_controller.py"
+    path = ROOT / "submissions" / "no_other_cars" / "team_controller.py"
     subprocess.run(["python", "scripts/build_submission.py", "--mode", "no_other_cars"], cwd=ROOT, check=True)
     source = path.read_text(encoding="utf-8")
     assert "from controller" not in source
     assert "from ." not in source
     assert "# ---- steering.py ----" not in source
     assert "# ---- strategy.py ----" not in source
-    assert "# ---- policy.py ----" in source
+    assert "def decide_control(" in source
 
     tree = ast.parse(source)
     for node in ast.walk(tree):

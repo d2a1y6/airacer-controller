@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from controller.common import clamp_cmd
 from controller.estimator import estimate_track, reset_estimator_state
+from controller.params import get_profile
 from controller.perception import extract_observation
 from controller.policy import decide_control, reset_policy_state
 import controller.policy as policy_state
@@ -82,6 +83,7 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "no_other_cars", 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     reset_estimator_state()
     reset_policy_state()
+    profile = get_profile(mode)  # 让 perception 的对手检测/光流卡死按 profile 门控
 
     written = 0
     with out_path.open("w", encoding="utf-8") as handle:
@@ -89,7 +91,7 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "no_other_cars", 
             try:
                 left_img = cv2.imread(str(left_path))
                 right_img = cv2.imread(str(right_path))
-                obs = extract_observation(left_img, right_img, timestamp)
+                obs = extract_observation(left_img, right_img, timestamp, profile=profile)
                 track = estimate_track(obs, timestamp)
                 cmd = decide_control(track, timestamp, mode=mode)
                 steering, speed = clamp_cmd(cmd)
@@ -122,6 +124,8 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "no_other_cars", 
                     "left_margin": round(float(track.left_margin_near), 4),
                     "right_margin": round(float(track.right_margin_near), 4),
                     "near_obstacle": bool(track.near_obstacle),
+                    "obstacle_x": round(float(track.obstacle_x), 4),
+                    "obstacle_size": round(float(track.obstacle_size), 5),
                 }
             except Exception:
                 row = {
@@ -153,6 +157,8 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "no_other_cars", 
                     "left_margin": 1.0,
                     "right_margin": 1.0,
                     "near_obstacle": False,
+                    "obstacle_x": 0.0,
+                    "obstacle_size": 0.0,
                 }
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
             written += 1
@@ -165,12 +171,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="离线开环回放 P2.5 保存的左右相机帧。")
     parser.add_argument("frames", type=Path, help="包含 frame_<t>_left.png/right.png 的目录")
     parser.add_argument("--out", type=Path, required=True, help="输出 control 同 schema JSONL")
-    parser.add_argument(
-        "--mode",
-        choices=("no_other_cars", "with_other_cars"),
-        default="no_other_cars",
-        help="策略名；with_other_cars 尚未实现",
-    )
+    parser.add_argument("--mode", choices=("no_other_cars", "with_other_cars"), default="no_other_cars")
     parser.add_argument("--limit", type=int, default=None, help="最多回放多少帧，默认不限")
     return parser.parse_args()
 

@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.estimator import reset_estimator_state
+from controller.params import get_profile
 from controller.policy import reset_policy_state
 from controller.team_controller_local import control
 
@@ -48,7 +49,7 @@ def test_extract_observation_handles_common_images():
         make_lane_image(0),
     ]
     for image in cases:
-        obs = extract_observation(image, image, 0.0)
+        obs = extract_observation(image, image, 0.0, profile=get_profile("no_other_cars"))
         assert obs.center_points.ndim == 2
         assert obs.center_points.shape[1] == 2
         assert obs.left_edge_points.ndim == 2
@@ -63,7 +64,7 @@ def test_extract_observation_prefers_dark_road_over_bottom_grass():
     image[:, :] = (35, 120, 35)
     image[180:, :260, :] = (82, 74, 64)  # 采样自 complex/basic 原始帧的深灰沥青 BGR。
 
-    obs = extract_observation(image, image, 0.0)
+    obs = extract_observation(image, image, 0.0, profile=get_profile("no_other_cars"))
 
     assert len(obs.center_points) >= 4
     assert obs.confidence > 0.20

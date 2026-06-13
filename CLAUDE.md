@@ -19,14 +19,12 @@ def control(left_img, right_img, timestamp):
 # 安装依赖
 pip install -r requirements.txt
 
-# 修改 controller/ 后重新构建
-python scripts/build_submission.py --mode no_other_cars
-
-# 生成准备上传的最终版本
-python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
+# 修改 controller/ 后重新构建（两个策略 profile，见下「Profile 隔离」）
+python scripts/build_submission.py --mode no_other_cars     # 单车：R049驾驶底座；R068为当前官方成绩
+python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 
 # 本地校验 + 测试
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
 pytest
 
 # 运行单个测试文件或测试函数
@@ -35,17 +33,17 @@ pytest tests/test_estimator.py::test_centerline_straight_track_is_near_zero
 
 # 官方 validator（不需要 Webots）
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 
 # 官方 run_local 校验层（不启动 Webots）
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --validate-only
 
 # Webots 单车实跑（需要已安装 Webots.app）
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --world basic --car-slot car_1
 ```
 
@@ -55,13 +53,11 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 
 **新会话接手前先读 [experiments/STATUS.md](experiments/STATUS.md)**：它是唯一的活动交接文档（当前状态、铁律、未解问题、下一步），每轮工作结束时就地更新，不要另建 handoff 文件。实验目录怎么留档见 [experiments/README.md](experiments/README.md)；case 和 figure 的细则分别见 `experiments/cases/README.md`、`experiments/figures/README.md`。
 
-**每个有意义的 Webots / 平台 run 分析完后，AI 默认要同步记账**：结构化结果写 `experiments/runs.csv`，叙事诊断写 `experiments/notes.md`。不需要用户单独提醒。误启动、脚本没真正开始、超短无信息、重复跑同一版本且没有新现象，可以不记，但要在回复里说清楚为什么不记。
-
 ## 工作约定（经验为主，不限制"改哪里"）
 
-**想改哪里就改哪里、放手大改。** controller 任意模块（含 basic 分支）、参数、脚本、SDK 调试层都可自由改。没有"必须先获人工批准/关键验收"才能动手这回事，也没有"basic 不许碰"这种保护。大胆做结构性的改动——历史经验是：保守的微调往往没用。
+**想改哪里就改哪里、放手大改。** controller 任意模块、参数、脚本、SDK 调试层都可自由改。没有"必须先获人工批准/关键验收"才能动手这回事，也没有"basic 不许碰"这种保护。大胆做结构性的改动——历史经验是：保守的微调往往没用。
 
-**唯一硬约束（违反会让提交直接作废，不是自我设限）**：上传的 `submissions/final/team_controller.py` 必须通过 `validate_submission.py` 和官方 validator，且**不含调试 I/O**（`open/json/cv2.imwrite` 等）和**禁用模块**（见下"提交文件约束"）。调试构建只在本地 `.tmp/` 跑，永不上传。
+**唯一硬约束（违反会让提交直接作废，不是自我设限）**：上传的 `submissions/no_other_cars/team_controller.py` 必须通过 `validate_submission.py` 和官方 validator，且**不含调试 I/O**（`open/json/cv2.imwrite` 等）和**禁用模块**（见下"提交文件约束"）。调试构建只在本地 `.tmp/` 跑，永不上传。
 
 **经验（帮判断好坏，不拦你动手）**：
 - 驾驶质量以 Webots 实跑为准；离线数字会骗人——`lost` 率尤其不是质量指标。撞栏现在能靠 `contact_*.jsonl` 离线看（见 `docs/ai_offline_review.md`）。
@@ -88,29 +84,49 @@ left_img, right_img
 | `estimator.py` | 从 `PerceptionObs` 估计几何状态 | 接触原图，输出控制量 |
 | `policy.py` | 计算转向和速度 | 处理原图 |
 | `params.py` | 集中存放参数 | 运行算法逻辑 |
-| `opponent.py` | 近处车身检测 | 道路分割或控制决策 |
+| `opponent.py` | 近处车身检测，输出是否有车、左右位置和近似尺寸 | 道路分割或控制决策 |
 | `team_controller_local.py` | 接线、异常兜底、最终限幅 | 算法实现 |
 
-`opponent.py` 的 `detect_near_vehicle_obstacle` 只作为后续有其他车策略的感知工具保留；当前 `no_other_cars` 策略默认不启用它。
+`opponent.py` 的 `detect_near_vehicle_obstacle_state()` 受**两层**控制：模块级 `OPPONENT_PROFILE["enable_opponent_avoidance"]` + **active profile 的 `enable_opponent`**（见下「Profile 隔离」）。只有 `with_other_cars` 下 perception 才会调用它；`no_other_cars` 完全不跑对手检测。旧的 `detect_near_vehicle_obstacle()` 仍保留为 bool 兼容接口。
 
 ## 关键约定
 
 **误差符号**：左负右正。图像坐标按 OpenCV：`x` 向右，`y` 向下。
 
-**参数唯一源**：所有控制参数集中在 `params.py`，不在模块内硬编码调参值。当前实现的是 `no_other_cars` 策略；`with_other_cars` 只留命名入口，尚未实现。`fastest` / `safe` / `final` 只可能出现在旧输出目录、平台槽位或历史记录里，不再是策略名。
+**参数唯一源**：所有控制参数集中在 `params.py`，不在模块内硬编码调参值。控制参数现在分两个 profile（见下「Profile 隔离」），不再有 `fastest` / `safe` / `basic` 分支。
 
 **场景感知**：`estimator.py` 会在连续红色环境帧后锁存 `red_environment = True`（写入 `TrackState`）。它现在是感知/诊断特征，不再用于切换 basic/complex 控制参数。单帧误检不会触发锁存；`reset_estimator_state()` 或时间戳回退会清空。
 
 **提交文件约束**：`controller/` 代码最终会被合并进单文件提交，**禁止**使用以下模块：`os, sys, socket, subprocess, multiprocessing, threading, time, datetime, io, builtins, ctypes, shutil, tempfile, requests, urllib, http, pickle, importlib`，以及 `open, eval, exec, compile, globals, locals`。`scripts/` 和 `tests/` 可以使用标准库。
 
+## Profile 隔离（重要：曾因混用出过事，务必遵守）
+
+赛事有两类场次，对应两个**控制策略 profile**，平台 `control(left,right,t)` 不传场景标志，所以靠**构建不同的提交文件**区分：
+
+| profile | 提交目录 | 是什么 | `--mode` |
+|---|---|---|---|
+| `no_other_cars` | `submissions/no_other_cars/` | 单车计时赛 = R049 驾驶底座（baseline `R049_turn_in_speed_best_2026-06-13`，commit `a9ba0a1`）+ 多车增量全关。当前 SDK 官方 complex 单车成绩见 R068：`total_time=252.863s`，0 major。 | `--mode no_other_cars` |
+| `with_other_cars` | `submissions/with_other_cars/` | 多车赛 = R049 驾驶 + 对手方向感知、避让、倒车脱困、force_escape、光流卡死检测。 | `--mode with_other_cars` |
+
+机制（两层隔离）：
+1. **参数层**：`params.py` 里 `NO_OTHER_CARS_CONTROL` 从 `WITH_OTHER_CARS_CONTROL` 派生——**共享核心驾驶参数**（入弯门控/速度/曲率，同一辆车的物理一致），只覆盖两类键：(a) escape 用 R049 更保守值；(b) 所有多车增量置为禁用（含总开关 `enable_opponent=False`）。`get_profile(name)` 按名分派。
+2. **管线层（active profile 贯穿整条流水线）**：`team_controller_local.control()` 每帧 `profile = get_profile(PROFILE)`，把它传给 `extract_observation(left,right,t, profile=profile)`。perception 据 `profile["enable_opponent"]` 决定**是否调用** `detect_near_vehicle_obstacle_state()`、**是否计算** `frame_motion`——`no_other_cars` 下两者都不跑：`near_obstacle` 恒 False、`obstacle_x/obstacle_size` 为 0（不会触发 `segment_gap`/白线门控）、`frame_motion` 保持默认 100（motion-stall 永不触发）。policy 的 force_escape/motion-stall 触发再用 `enable_opponent` 守一道。`build_submission.py --mode` 注入 `team_controller_local.PROFILE`，决定运行时用哪个 profile。
+   - 效果：`no_other_cars` 真正不走任何多车代码路径（不只是参数为 0），单车每帧还省 ~5ms（跳过检测+frame_motion）。
+
+**铁律——加多车/避让/脱困相关的改动时，只动 `WITH_OTHER_CARS_CONTROL`，并用 `profile["enable_opponent"]`（或专属参数）门控新行为，绝不要污染 `no_other_cars`。** 改单车驾驶（入弯/速度/感知共享逻辑）才动共享区。新增多车感知/策略必须默认在 `no_other_cars` 下完全不执行（参数禁用 + 管线开关双保险），让它仍退化为纯 R049。`tests/test_profile_isolation.py` 锁定这条。
+
+> 注：两个 profile 仍**共享 policy/perception 代码**（`enable_opponent` 是运行时开关，不是按 build 删代码）。曾考虑过构建层不拼接 `opponent.py` 来做"代码级隔离"，但 policy 的多车分支穿插在共享代码里无法按 build 剥离，剥离只能半途、还引入 NameError/validator 风险——所以选**运行时门控 + 测试 + 本节铁律**来防污染，而不是删代码。
+
+> **教训（2026-06-13）**：本分支早期（R053–R058 自跑迭代）把对手避让、倒车（`clamp_cmd` 放宽负速）、force_escape、光流卡死检测**直接加到了当时唯一的统一 `CONTROL` 上**，等于把多车策略也强加给了单车 `no_other_cars`——单车计时赛会无谓地触发避让/倒车、甚至因 `motion_still` 阈值误判而乱倒车。后来按本节拆回两个 profile（R049 驾驶底座→no_other_cars，多车→with_other_cars）。**新会话改控制参数前先确认自己在改哪个 profile。**
+
 ## 构建机制
 
-`scripts/build_submission.py` 按固定顺序拼接 `controller/` 各模块（`common → params → opponent → perception → estimator → policy → team_controller_local`），删除本地 import，输出自包含的单文件。`--mode no_other_cars` 是当前主入口；`with_other_cars` 入口已留但会显式报未实现。需要写入旧目录时，用 `--mode no_other_cars --out submissions/fastest/team_controller.py` 这类显式输出路径。
+`scripts/build_submission.py` 按固定顺序拼接 `controller/` 各模块（`common → params → opponent → perception → estimator → policy → team_controller_local`），删除本地 import，输出自包含的单文件。`--mode {no_other_cars,with_other_cars}` 决定**走哪个 profile**（注入 `team_controller_local.PROFILE`）和默认输出路径。
 
 ## Baseline 与实验记录
 
 `baselines/` 保存已实跑确认的策略快照（单文件 + 参数摘要 + 证据说明），供对比和回退。
 
-平台或 Webots 测试后，结构化结果写入 `experiments/runs.csv`（`date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finish_reason,notes`），较长观察写入 `experiments/notes.md`。AI 自跑和人类实跑都按 `docs/human_webots_testing.md` 留下可复盘产物；AI 机制分析按 `docs/ai_offline_review.md` 取证。判断一个 run 是否“有意义”的标准见 `experiments/notes.md` 顶部记录规范。
+平台或 Webots 测试后，结构化结果写入 `experiments/runs.csv`（`date,commit,mode,track,laps_completed,best_lap,total_time,collisions_major,finish_reason,notes`），较长观察写入 `experiments/notes.md`。AI 自跑和人类实跑都按 `docs/human_webots_testing.md` 留下可复盘产物；AI 机制分析按 `docs/ai_offline_review.md` 取证。
 
 可视化产物分两类归档：复现某个 bug 的最小失败窗口进 `experiments/cases/`；要放进最终报告或回查的精选图（整场轨迹/速度图用 `scripts/plot_run.py`，关键感知标注帧用 `scripts/analyze_perception_dump.py --at`）进 `experiments/figures/`。规则见两个目录各自的 `README.md`。

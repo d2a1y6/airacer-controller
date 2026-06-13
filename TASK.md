@@ -109,13 +109,13 @@ speed = 1.0：最大速度比例
 
 `control()` 会被频繁调用，必须快速返回。不要在每一帧做训练、长时间循环、大规模搜索、网络请求或大量初始化。
 
-## 5. 两种算法目标
+## 5. 当前两类提交 profile
 
-本组准备两套控制策略。两套策略使用完全相同的提交接口，区别在内部控制逻辑和参数选择。
+本组当前维护两类提交 profile。两类 profile 使用相同的 `control()` 接口，靠构建脚本生成不同提交文件。
 
-### 5.1 `no_other_cars`：无其他车策略
+### 5.1 `no_other_cars`：单车计时
 
-`no_other_cars` 适用于只要求本车完成赛道、没有其他车辆同场干扰的考核方式。当前仓库已经实现并主要维护这套策略。
+`no_other_cars` 适用于只要求本车完成赛道、没有其他车辆同场干扰的考核方式。当前生成到 `submissions/no_other_cars/team_controller.py`。
 
 目标：
 
@@ -138,9 +138,9 @@ speed = 1.0：最大速度比例
 
 单车场景下不需要重点考虑其他车辆、抢线、避让和碰撞风险。因此可以更关注路线效率和速度上限。但过于激进的速度会导致弯道失控、丢线或冲出赛道，最终反而影响完赛。
 
-### 5.2 `with_other_cars`：有其他车策略
+### 5.2 `with_other_cars`：多车/碰撞稳健
 
-`with_other_cars` 适用于平台按正式竞赛规则运行、多辆车同场比赛的情况。当前只保留接口名，避让和抢线逻辑还没有实现。
+`with_other_cars` 适用于平台按正式竞赛规则运行、多辆车同场比赛的情况。当前生成到 `submissions/with_other_cars/team_controller.py`。
 
 目标：
 
@@ -164,13 +164,9 @@ speed = 1.0：最大速度比例
 
 正式竞赛中，完赛车辆通常优先按完赛时间排序；未完赛车辆再按完成圈数和赛道进度排序。严重碰撞、长时间未通过检查点等情况可能导致停车惩罚或取消资格。因此，多车稳健策略不应只追求单圈速度，还要减少高风险动作。
 
-### 5.3 两套策略如何提交
+### 5.3 两类 profile 如何提交
 
-两套策略都写成 `team_controller.py` 形式，入口都是 `control()`。当前可生成的是 `no_other_cars`；`with_other_cars` 入口会显式报未实现，避免误以为已经有多车避让策略。
-
-平台或历史脚本里可能还会出现 `fastest`、`safe`、`final` 这些名字。它们现在只当作旧输出名或提交槽位名，不代表三套不同控制逻辑。需要上传时，把已经验证过的 `no_other_cars` 版本生成到对应槽位即可。
-
-平台槽位可以按比赛安排使用，例如：
+两类 profile 都写成 `team_controller.py` 形式，入口都是 `control()`。可以把不同版本上传到不同槽位：
 
 ```text
 main：稳定完赛版本
@@ -418,25 +414,23 @@ controller/policy.py      : TrackState -> ControlCmd
 - `TrackState`：横向偏移、方向误差、曲率、前瞻误差、置信度和丢线状态。
 - `ControlCmd`：转向和速度命令。
 
-生成当前无其他车策略：
+生成策略版本：
 
 ```bash
-python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars
+python scripts/build_submission.py --mode with_other_cars
 ```
 
-`with_other_cars` 还没实现。不要把旧的 `fastest` / `safe` 当成新策略目标；它们只用于兼容旧输出路径。
-
-生成旧输出名兼容文件时，可以显式指定输出路径：
+生成当前准备上传的最终版本：
 
 ```bash
-python scripts/build_submission.py --mode no_other_cars --out submissions/fastest/team_controller.py
-python scripts/build_submission.py --mode no_other_cars --out submissions/safe/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/no_other_cars/team_controller.py
 ```
 
 校验：
 
 ```bash
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
 pytest
 ```
 

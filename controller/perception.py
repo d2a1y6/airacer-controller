@@ -11,10 +11,38 @@ import cv2
 import numpy as np
 
 from controller.common import PerceptionObs, clamp
-from controller.opponent import detect_near_vehicle_obstacle
+from controller.opponent import detect_near_vehicle_obstacle_state
 from controller.params import COLOR_PROFILE, LINE_FOLLOW_PROFILE, OPPONENT_PROFILE, VISION_PROFILE
 
 _RED_ENVIRONMENT_FLAG = 32
+
+# 跨帧轨迹记忆：存储上一帧的扫描中心点，用于在道路合并（超宽段）时
+# 通过时间连续性区分正确道路和干扰道路（如 complex CP3 区域）。
+_LAST_FRAME_CENTERS: list[tuple[float, float]] | None = None
+_LAST_FRAME_TIMESTAMP: float | None = None
+
+
+def _save_frame_centers(centers: list[tuple[float, float]]) -> None:
+    """保存本帧扫描中心，供下一帧跨帧锚定使用。"""
+    global _LAST_FRAME_CENTERS
+    if not centers:
+        _LAST_FRAME_CENTERS = None
+    else:
+        _LAST_FRAME_CENTERS = list(centers)
+
+
+def _maybe_reset_perception_by_timestamp(timestamp: float | None) -> None:
+    """时间戳回退或跳跃过大时清空跨帧记忆。"""
+    global _LAST_FRAME_CENTERS, _LAST_FRAME_TIMESTAMP
+    if timestamp is None:
+        _LAST_FRAME_CENTERS = None
+        _LAST_FRAME_TIMESTAMP = None
+        return
+    if _LAST_FRAME_TIMESTAMP is not None:
+        elapsed = float(timestamp) - float(_LAST_FRAME_TIMESTAMP)
+        if elapsed < 0.0 or elapsed > 2.0:
+            _LAST_FRAME_CENTERS = None
+    _LAST_FRAME_TIMESTAMP = float(timestamp)
 
 
 @dataclass
@@ -34,6 +62,8 @@ class _CameraScan:
     confidence: float
     debug_flags: int = 0
     near_obstacle: bool = False
+    obstacle_x: float = 0.0
+    obstacle_size: float = 0.0
 
 
 def _empty_points() -> np.ndarray:
@@ -106,7 +136,11 @@ def _sampled_color_mask(hsv: np.ndarray, lab: np.ndarray, color_name: str) -> np
     return hsv_match & lab_match
 
 
-def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndarray, float, float, bool]:
+def _build_masks(
+    image: np.ndarray,
+    timestamp=None,
+    enable_opp: bool = True,
+) -> tuple[np.ndarray, np.ndarray, float, float, bool, float, float]:
     """生成道路表面 mask 和边缘 fallback mask。
 
     功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
@@ -186,16 +220,18 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
     texture_score = clamp(float(np.std(gray_roi)) / VISION_PROFILE["texture_gray_std_scale"], 0.0, 1.0)
     mask_fill_ratio = float(np.count_nonzero(road_roi)) / max(float(road_roi.size), 1.0)
     near_obstacle = False
-    if OPPONENT_PROFILE["enable_opponent_avoidance"]:
+    obstacle_x = 0.0
+    obstacle_size = 0.0
+    # 对手检测只在 with_other_cars profile 下进行（enable_opp）：no_other_cars 沿用 R049 驾驶底座。
+    # 既不调用 detect_near_vehicle_obstacle，也不让 near_obstacle 影响 segment_gap/白线门控。
+    if enable_opp and OPPONENT_PROFILE["enable_opponent_avoidance"]:
         try:
             current_time = float(timestamp)
         except (TypeError, ValueError):
             current_time = 0.0
-        near_obstacle = (
-            current_time >= OPPONENT_PROFILE["near_obstacle_min_timestamp"]
-            and detect_near_vehicle_obstacle(image, OPPONENT_PROFILE)
-        )
-    return road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle
+        if current_time >= OPPONENT_PROFILE["near_obstacle_min_timestamp"]:
+            near_obstacle, obstacle_x, obstacle_size = detect_near_vehicle_obstacle_state(image, OPPONENT_PROFILE)
+    return road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle, obstacle_x, obstacle_size
 
 
 def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
@@ -592,6 +628,25 @@ def _pick_segment(
         return None, used_fallback
 
     best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+
+    # ── 跨帧轨迹锚定：超宽段（道路合并）时，优先选靠近上一帧同高度中心的分段 ──
+    temporal_anchor: float | None = None
+    if wide_localize_enabled and _LAST_FRAME_CENTERS:
+        height = road_mask.shape[0]
+        best_y_dist = float("inf")
+        for cx, cy in _LAST_FRAME_CENTERS:
+            dist = abs(cy - float(y))
+            if dist < best_y_dist:
+                best_y_dist = dist
+                temporal_anchor = cx
+        best_candidate_width = max(c[1] - c[0] for c in candidates)
+        temporal_window = float(width) * VISION_PROFILE.get("temporal_anchor_window_ratio", 0.38)
+        if best_candidate_width > float(width) * VISION_PROFILE["wide_segment_localize_ratio"] * 0.7:
+            if temporal_anchor is not None and abs(temporal_anchor - previous_center) > temporal_window * 0.5:
+                previous_center = previous_center * 0.35 + temporal_anchor * 0.65
+                # 重新选最佳分段（因为 previous_center 已调整）
+                best = min(candidates, key=lambda item: abs(((item[0] + item[1]) * 0.5) - previous_center))
+
     best = _localize_wide_segment(best, previous_center, width, enabled=wide_localize_enabled)
     center = (best[0] + best[1]) * 0.5
     max_jump = float(width) * VISION_PROFILE["max_center_jump_ratio"]
@@ -664,19 +719,26 @@ def _score_scan(
     return clamp(confidence, 0.0, 1.0), debug_flags
 
 
-def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
+def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _CameraScan:
     """按扫描线跟踪单张图像的道路走廊。
 
     功能：输出中心点、左右边界点、道路宽度和置信度。
-    参数：`image` 是单个摄像头 BGR 图像，`timestamp` 用于限制末段障碍处理。
+    参数：`image` 是单个摄像头 BGR 图像，`timestamp` 用于限制末段障碍处理，
+        `enable_opp` 控制是否做对手车检测（仅 with_other_cars profile）。
     返回：`_CameraScan`。
     逻辑：从近处向远处扫描，每条线选择离上一条有效中心最近的连续道路 segment。
     """
 
     if not _valid_image(image):
+        _save_frame_centers([])
         return _empty_scan()
 
-    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp)
+    _maybe_reset_perception_by_timestamp(timestamp)
+    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle, obstacle_x, obstacle_size = _build_masks(
+        image,
+        timestamp,
+        enable_opp,
+    )
     red_environment = _is_red_environment(image)
     wide_localize_enabled = red_environment
     height, width = road_mask.shape
@@ -720,9 +782,12 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
             fallback_count += 1
 
     if not centers:
+        _save_frame_centers([])
         debug_flags = 4 if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92 else 1
         scan = _empty_scan(debug_flags=debug_flags)
         scan.near_obstacle = bool(near_obstacle)
+        scan.obstacle_x = float(obstacle_x)
+        scan.obstacle_size = float(obstacle_size)
         return scan
 
     confidence, debug_flags = _score_scan(
@@ -735,6 +800,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
     )
     if red_environment:
         debug_flags |= _RED_ENVIRONMENT_FLAG
+    _save_frame_centers(centers)
     return _CameraScan(
         np.array(centers, dtype=np.float32),
         np.array(left_edges, dtype=np.float32),
@@ -743,6 +809,8 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
         confidence,
         debug_flags=debug_flags,
         near_obstacle=bool(near_obstacle),
+        obstacle_x=float(obstacle_x),
+        obstacle_size=float(obstacle_size),
     )
 
 
@@ -772,7 +840,31 @@ def _to_obs(scan: _CameraScan, debug_flags: int | None = None) -> PerceptionObs:
         clamp(scan.confidence, 0.0, 1.0),
         debug_flags=flags,
         near_obstacle=bool(scan.near_obstacle),
+        obstacle_x=float(scan.obstacle_x),
+        obstacle_size=float(scan.obstacle_size),
     )
+
+
+def _fused_obstacle(left_scan: _CameraScan, right_scan: _CameraScan) -> tuple[bool, float, float]:
+    """融合双目近车检测结果。
+
+    功能：给 policy 一个稳定的左/中/右对手位置。
+    参数：左右 `_CameraScan`。
+    返回：`(near, x, size)`。
+    逻辑：只有一侧检测到就用那侧；两侧都检测到时按车身块尺寸加权，尺寸更大的近车影响更大。
+    """
+
+    candidates = [
+        scan
+        for scan in (left_scan, right_scan)
+        if scan.near_obstacle and scan.obstacle_size > 0.0
+    ]
+    if not candidates:
+        return bool(left_scan.near_obstacle or right_scan.near_obstacle), 0.0, 0.0
+    total = sum(max(float(scan.obstacle_size), 1e-6) for scan in candidates)
+    x = sum(float(scan.obstacle_x) * max(float(scan.obstacle_size), 1e-6) for scan in candidates) / total
+    size = max(float(scan.obstacle_size) for scan in candidates)
+    return True, clamp(x, -1.0, 1.0), size
 
 
 def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionObs:
@@ -787,18 +879,23 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
     left_ok = _usable(left_scan)
     right_ok = _usable(right_scan)
     if left_ok and not right_ok:
-        return _to_obs(left_scan)
+        obs = _to_obs(left_scan)
+        obs.near_obstacle, obs.obstacle_x, obs.obstacle_size = _fused_obstacle(left_scan, right_scan)
+        return obs
     if right_ok and not left_ok:
-        return _to_obs(right_scan)
+        obs = _to_obs(right_scan)
+        obs.near_obstacle, obs.obstacle_x, obs.obstacle_size = _fused_obstacle(left_scan, right_scan)
+        return obs
     if not left_ok and not right_ok:
         obs = _empty_obs(debug_flags=left_scan.debug_flags | right_scan.debug_flags | 1)
-        obs.near_obstacle = bool(left_scan.near_obstacle or right_scan.near_obstacle)
+        obs.near_obstacle, obs.obstacle_x, obs.obstacle_size = _fused_obstacle(left_scan, right_scan)
         return obs
 
     center_gap = abs(_near_center(left_scan) - _near_center(right_scan))
     merge_gap = 640.0 * VISION_PROFILE["fusion_merge_gap"]
     merge_confidence = VISION_PROFILE["fusion_merge_min_confidence"]
     confidence_gap = abs(left_scan.confidence - right_scan.confidence)
+    near_obstacle, obstacle_x, obstacle_size = _fused_obstacle(left_scan, right_scan)
     if (
         center_gap >= merge_gap
         or left_scan.confidence < merge_confidence
@@ -810,7 +907,11 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
             flags |= 8
         if confidence_gap < VISION_PROFILE["fusion_confidence_margin"]:
             flags |= 16
-        return _to_obs(chosen, debug_flags=flags)
+        obs = _to_obs(chosen, debug_flags=flags)
+        obs.near_obstacle = near_obstacle
+        obs.obstacle_x = obstacle_x
+        obs.obstacle_size = obstacle_size
+        return obs
 
     center_points = np.concatenate([left_scan.center_points, right_scan.center_points], axis=0)
     left_edge_points = np.concatenate([left_scan.left_edge_points, right_scan.left_edge_points], axis=0)
@@ -827,7 +928,9 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
         road_width_est,
         clamp(confidence, 0.0, 1.0),
         debug_flags=left_scan.debug_flags | right_scan.debug_flags,
-        near_obstacle=bool(left_scan.near_obstacle or right_scan.near_obstacle),
+        near_obstacle=near_obstacle,
+        obstacle_x=obstacle_x,
+        obstacle_size=obstacle_size,
     )
 
 
@@ -850,16 +953,86 @@ def _with_line_state(obs: PerceptionObs, left_img, right_img, timestamp=None) ->
     return obs
 
 
-def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
+def reset_perception_state() -> None:
+    """重置感知跨帧状态。
+
+    功能：清空跨帧轨迹记忆。
+    参数：无。
+    返回：无。
+    逻辑：测试或新仿真开始前调用。
+    """
+    global _LAST_FRAME_CENTERS, _LAST_FRAME_TIMESTAMP
+    _LAST_FRAME_CENTERS = None
+    _LAST_FRAME_TIMESTAMP = None
+
+
+def extract_observation(left_img, right_img, timestamp=None, profile=None) -> PerceptionObs:
     """提取左右摄像头的赛道观测。
 
     功能：输出中心点、边界点、道路宽度估计和感知置信度。
-    参数：`left_img` 与 `right_img` 是平台传入的 BGR 图像，`timestamp` 预留给后续时间上下文。
+    参数：`left_img` 与 `right_img` 是平台传入的 BGR 图像，`timestamp` 是仿真时间，
+        `profile` 是当前控制 profile（决定整条感知链是否启用对手检测/光流卡死，即
+        no_other_cars vs with_other_cars）。`profile=None` 时退回旧行为（按 OPPONENT_PROFILE
+        全局开关），供测试/replay 直接调用。
     返回：`PerceptionObs`。
     逻辑：分别扫描左右图像；单侧有效则使用单侧，双侧一致则合并，双侧冲突则选择高置信度结果。
+        active profile 贯穿到这里，让 no_other_cars 真正不跑对手检测、也不算 frame_motion，
+        多车感知能力不会泄漏到单车（见 CLAUDE.md「Profile 隔离」）。
     """
 
-    left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
-    right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
+    if profile is None:
+        enable_opp = bool(OPPONENT_PROFILE["enable_opponent_avoidance"])
+    else:
+        enable_opp = bool(profile.get("enable_opponent", False))
+
+    left_scan = _scan_image(left_img, timestamp, enable_opp) if _valid_image(left_img) else _empty_scan()
+    right_scan = _scan_image(right_img, timestamp, enable_opp) if _valid_image(right_img) else _empty_scan()
     obs = _fuse_scans(left_scan, right_scan)
-    return _with_line_state(obs, left_img, right_img, timestamp)
+    obs = _with_line_state(obs, left_img, right_img, timestamp)
+    # 光流卡死检测（frame_motion）只属于 with_other_cars；单车不算，省每帧 resize 开销，
+    # 且默认 frame_motion=100（视作在动）保证 motion-stall 永不触发。
+    if enable_opp:
+        obs.frame_motion = _update_frame_motion(left_img, timestamp)
+    return obs
+
+
+_PREV_MOTION_GRAY = None
+_PREV_MOTION_T = None
+
+
+def _update_frame_motion(image, timestamp=None) -> float:
+    """估计帧间图像变化量（下采样灰度平均绝对差）。
+
+    功能：给一个"画面在不在流动"的标量——高=车在动，低≈被顶住不动（物理卡死）。
+    参数：`image` 单张 BGR 图（用左相机），`timestamp` 用于检测仿真重启清状态。
+    返回：MAD（约 0~50）；首帧或无上一帧时返回高值（视作在动）。
+    逻辑：几何签名在直路和顶栏时都稳定、区分不了卡死；原始像素帧差能区分——
+        车真在开时场景流动、MAD 大，被顶住不动时画面几乎不变、MAD≈传感器噪声。
+    """
+
+    global _PREV_MOTION_GRAY, _PREV_MOTION_T
+    if not _valid_image(image):
+        return 100.0
+    small = cv2.resize(
+        cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (64, 48), interpolation=cv2.INTER_AREA
+    )
+    if (
+        _PREV_MOTION_T is not None
+        and timestamp is not None
+        and float(timestamp) < _PREV_MOTION_T - 1e-6
+    ):
+        _PREV_MOTION_GRAY = None  # 仿真重启/时间回退：清上一帧
+    prev = _PREV_MOTION_GRAY
+    _PREV_MOTION_GRAY = small
+    _PREV_MOTION_T = None if timestamp is None else float(timestamp)
+    if prev is None:
+        return 100.0
+    return float(np.mean(np.abs(small.astype(np.int16) - prev.astype(np.int16))))
+
+
+def reset_frame_motion_state() -> None:
+    """清空帧间运动检测的跨帧状态（新仿真/测试前调用）。"""
+
+    global _PREV_MOTION_GRAY, _PREV_MOTION_T
+    _PREV_MOTION_GRAY = None
+    _PREV_MOTION_T = None

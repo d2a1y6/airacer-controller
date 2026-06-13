@@ -18,8 +18,15 @@ def make_track(
     confidence=0.95,
     lost=False,
     red_environment=False,
+    near_obstacle=False,
+    obstacle_x=0.0,
+    obstacle_size=0.0,
 ):
-    return TrackState(lateral, heading, curvature, lookahead, confidence, lost, red_environment)
+    track = TrackState(lateral, heading, curvature, lookahead, confidence, lost, red_environment)
+    track.near_obstacle = near_obstacle
+    track.obstacle_x = obstacle_x
+    track.obstacle_size = obstacle_size
+    return track
 
 
 def warm_policy(track, mode="no_other_cars", steps=24):
@@ -50,9 +57,11 @@ def test_curves_control_sign_and_reduce_speed():
     reset_policy_state()
     straight = warm_policy(make_track(), mode="no_other_cars")
     reset_policy_state()
-    right_curve = warm_policy(make_track(lateral=0.70, heading=0.25, curvature=0.35, lookahead=0.30), mode="no_other_cars")
+    # lateral 用 0.30（< pinned 阈值 0.38）避免冻结的大横偏被当成顶栏脱困触发；
+    # 本测试只验证弯道转向符号 + 减速，不应进入脱困状态机。
+    right_curve = warm_policy(make_track(lateral=0.30, heading=0.25, curvature=0.35, lookahead=0.30), mode="no_other_cars")
     reset_policy_state()
-    left_curve = warm_policy(make_track(lateral=-0.70, heading=-0.25, curvature=-0.35, lookahead=-0.30), mode="no_other_cars")
+    left_curve = warm_policy(make_track(lateral=-0.30, heading=-0.25, curvature=-0.35, lookahead=-0.30), mode="no_other_cars")
 
     assert right_curve.steering > 0.05
     assert left_curve.steering < -0.05
@@ -117,25 +126,47 @@ def test_low_confidence_stays_slow():
     assert cmd.speed <= get_profile("no_other_cars")["recovery_speed"]
 
 
-def test_legacy_profile_names_are_not_current_strategy_names():
-    for mode in ("fastest", "safe", "final", "unknown"):
-        try:
-            warm_policy(make_track(), mode=mode)
-        except ValueError:
-            continue
-        raise AssertionError(f"{mode} should not be accepted as a current strategy name")
+def test_unknown_profile_names_default_to_no_other_cars():
+    # 旧/未知策略名一律退回单车 no_other_cars（最保守、不会倒车）。
+    track = make_track(lateral=0.20, heading=0.15, curvature=0.22, lookahead=0.18, confidence=0.85)
+    results = {}
+    for name in ("no_other_cars", "fastest", "safe", "unknown"):
+        reset_policy_state()
+        cmd = warm_policy(track, mode=name)
+        results[name] = (cmd.speed, cmd.steering)
+    assert results["fastest"] == results["no_other_cars"]
+    assert results["safe"] == results["no_other_cars"]
+    assert results["unknown"] == results["no_other_cars"]
 
 
-def test_basic_and_complex_flags_use_same_policy_parameters():
+def test_two_profiles_share_core_driving_but_differ_on_multicar():
+    # no_other_cars 与 with_other_cars 共享核心驾驶参数（同样的正常巡线行为），
+    # 但多车增量（避让/倒车）只在 with_other_cars 生效——这是 Profile 隔离的核心约定。
+    from controller.params import get_profile
+    no = get_profile("no_other_cars")
+    wo = get_profile("with_other_cars")
+    # 核心驾驶参数一致
+    assert no["base_speed"] == wo["base_speed"]
+    assert no["turn_in_lateral_ref"] == wo["turn_in_lateral_ref"]
+    # 多车增量被隔离：单车关闭、多车开启
+    assert no["opponent_avoid_steering_enable"] is False
+    assert wo["opponent_avoid_steering_enable"] is True
+    assert no["escape_reverse_speed"] == 0.0
+    assert wo["escape_reverse_speed"] > 0.0
+    assert no["motion_still_threshold"] == 0.0
+    assert wo["motion_still_threshold"] > 0.0
+
+
+def test_red_environment_flag_does_not_switch_policy_parameters():
     base = make_track(lateral=0.18, heading=0.12, curvature=0.20, lookahead=0.16, confidence=0.80, red_environment=False)
     red = make_track(lateral=0.18, heading=0.12, curvature=0.20, lookahead=0.16, confidence=0.80, red_environment=True)
     reset_policy_state()
-    basic_cmd = warm_policy(base, mode="no_other_cars")
+    normal_cmd = warm_policy(base, mode="no_other_cars")
     reset_policy_state()
-    complex_cmd = warm_policy(red, mode="no_other_cars")
+    red_env_cmd = warm_policy(red, mode="no_other_cars")
 
-    assert complex_cmd.speed == basic_cmd.speed
-    assert complex_cmd.steering == basic_cmd.steering
+    assert red_env_cmd.speed == normal_cmd.speed
+    assert red_env_cmd.steering == normal_cmd.steering
 
 
 def test_timestamp_reset_discards_speed_state():
@@ -294,6 +325,30 @@ def test_line_correction_suppressed_near_obstacle():
     blocked_cmd = warm_policy(blocked, mode="no_other_cars")
 
     assert abs(blocked_cmd.steering - base_cmd.steering) < 1e-6
+
+
+def test_side_obstacle_slows_less_than_center_obstacle():
+    centered = make_track(near_obstacle=True, obstacle_x=0.0, obstacle_size=0.08)
+    side = make_track(near_obstacle=True, obstacle_x=0.72, obstacle_size=0.08)
+
+    reset_policy_state()
+    center_cmd = warm_policy(centered, mode="with_other_cars")
+    reset_policy_state()
+    side_cmd = warm_policy(side, mode="with_other_cars")
+
+    assert side_cmd.speed > center_cmd.speed + 0.08
+
+
+def test_obstacle_position_changes_avoidance_direction():
+    left_obstacle = make_track(near_obstacle=True, obstacle_x=-0.72, obstacle_size=0.08)
+    right_obstacle = make_track(near_obstacle=True, obstacle_x=0.72, obstacle_size=0.08)
+
+    reset_policy_state()
+    left_cmd = warm_policy(left_obstacle, mode="with_other_cars")
+    reset_policy_state()
+    right_cmd = warm_policy(right_obstacle, mode="with_other_cars")
+
+    assert left_cmd.steering > right_cmd.steering + 0.10
 
 
 def test_line_correction_suppressed_in_sharp_turn():

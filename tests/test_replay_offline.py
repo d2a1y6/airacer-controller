@@ -41,6 +41,8 @@ CONTROL_SCHEMA = {
     "left_margin",
     "right_margin",
     "near_obstacle",
+    "obstacle_x",
+    "obstacle_size",
 }
 
 

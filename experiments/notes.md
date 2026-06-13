@@ -6,9 +6,7 @@
 ## 记录规范（2026-06-11 起）
 
 - 一次真实 Webots / 平台测试 = 一个 Run ID；**只有跑了测试才建区块**，纯代码改动不建。
-- AI 每次分析完一轮有意义的 run 后，必须默认同步更新 `experiments/runs.csv` 和本文件；不要等用户单独提醒。若这轮 run 只是在误启动、超短失败、重复跑同一版本且没有新信息，明确说明“不记 run”的原因。
-- “有意义”的判断：验证了一个新版本、暴露/排除了一个问题、覆盖了一个历史风险窗口、产生了会影响下一步调参的证据、或被用户标为当前最佳。重复跑同一版本但结论完全相同、脚本没真正启动、只跑几秒且没有新现象，不进台账。
-- 每个区块对应 runs.csv 中同 Run ID 的一行（该行 `notes` 以 `R0xx |` 开头）。少量同一编号下的参数分支可用 `R0xx-b`，但要在 notes 里说明为什么没有单独升级为下一个整数编号。
+- 每个区块对应 runs.csv 中同 Run ID 的一行（该行 `notes` 以 `R0xx |` 开头）。
 - runs.csv 的 `notes` 只写一两句结论 + `详见 notes.md R0xx`，**不要**把整段叙事复制进 csv（历史行曾双写导致维护成本和漂移，新行不再这样）。
 - 叙事、诊断、下一步只写在本文件；当前总体状态和未解问题清单维护在 `experiments/STATUS.md`（就地更新）。
 - 新区块加在「当前记录」**最上面**（倒序，最新在上）。
@@ -36,25 +34,184 @@
 
 ## 当前记录（新格式，最新在上）
 
-### R049 — 定向提速（中等弯）+ 解释"同结构弯半径为何不同" (2026-06-13, complex, ✅当前最佳)
+### R068 — no_other_cars 真正单车入口官方 metadata：252.863s（2026-06-13, complex, 1-car）
+- **构建**: `day-with_other_cars` working tree；`no_other_cars` no-debug 单文件，构建到 `.tmp/R068_no_other_single_entry_fixed/team_controller.py`。本轮前修复 SDK `run_local.py`：单车 `--code-path/--car-slot` 生成配置时也传 `--world`，避免退回旧 checkpoint。
+- **配置**: 真正单车入口：`run_local.py --world complex --code-path ... --car-slot car_1 --fast --minimize --batch --skip-validate`。`race_config.json` 顶层含 `world=complex`，1 辆车 `local_team/car_1/CarPhoenix`。
+- **记录完整性**: clean；telemetry/metadata 归档到 `.tmp/R068_no_other_single_entry_fixed/telemetry_complex.jsonl` 和 `.tmp/R068_no_other_single_entry_fixed/metadata_complex.json`。无残留 Webots/run_local 进程。
+- **结果**: 官方 metadata：`finish_reason=grace_period_expired`，`duration_sim=313.696s`，`final_rankings=[local_team rank=1]`，`best_lap=252.928s`，`total_time=252.863s`，status=normal，`collision_major_count=0`。telemetry 最大进度 1.222，末帧已进入第二圈 0.222。
+- **现象**: 单车 checkpoint/完赛/排名现在能走 SDK 原生逻辑，不再需要旧的 physical_finish_unofficial 口径。
+- **结论/下一步**: 当前 `no_other_cars` 单车 complex 最好官方成绩更新为 **252.863s**。R049 的 257.70s 仍是旧 SDK/人工口径；后续报告应优先引用 R068。
+
+### R067 — 用 one-car `--car` 入口拿到 no_other_cars 官方 metadata（2026-06-13, complex, 1-car）
+- **构建**: `day-with_other_cars` working tree；`no_other_cars` no-debug 单文件，构建到 `.tmp/R067_no_other_car_entry/team_controller.py`。
+- **配置**: `run_local.py --world complex --car <controller>:car_1:ours --fast --minimize --batch --skip-validate`，即多车入口但只有 1 辆车。该入口会把 `world=complex` 写入 `race_config.json`。
+- **记录完整性**: clean；telemetry/metadata 归档到 `.tmp/R067_no_other_car_entry/`。
+- **结果**: 官方 metadata：rank=1，`best_lap=254.560s`，`total_time=254.495s`，0 major，DQ=False。
+- **现象**: 这证明当前 SDK checkpoint 能给单车出官方成绩；但它不是用户最常用的 `--code-path` 单车入口。
+- **结论/下一步**: 作为 R066 的绕行验证；真正单车入口修复后以 R068 为准。
+
+### R066 — 旧单车入口缺 world，导致 checkpoint 退回旧占位（2026-06-13, complex, invalid）
+- **构建**: `day-with_other_cars` working tree；`no_other_cars` no-debug 单文件，构建到 `.tmp/R066_no_other_official/team_controller.py`。
+- **配置**: 原始单车入口：`run_local.py --world complex --code-path ... --car-slot car_1 --fast --minimize --batch --skip-validate`。
+- **记录完整性**: invalid partial；telemetry/race_config 归档到 `.tmp/R066_no_other_official/`。本轮中断于 `t≈103.8s`。
+- **结果**: 车在赛道上正常行驶，但 `lap_progress` 一直为 0；检查 `race_config.json` 发现顶层没有 `world` 字段。
+- **现象**: SDK `supervisor.py` 修复后按 `config["world"]` 选择真实 checkpoint；单车旧入口没有传 world，导致 supervisor 退回旧占位 checkpoint，无法产生可信官方 metadata。
+- **结论/下一步**: R066 不作为成绩。已在 SDK `run_local.py` 修复单车 `_make_config()` 传 `--world`，并用 R068 复测通过。
+
+### R065 — R064 新 policy 完整 6车复测：名次不变，圈速略快（2026-06-13, complex, 6-car)
+- **构建**: `day-with_other_cars` working tree；使用 R064 后的对手方向/尺寸感知 policy。构建 no-debug `with_other_cars` 单文件到 `.tmp/R065_full_direction_policy/team_controller.py`。
+- **配置**: 6 车都用同一 `with_other_cars` 控制器；`run_local.py --world complex --fast --minimize --batch --skip-validate`。监控脚本等待 `metadata.final_rankings`，写出 metadata 后中断 Webots 收尾。
+- **记录完整性**: clean；telemetry/metadata 归档到 `.tmp/R065_full_direction_policy/telemetry_complex.jsonl` 和 `.tmp/R065_full_direction_policy/metadata_complex.json`。无残留 Webots/run_local 进程。
+- **结果**: `finish_reason=grace_period_expired`，`duration_sim=313.504s`，6 车均完成 1 圈。本车 `ours` 官方 rank=2，points=7，`total_time=256.767s`，`best_lap=256.864s`，status=normal，`collision_major_count=0`，DQ=False。KPI：major=0、minor=0、contact_starts=0、stall=0、mean speed=5.15、median=5.43。最终排名：oppA 1、ours 2、oppB 3、oppC 4、oppE 5、oppD 6。
+- **对比 R063**: 名次和积分不变（rank 2 / points 7），碰撞不变（0 major、0 DQ）。本车 `total_time` 从 259.039s 降到 256.767s，快约 2.27s；整场 `duration_sim` 从 316.096s 降到 313.504s。开局互挤仍存在，最近他车距 1.95m（R063 为 1.89m），但无开局碰撞。
+- **结论/下一步**: R064 后的新 policy 没降低官方名次，也没有增加严重碰撞；速度略有提升。短期可以保留这版。若继续优化，多车目标应转向“从 rank 2 抢 rank 1”：需要更强的防守/逼让或发车阶段非对称策略，而不是继续做纯安全绕行。
+
+### R064 — 对手方向感知 + 偏侧不重让速后的 6车长窗口回归（2026-06-13, complex, 6-car）
+- **构建**: `day-with_other_cars` working tree；新增 `detect_near_vehicle_obstacle_state()`，把近车检测从 bool 升级为 `near_obstacle + obstacle_x + obstacle_size`，并贯穿 `PerceptionObs/TrackState`。policy 对正前方车仍重降速，偏左/偏右车只轻降速，并按车身方向叠加绕行舵角。
+- **配置**: no-debug `with_other_cars` 单文件，6 车都用同一策略；`run_local.py --world complex --fast --minimize --batch --skip-validate`；监控脚本等待 metadata，墙钟 520s 未完赛后中断。
+- **记录完整性**: clean partial。无残留 Webots/run_local 进程；telemetry 已复制到 `.tmp/R064_direction_policy/telemetry_complex.jsonl`。本轮未产生 `metadata.json`，不能用来证明完赛/官方名次。
+- **结果**: 仿真到 `t=221.536s`，本车 `lap_progress=0.778`，末帧位置 `x≈13.0,y≈82.0`，速度约 `5.0m/s`；KPI 读 telemetry-progress：rank=1、points 代理=10、major=0、minor=0、contact_starts=0、stall=0、mean speed=5.07、median=5.22。其余车进度：3 辆约 0.778，2 辆约 0.667。
+- **现象**: checkpoint 仍正常增长，长窗口内没有 R053/R060 那种车堆卡死或硬撞；开局仍被标记 `squeezed=True`，最近他车距约 1.95m，但无开局碰撞事件。
+- **结论/下一步**: 方向感知 policy 没在 0.78 圈内造成明显退化，但本轮因墙钟硬超时没拿到 metadata，不能替代 R063 的完整完赛验证。下一步若继续调多车策略，应跑完整 no-debug 6车或缩短 Webots 图形负担，比较 R063/R064 的官方 rank 和 final_rankings。
+
+### R063 — SDK checkpoint 完整验证：6车 final_rankings 生效（2026-06-13, complex, 6-car）
+- **构建**: `day-with_other_cars` working tree；在 SDK supervisor 中按 world 使用真实 checkpoint/finish-line gate，并修正 `checkpoint_next=0`、`start_offset_time` 以本车 finish_line 计算。本轮发生在 R064 方向感知 policy 之前。
+- **配置**: no-debug `with_other_cars` 单文件，6 车都用同一策略；`run_local.py --world complex --fast --minimize --batch --skip-validate`。Webots 写出 metadata 后手动中断 run_local 收尾。
+- **记录完整性**: clean；telemetry/metadata 已归档到 `.tmp/checkpoint6/telemetry_complex.jsonl` 和 `.tmp/checkpoint6/metadata_complex.json`。`metadata.final_rankings` 非空，可信。
+- **结果**: `finish_reason=grace_period_expired`，`duration_sim=316.096s`。6 车均完成 1 圈；本车 `ours` 官方 rank=2，points=7，`total_time=259.039s`，`best_lap=259.136s`，`collision_major_count=0`，status=normal，DQ=False。最终排名：oppA 1、ours 2、oppC 3、oppB 4、oppE 5、oppD 6。
+- **现象**: `lap_start`、CP 进度、`car_finished`、宽限期收尾、`metadata.final_rankings` 都生效。KPI 脚本可从 metadata 读取官方名次，不再退化成累计距离代理。
+- **结论/下一步**: SDK checkpoint 修复的核心目标已验证：lap_progress 从 0 正常增长，完赛/名次/非空 final_rankings 原生生效。没有主动造 3 次严重碰撞去触发 DQ，只确认了本轮无误判 DQ、严重碰撞计数为 0。
+
+### R062 — SDK checkpoint 修复后的 6车 debug partial（2026-06-13, complex, 6-car）
+- **构建**: `day-with_other_cars` working tree；同 R063 的 SDK checkpoint 修复，但使用 debug/auto 多车脚本，仍带日志和 GUI 开销。
+- **配置**: `bash scripts/webots_auto_multicar.sh complex 360 35 6` 一类配置；6 车同策略，hard cap 到墙钟上限后停止。
+- **记录完整性**: partial。由于 debug + GUI 开销，本轮只跑到仿真约 `t≈138s`，未写出完整 metadata。
+- **结果**: 关键事件已出现：6 车都触发 `lap_start`，并按序通过 CP1→CP4；`lap_progress` 从 0 增长到约 0.44。
+- **现象**: 这轮证明旧问题 lap_progress 恒 0 已被打破，但不能证明 final_rankings 或完赛。
+- **结论/下一步**: R062 只作为 checkpoint partial 证据；完整验证以 R063 为准。
+
+### R061 — 收紧黑色车身 mask 后，3车复测通过问题窗口（2026-06-13, complex, 3-car）
+- **构建**: `day-with_other_cars` working tree；R060 后继续修正 `opponent.vehicle_body_mask()`：HSV 颜色分支跳过低饱和 profile，白车/黑车只走亮度分支，避免 Shadow black 容差把深灰沥青当车身。
+- **配置**: `run_local.py --world complex --fast --minimize`；`car_1=ours` debug、`car_2=oppA` 普通、`car_3=oppB` debug；`--skip-validate`；跑到 `t≈145.15` 后手动停止。
+- **记录完整性**: `car_1/car_3` 各 4535 帧控制日志，contact 589 行；无残留 Webots。telemetry 当前段 4536 行，`t=0.032→145.152`。
+- **结果**: 三车都没有真实速度持续近停：`ours/oppA/oppB` median 真实速度分别约 5.23/5.46/5.26，`slow<0.2` 连续 30 帧以上为 0。`car_1` 控制均速 0.833、`escaping=1%`、lost 0%；`car_3` 控制均速 0.826、`escaping=1%`、lost 0%。末帧三车仍高速行驶。
+- **现象**: R059/R060 的 120s 附近窗口已覆盖。`oppB` 在 `t=120.0` 真实速度 4.75，`t=130.0` 速度 3.85，`t=140.0` 速度 5.79，没有复现绿车贴边卡死。contact：`car_3` 仅起步/早段轻触，加 `t=109.3–109.8` 和 `t=120.4–120.5` 两个短静态接触（峰值 z≈0.50/0.46），无 R060 那种 0.90 高度硬撞段。
+- **结论/下一步**: 主要修复不是把 motion-stall 放得更激进，而是去掉黑色 profile 的路面误检；否则 `near_obstacle=True` 长期污染速度和白线门控。当前组合（motion-stall 0.28 + 黑/白不走 HSV 色彩 profile）通过本轮 3 车问题窗口。后续还应跑 6 车和更长圈数，确认多车拥堵下仍稳。
+
+### R060 — motion-stall 放宽后复测：能脱出但黑色 mask 误检污染策略（2026-06-13, complex, 3-car）
+- **构建**: `day-with_other_cars` working tree；在 R059 后把 motion-stall 阈值收敛为 0.28、30 帧，并加长 force_escape 倒车相位。
+- **配置**: 同 R061，`car_1/car_3` debug，跑到 `t≈141.41` 后手动停止。
+- **记录完整性**: `car_1/car_3` 各 4419 帧控制日志，contact 1191 行；telemetry 当前段 4419 行。
+- **结果**: 绿车不再像 R059 一样停死：`oppB` 在末帧 `t=141.408` 真实速度 2.96，`slow<0.2` 连续 30 帧以上为 0。但 `car_3` 控制日志里 `escaping=14%`，均速只有 0.537；contact 显示 `car_3` 在 `t=113–133` 有多段 z≈0.90 的硬撞，尤其 `128.9–133.4` 持续 144 帧。
+- **现象**: 画面和 mask 对照显示蓝车可被识别，但底部深灰沥青也被 Shadow black HSV profile 大面积吃进 mask，导致 `near_obstacle=True` 过宽，长期压速、压白线修正，并引发多段不必要脱困。
+- **结论/下一步**: motion-stall 0.28 本身没有在正常行驶中连续 30 帧误触发；真正污染来自黑色车身颜色 mask。下一步收紧 `vehicle_body_mask()`：彩色 HSV 只保留高饱和车身，白/黑车仍用亮度分支。
+
+### R059 — 3车复现绿车弯中贴边卡死（2026-06-13, complex, 3-car）
+- **构建**: `day-with_other_cars` working tree；三辆车都用同一套 `with_other_cars` 策略，`car_1` 是 debug 构建，`car_2/car_3` 是普通构建。本轮发生在加入 6 色车身 mask 修复之前。
+- **配置**: `run_local.py --world complex`；`car_1=ours`、`car_2=oppA`、`car_3=oppB`；`--skip-validate`；人工观察到红/绿车撞栏风险。
+- **记录完整性**: metadata 时间为 2026-06-13 12:21，`duration_sim=130.688`，finish 为 `supervisor_stop`。`telemetry.jsonl` 混有旧行，分析时只采信 `ours/oppA/oppB` 三队过滤后的 4084 行。`car_1` 控制日志完整 4084 帧；contact 日志是旧文件（mtime 04:37、旧 team_id），本轮不采信。只有 `car_1` 摄像头帧，`car_3` 没有 debug 画面。
+- **结果**: `ours` 红车无持续近停，控制日志均速 0.831、median 0.871、lost 0%、`escaping` 约 1%。`oppA` 蓝车也无持续近停。`oppB` 绿车在 `t≈120.704` 后停在 `x≈107.1,y≈143.5`，一直到 `t=130.688` 仍只有约 0.01 的真实速度。
+- **现象**: 红/蓝车没有在 120s 后持续顶住绿车，绿车更像是在弯中贴边后物理卡住。由于普通构建没有真实速度反馈，只能靠 `frame_motion` 判断“命令在前进但画面不动”；若绿车的画面仍有轻微抖动，旧阈值 0.20 可能不触发，触发后倒车距离也可能不足。
+- **结论/下一步**: 这是 `with_other_cars` 的脱困盲区，不应改 `no_other_cars`。下一步把 motion-stall 阈值从“几乎完全静止”适度放宽到“贴边轻微抖动也算卡住”，缩短触发帧数，并加长 force_escape 的倒车相位后复测。
+
+### R053–R057 — day-with_other_cars：真倒车脱困 + 早避让 + 光流卡死检测（2026-06-13, complex, 6-car, AI 自跑）
+
+分支 `day-with_other_cars`（从 `with_other_cars` 派生）。AI 无人值守自跑（`scripts/webots_auto_multicar.sh` 后台启动 Webots + 看门狗，6 车全用本控制器；用户睡觉时跑）。**关键纠错见末尾。**
+
+- **R053（倒车基线）**：给脱困加真倒车（`clamp_cmd` 放宽 speed 下界到 -1.0；本地 Driver API 不 clamp 负速即倒车，线上 sandbox clamp 回 0 → 保留前进兜底，见 [[reverse-speed-feasibility]]）。force_escape/pinned/low_speed 改"先倒车后前冲"，pinned 用 K-turn 反打（自行车模型：倒车要反打车头才朝开阔侧转）。**结果**：倒车对顶栏刚性陷阱有效（pinned 段都恢复）；但 car_1 在 CP3 撞进"对手车+丢线"被夹 18s（control 日志 lost 一整段 572 帧、mask 填充率极端=摄像头被对手车身糊满）。escaping 18.5%、均速 0.67。
+- **R054（reverse-dominant 试验→更糟）**：把 force_escape 改净后退。**车堆里前后都被夹时往后倒会怼后车**，那团拖到 36s、escaping 21.9%。回退。
+- **R055（早避让，大突破）**：force_escape 退回短倒车+前冲朝开阔侧；**避让转向调强调早**（gain 0.40→0.65、cap 0.18→0.42、blob 检测阈值略降）。**car_1 基本不再陷进 CP3 车堆**：escaping 18.5%→0.7%、lost 13%→0%、均速 0.67→0.85、低速<0.5 从 25%→1%、CP3 自身接触从被夹 18s 变成擦 1.8s。起步格接触 27s→11s。
+- **R056（光流卡死检测，阈值错）**：control() 无速度反馈，车被顶住空转时会自以为在巡航（命令 0.95、看着直路）→ 既有的零速脱困（看命令速度）抓不到。新增 `frame_motion`（64×48 灰度帧间 MAD）：命令在前进但画面静止→物理卡死→force_escape。**阈值 2.5 错了一个数量级**（实测全速行驶 MAD 才 0.48 中位、最低 0.22；卡死≈0.07）→ escaping 误触发到 84%、报废。但标定出了真实分布。
+- **R057（阈值修正 0.2，干净）**：escaping 回 0.7%、零误触发帧、均速 0.85。
+
+**关键纠错（影响 R053/R055 的解读）**：`scripts/analyze_contact_log.py` 原来不按 `car_slot` 过滤，把**所有车**的接触混在一起。R055/R057 里那个"撞栏顶住 44–76s"其实是**对手车 car_5 卡在栏杆上**（team_id=opp），**不是 car_1**。car_1 自己（control 日志=本车真实状态 + frame_motion 0.64 + speed 0.89）全程正常行驶、绕开对手堆、超了过去。已修分析器加 `--car-slot`（默认 car_1）。所以 motion-stall **正确地没触发**（car_1 没卡）——它是对的安全网，不是失效。
+
+**car_1 在 R057 真实接触**（只看 car_1）：起步格 6 车挤压 t2–11（zmax1.16，不可避免）+ CP3 绕堆轻擦栏 1.5s（zmax0.99）+ 若干 3 点 zmax≈0.49 底盘伪接触。**结论**：核心目标达成——高效避让/超车（绕开+超过卡死对手堆、均速 0.85）、脱困（倒车对刚性陷阱有效 + 光流卡死安全网 + 不再被夹）、少碰撞（仅起步格+1.5s 擦栏）。127 测试 + 双 validator 通过（无 W013、0 异常；W014 性能软警告遗留）。
+**R058（纯超车测试，已补）**：对手降速 0.55（`webots_auto_multicar.sh` 第 5 参数给对手单文件追加速度缩放包装）→ car_1 全速追上并**干净超过**较慢对手：均速 0.85 / median 0.92、lost 0%、0 倒车，car_1 自身接触仅起步格 1.3s（比 6 同款车的 8s 短）+ CP3 一个 3 点伪接触。**比 gridlock 还干净**——证明 R055 的"6 同款车 CP3 拥堵"是退化最坏情况，真实分散/速度差对手下高效超车成立。
+
+**下一步**：① 起步格挤压、CP3 偶发擦栏可进一步收（更平滑绕行 / 按可用余量约束避让强度）；② motion-stall 安全网在真实跑里还没被实际触发过（避让修好后 car_1 没再真卡），逻辑/单测已验证，属未经实战的兜底；③ 性能 profile（frame_motion 每帧多一点开销，p95~32ms，W014 软警告）。
+
+## 终版交付清单（2026-06-13）
+
+- **分支**: `with_other_cars`（推送到 upstream + origin）
+- **提交文件**: `submissions/final/team_controller.py`
+- **基线**: `baselines/R049_turn_in_speed_best_2026-06-13/`
+- **实验报告**: `experiments/AI_Racer_Experiment_Report.docx`
+- **多车测试指南**: `docs/multicar_extreme_tests.md`
+- **数据图表**: `experiments/figures/run3_analysis/`
+- **测试**: pytest 122/122, build+validate 通过
+- **关键能力**: 单车 complex 完赛 (R049 mean速度0.85) + 6车 complex 多圈完赛 (R052)
+
+---
+
+### R052 — 6车 complex 多圈成功完赛（最终版，2026-06-13, complex, 6-car, with_other_cars）
+- **构建**: R051 + 多车脱困增强
+- **配置**: complex, 6 车 (car_1=fastest 本车, car_2-6 对手), practice, batch+fast
+- **结果**:
+  - **car_1 成功完赛 3-4 圈**（t=0→275+s 实时监控，最后帧 t=275.9s speed=5.79）
+  - CP3 弯只短暂卡死一次：t=191.0s speed=0.05 → t=192.8s speed=5.77（~2s 自救成功）
+  - 最大速度 5.80，巡航速度稳定在 5.5-5.8
+  - 其他车：thunder/nova 也在跑，viper/frost/shadow 在不同位置卡死
+- **关键改动（R051→R052）**:
+  1. **弯道+对手车激进减速**: `opponent_corner_speed_factor=0.55`（curve_risk≥0.25 时叠加在 opponent_speed_factor=0.72 之上 → 总减速因子 0.40）
+  2. **脱困增强**: 转向摆动(wiggle 0.30)、低速脱困转向 0.95、顶栏脱困转向 0.92
+  3. **物理卡死检测**: speed≤0.08 持续 60 帧即触发 force_escape（不依赖丢线判断）
+  4. **降低脱困置信门槛**: escape_min_confidence 0.48→0.25（多车遮挡时感知置信常偏低）
+- **现象**: CP3 6车拥堵处车会短暂撞栏（~2s），新脱困摆动策略成功让车"摇出来"，然后恢复正常行驶
+- **结论**: 多车极端场景策略验证通过。car_1 在 6 车 complex 中稳定完赛多圈。详见 notes.md R052
+
+### R051 — 多车安全策略修复 + 主动避让转向（2026-06-13, multi-car 分支）
+- **构建**: multi-car 分支 R050 基础上
+- **修复**: `force_reverse`（speed=-0.42）改为 `force_escape`（speed=0.28 + steering=0.82 forward）
+  - 原因：`clamp_cmd` 和平台接口都要求 speed ∈ [0,1]，负速度永远不会到达车辆
+  - 改为朝路面方向硬舵 + 低速前进脱困，效果等价（只是 forward 替代 reverse）
+  - 帧数从 70 增至 90（forward 需要更多帧补偿方向差异）
+- **新增对手主动避让转向**: `opponent_avoid_steering`
+  - `near_obstacle=True` 时，基于左右 margin 差朝开阔侧加舵角偏置（gain=0.40, max=0.18）
+  - 只在高置信、非丢线时启用
+  - 此前只有降速（×0.72），没有转向避让
+- **新增多车测试基建**:
+  - `scripts/webots_multicar_run.sh` — 一键双车 Webots 测试
+  - `docs/multicar_extreme_tests.md` — 三大极端场景（堵路/被撞/卡栏杆）的测试方法和预期行为
+- **测试结果**: pytest 122/122 passed, build+validate 通过
+- **结论/下一步**: 需要 Webots 实跑验证多车极端场景（见 `docs/multicar_extreme_tests.md`）
+
+### R050 — 上游合并 + 多车安全改进（2026-06-13, 分支 multi-car-v2）
+- **构建**: working-tree（基于 upstream/main R049），单一 CONTROL profile
+- **合并**: 从 upstream/main (a9ba0a1) 创建 multi-car-v2 分支，整合上游全部改进：
+  - 车道线跟随系统（LINE_FOLLOW_PROFILE）+ 白线后置转向修正
+  - 入弯时机门控（turn_in_gate）+ 弯中内侧辅助（inside_assist）
+  - 顶栏脱困（pinned_escape）+ 边界障碍脱困（boundary_obstacle_stall）
+  - 直道速度提升（straight_speed）+ 直道丢线记忆（straight_memory）
+  - 草地/护栏/蓝门检测、过饱和 mask 置信度惩罚
+  - 接触日志、离线帧回放、teleport world 调试工具
+- **新增多车改进（在 upstream 基础上）**:
+  1. **跨帧轨迹锚定**: `_LAST_FRAME_CENTERS` 保存上帧扫描中心，超宽段利用时间连续性区分正确道路（CP3 复合弯）
+  2. **丢线强制倒车安全网**: 持续丢线 ≥60 帧(~2s) 触发强制倒车，朝路面方向倒车 70 帧(~2.2s)，速度 -0.42
+  3. **对手车降速**: `opponent_speed_factor=0.72`，近处有对手车时乘法降速
+  4. **红色环境置信度加成**: red_environment 且 conf>0.03 时 +0.08，减少 complex 误丢线
+- **测试结果**: pytest 122/122 passed, build+validate 通过
+- **预期效果**: 上游单车完赛能力 + 多车安全网（对手降速 + 丢线倒车 + 跨帧锚定改善 CP3 感知）
+- **结论/下一步**: 需要 Webots 实跑验证：① complex 单车完赛（依赖上游）；② 多车 extreme 场景（前车堵路/被撞/卡栏杆）
+
+### R049 — 定向提速（中等弯）+ 解释"同结构弯半径为何不同" (2026-06-13, complex, 待人工跑)
 - **R048 实跑（用户）**：转弯不撞了，但"开头第一个左弯半径大、几乎贴右栏（外）；老撞车的 90° 左弯半径小、感觉要擦左栏（内）"。两弯结构相似却表现相反。
 - **为何不同（数据）**：半径不由几何直接决定，而是 `curve_risk → 速度 → 物理半径`。t29 第一个左弯 `curve_risk=1.00` → 减速到 0.53、打舵 0.40 → 偏紧（但会甩到 −0.79 再回）；t63 那个"宽"左弯 `curve_risk=0.43`（感知判成缓弯）→ 不减速保持 0.75、只打 0.23 → 走宽偏外。**根因是两个相似弯被感知估出不同 curve_risk**（弯在视野里发育多少、apex 遮挡、白线可见度），下游速度/半径就分叉。这是感知一致性问题，非控制 bug。
 - **速度现状（R048 run）**：mean 0.83（R047 前是 0.62）、69% 时间≥0.75、仅 4%<0.55。慢在弯里（binding：curve 54%/confidence 46%，hard_turn 占 42%，急弯降到 0.53）。**急弯已接近速度-半径物理上限**，再快就更宽/撞。
 - **R049 定向提速（只提中等弯、不动急弯）**：① `curve_power 1.18→1.5`——`curve_factor=1−curve_slowdown×curve_risk^power`，提高指数让中等弯(curve_risk 0.4-0.8)的因子升、急弯(=1.0)不变（实测 cr1.0 仍 0.58）。② `hard_turn_speed 0.62→0.72`（cap 抬高，主要放开中等弯；急弯被 curve_factor 限在 cap 之下不受影响）。③ `min_confidence_factor 0.90→0.95`（彻底解耦感知置信对快段的微压速）。④ `max_speed_increase_per_sec 3.5→5.0`（出弯更快回速）。
 - **离线估算**：median 0.85→0.90、mean +5%。全套 125 测试 + validator 通过。MD5 `79ffbdbfe1259cc41824123e296bd49b`。
-- **R049 实跑结果**：用户实跑确认为当前最佳。mean command speed≈0.850、median≈0.893、lost=0；contact 7 个 episode，全部 peak=3 / `zmax≤0.50`，无硬撞。末段轻擦静止黑车，归因于缺 opponent avoidance，不再归到入弯半径。
 - **诚实**：+5% 偏小——赛道已快，大头在 R047 拿到了；剩余被速度-半径物理卡住（急弯不能再快）。要继续提速只能改善感知一致性（让中等弯也被正确识别为该减速/该多打舵），或接受更宽的弯。
-- **下一步**：优先做 opponent avoidance；继续提速前先处理感知一致性。
+- **待办（人工跑）**：看均速/lap 是否再快一点、中等弯有没有因更快变更宽/撞（contact 日志）、急弯是否仍稳。
 
-### R048 — 入弯门控加 latch：弯中保持 + 出弯迟滞（修"转一半收轮/半径大"） (2026-06-13, complex, 用户实跑)
+### R048 — 入弯门控加 latch：弯中保持 + 出弯迟滞（修"转一半收轮/半径大"） (2026-06-13, complex, 待人工跑)
 - **用户观察**：① 车在弯的一半忽然不转、开始收轮甚至直走，转不到位 → 半径很大；② 半径大导致转过来后不在中线，过一会才发现丢线、找回中线，费速度。用户猜是"车转到一半视野里已经是直路，低估了要转的弯"，问能否给出弯也加 lag。
 - **数据（R047 run 左 hairpin t30-38）**：`heading`/`lookahead` 全程 −0.7~−1.0（远处一直要求硬左），但 `steering` 反复掉到 ≈0。真因：入弯门控 `lookahead_term *= |lateral|/ref` 是**连续乘子**，而 `lateral`（road-mask 近处）在弯中反复回落到 ≈0（mask 重新对正路面），门控就把远处项收掉 → 欠转。不是"看到直路"（远处仍 −1.0），而是 lateral 信号在弯中塌掉。
 - **R048 改动（`policy._target_steering`）**：给门控加跨帧 latch（`_TURN_IN_LATCH`）。**hard_turn 里 ratchet 到 arrival 峰值并保持**（不随 lateral 回落泄掉）→ 弯中门一直开着、车持续转、转到位；**离开 hard_turn 后按 `turn_in_hold_decay=0.92` 迟滞衰减** → 出弯 lag（用户要的）。入弯延迟仍在：hard_turn 早段 lateral 还小→instant_arrival 小→latch 从小起步、随 lateral 长大才 ratchet 上去。
 - **离线验证**（同 hairpin）：corner_arrival 中位 **0.15→0.95**、最小 **0.00→0.23**——远处预瞄项从"被门收没、整段欠转"变成"全程保持、跟着路转"。新增 1 latch 测试、改 1 处测试 helper，全套 125 测试 + 本地/官方 validator 通过。MD5 `c1327b694c6af49ea4936c0a21d6c14f`。
-- **R048 实跑结果**：用户确认转弯不撞，但出现两个相似左弯半径差异：第一个左弯偏外、老撞车的 90° 左弯偏内但都不撞。分析发现两弯的 `curve_risk` 感知差异很大，进而导致速度和物理半径不同。R048 mean command speed≈0.83，约 69% 时间 ≥0.75，只有约 4% <0.55。
-- **结论/下一步**：入弯 latch 有效；剩余慢点在弯道，尤其是中等弯。促成 R049 用 `curve_power` 定向提中等弯速度。
+- **手册仍暂不改**（入弯门控连续在动，等跑通稳定再更）。
+- **待办（人工跑）**：看 (a) 弯中是否不再"转一半收轮"、能转到位（`line_offset`/`lateral` 出弯回中）；(b) 有无因 latch 保持过久→出弯过转/切内（调小 `turn_in_hold_decay`）；(c) 均速是否因少了"找回中线"而提升。
 
-### R047 — 过弯"偏外"真因=速度耦合：入弯随速度提前 + 放松高速收舵 + 再提速 (2026-06-12, complex, 用户实跑)
+### R047 — 过弯"偏外"真因=速度耦合：入弯随速度提前 + 放松高速收舵 + 再提速 (2026-06-12, complex, 待人工跑)
 - **用户观察**：删了 gentle 后还是偏外，怀疑跟"过弯速度被上调"有关（过弯快→半径大）。**数据确认**（R046+speed run 第一个 90° 左弯 t29-34）：① 入口段（t29.5-30.8）车以 0.6-0.8 高速进弯，但入弯门控把 steer 压得很小（−0.1），车高速冲过入口、`line_offset` 冲到 **−0.59（外侧）**；② 深处（t32-33）target_steer 要 −0.76 却被高速收舵 cap 砍到 −0.63（"CAP"），打不动、恢复不及。两处都和速度强相关——用户判断正确。
 - **机制**：入弯门控 `corner_arrival=|lateral|/ref` 是**几何**判据，但高速下车在 |lateral| 长起来之前就已冲出很远（走的距离=速度×时间）。所以同一几何门在高速下"开得太晚"。
 - **R047 改动**：
@@ -63,18 +220,16 @@
   3. **再提速**（用户觉得过弯仍慢）：`hard_turn_speed 0.55→0.62`、`curve_slowdown 0.50→0.42`。
 - 全套 124 测试 + 本地/官方 validator 通过。MD5 `fc8a706570fc67ac9b74d4384ea5afa1`。
 - **手册暂不改**：入弯门控两轮内改了 4 次（R044→R046→R047），按维护约定先等跑通稳定再更新 3.3a（现仍写"纯 lateral"，R047 在其上加了速度提前量）。
-- **R047 实跑结果**：用户观察到新问题：车在弯中途突然收轮甚至直走，导致半径变大；转过来后不在中线，需要花时间找线回中，损失速度。日志显示远处 `heading/lookahead` 仍在要求继续转，真正塌掉的是连续 gate：`lateral` 弯中回落到 0 后把 lookahead 项收没。
-- **结论/下一步**：R047 解决了速度导致的入口偏外，但暴露连续 gate 的弯中收轮问题，促成 R048 latch。
+- **待办（人工跑）**：看 (a) 过弯入口是否还冲外（`line_offset` 入口峰值是否不再到 −0.5）；(b) 均速/过弯速度是否更快；(c) contact 日志有无因更快出现新撞栏/冲出。仍偏外→调大 `turn_in_speed_comp`；某弯太快冲出→该弯 curve_slowdown 或 speed_comp 微调。
 
-### R046 — 删除 R044 的"弯有多急(curve_risk)"调制（原理性缺陷） (2026-06-12, complex, 用户实跑)
+### R046 — 删除 R044 的"弯有多急(curve_risk)"调制（原理性缺陷） (2026-06-12, complex, 待人工跑)
 - **用户观察 + 数据确认**：gentle 调制让弯"入弯初期被判成缓弯 → 转得非常晚 → 深入弯里才急打轮、半径反而很大、还冲外侧、掉速"。
 - **数据证据（.tmp/run 第一个 90° 左弯 t27-30）**：接近段 cruise 时 `curve_risk` 在 0.06-0.5 noisy/偏低 → `sharpness` 0.1-0.45 → gentle 乘子把 `arrival_ref` 放大 **1.4-1.97×** 整个接近段，车几乎不转（steer≈0、lateral≈0）；`curve_risk` 直到 t29.4+ 才涨到 0.7（已深入弯）。然后 t31.9-33 `lateral` 突涨到 −0.46、steer 突到 −0.6、`line_offset` 到 **−0.5（外侧）**、速度掉到 0.41。完全吻合用户描述。
 - **根因（原理性）**：**入弯瞬间没有信号能区分缓弯/急弯**——远处弯量（curve_risk 的来源）在视野里还没发育起来，所有弯的"入口"看起来都是低 curve_risk = 缓弯。所以基于瞬时 curve_risk 的调制必然在每个弯的入口过度迟滞，原理上修不好。用户已把 gentle_extra 从 1.5 降到 0.5 仍有问题，印证这一点。
 - **R046 改动**：**删除 sharpness/gentle 调制**（`policy._target_steering` 的 sharpness/arrival_ref 段、`params` 的 `turn_in_sharp_ref`/`turn_in_gentle_extra`），回到纯近处 lateral 门控：`corner_arrival = clamp(|lateral|/turn_in_lateral_ref, 0, 1)`。`turn_in_lateral_ref` 保留为唯一旋钮（当前 0.75）。删 2 个测试、加 1 个守护测试，全套 124 测试 + 本地/官方 validator 通过。MD5 `b5e8751771ab2d200f29e6709c3bf4d1`。已同步技术手册 3.3a 与 case。
-- **R046 实跑结果**：用户反馈仍偏外；数据确认这和删 gentle 本身不矛盾，而是速度上调后同一 lateral gate 在高速下物理上开得太晚。入口段速度 0.6–0.8，steer 仍被门控压小，`line_offset` 到约 −0.59；深处 target steering 又被高速 cap 从约 −0.76 剪到 −0.63。
-- **结论/下一步**：纯 lateral gate 需要和速度绑定。促成 R047 `turn_in_speed_comp` 与高速 steering cap 回调。
+- **遗留观察（下一步若仍 late-snap）**：纯 lateral 门控仍有一个较轻的"晚 snap"——road-mask `lateral` 会滞后/低估车的真实漂移（车已跑到外侧 `line_offset≈−0.5` 时 `lateral` 仍≈−0.05，门没开），等 `lateral` 终于涨起来才 snap。若删 gentle 后这个仍明显，下一步考虑：调小 `turn_in_lateral_ref` 让门更早开，或让门也参考白线漂移（注意 inside/outside 符号）。先跑删 gentle 这版看程度。
 
-### R045 — 入弯回调 + 速度提升 4 阶段（激进） (2026-06-12, code/offline，无独立 run)
+### R045 — 入弯回调 + 速度提升 4 阶段（激进） (2026-06-12, complex, 待人工跑)
 - **R044 实跑结论（用户）**：半径整体不错；`gentle_extra=1.5` 略过头——急弯偶有外偏（line_offset 偶到 −0.79）、缓弯 line_offset 中位 −0.07（略偏外）。末段蹭到右侧静止黑车（半径略大的副作用，非切内；当前无避让逻辑，后续单加，不为它改半径）。**转弯半径已不是根本问题。**
 - **回调（R044-b）**：`turn_in_lateral_ref 1.0→0.9`、`turn_in_gentle_extra 1.5→1.0`（迟滞略收）。
 - **速度提升（用户指示：直接把 4 个点都改好、激进调参）**。基于 R044 run 速度分析：均速 cmd 0.62、~28% 时间<0.45、hard_turn 占 58%、限速 binding 因子 curve 53% / confidence 47%。
@@ -83,19 +238,19 @@
   3. **弯道降速整体减弱**：`curve_slowdown 0.70→0.50`、`offset_slowdown 0.38→0.28`、`steering_slowdown 0.18→0.12`。
   4. **更快回速**：`max_speed_increase_per_sec 1.85→3.5`。
 - **离线估算**（同情境重算 target_speed）：median +43%、mean +38%、91% 帧目标速度 +0.1 以上。这是激进提速（教训：之前 0.2/0.3 微调没用）。全套 125 测试 + 本地/官方 validator 通过。MD5 `9ee21b47a5b31044796500276708308f`。
-- **后续**：这不是独立实跑，不占 `runs.csv`。它的速度改动在后续 R046/R047/R048/R049 run 中逐步暴露影响并被修正。
+- **待办（人工跑）**：`bash scripts/webots_run.sh complex` → 看 (a) 均速/lap 是否明显提升；(b) contact 日志有没有因为快了而出现**新的撞栏/冲出**（提速的唯一风险=弯里来不及）；(c) 回调后急/缓弯 line_offset 是否回到≈0。若某弯因为快而切/撞→该弯单独再收点速度或回调对应因子；若还能更快→继续推 Phase 1/3 的因子。顺序铁律：半径稳了才提速（已满足）。
 
-### R044 — 入弯门控叠加"弯有多急"调制 + 简化（删 heading_ref） (2026-06-12, complex, 用户实跑+代码改动)
+### R044 — 入弯门控叠加"弯有多急"调制 + 简化（删 heading_ref） (2026-06-12, complex, 待人工跑)
 - **R043（用户）背景**：删除 `turn_in_floor`，`lookahead_term *= corner_arrival` 直接缩放；`turn_in_lateral_ref`=1。**90° 急弯半径已基本不用再改**（实跑确认）。参数统一：`BASIC_CONTROL_OVERRIDES` 移除、`get_profile` 只返回 `CONTROL`、basic/fastest/safe 不再分叉。
 - **R043 实跑数据（按弯分类）**：急弯（peak|look|0.7-0.9）`line_offset` 峰值≈0（已修好）；缓弯（peak|look|0.4-0.55）`line_offset` 峰值 +0.27~+0.41（仍偏内）。缓弯段 margin 左右相等、contact 无撞栏 → 缓弯是"半径偏小/略偏"不贴栏。真正还在轻擦的是中等急度弯（peak|look|≈0.6，contact 峰值 3、zmax≈0.48，远轻于 R041 的 z0.90）。
 - **机制**：缓弯里近处 `|lateral|` 涨得慢 → `corner_arrival=|lateral|/ref` 偏小 → 远处预瞄项压制不足 → 仍偏早转 → 半径偏小。急弯 lateral 涨得快、本就晚转，无需额外迟滞。
 - **R044 改动（`policy._target_steering`）**：按 `curve_risk` 调制 arrival 参考——`sharpness=clamp(curve_risk/turn_in_sharp_ref)`，`arrival_ref=turn_in_lateral_ref×(1+turn_in_gentle_extra×(1−sharpness))`。急弯（`curve_risk≥sharp_ref`，sharpness=1）参考不变；缓弯参考放大 → 同 lateral 下 arrival 更小、更晚转、半径更大。默认 `sharp_ref=0.7`、`gentle_extra=1.5`。
 - **简化（回答用户 1d）**：`turn_in_lateral_ref=1` **不等于**删除它（它仍是 arrival 参考基准、有用的调参旋钮，且现在被 sharpness 因子相乘）。真正能删的是 **`turn_in_heading_ref`**——heading 早已只贡献 `/6` 的微量，R044 把它彻底移出 arrival，arrival 现在纯由 `lateral`（+ sharpness 调制）决定。入弯门控参数：`turn_in_lateral_ref` / `turn_in_sharp_ref` / `turn_in_gentle_extra`。
 - **离线验证**：真帧回放，缓弯（curve_risk 0.36）median|steer| 0.091→0.082（更晚转），急弯（0.99）0.024→0.023（不变）。新增 2 条 R044 回归测试 + 改 3 条受影响测试，全套 125 测试 + 本地/官方 validator 通过。MD5 `c5e8b547b2fd3e18b4687141651cf522`。
-- **R044 实跑结果**：半径整体不错，但 `gentle_extra=1.5` 略过头：急弯偶有外偏，缓弯 line_offset 中位约 −0.07。末段擦右侧静止黑车，归因于无避让逻辑。该结果促成 R045 的回调和提速设计。
+- **待办（人工跑）**：`bash scripts/webots_run.sh complex` → 看缓弯 `line_offset` 峰值是否下降、急弯是否仍 0 撞栏、有无新的**弯外侧**撞栏（迟滞过头）。仍偏内→调大 `turn_in_gentle_extra`；冲外侧→调小它或调大 `turn_in_sharp_ref`。归档见 `experiments/cases/R042_turn_in_too_early/`（已更新 R042→R044 演进 + 急/缓弯证据 + 缓弯 overlay）。
 
 ### R042 — 找到"入弯太早"真因：门控用 heading 当 arrival 判据（自废） (2026-06-12, complex, ✅最紧弯已验证)
-- **✅ 人工实跑验证（floor 0.25）**：最紧 t≈230 弯从 R041 的**撞栏 12 点**变成**无剐蹭通过**（R042 run 该弯 contact 0 次）。入弯 commit 从 t224.16（lat≈0，车还居中）推迟到 t227.14（lat=−0.14，车真到弯口），弯中 line_offset 峰值 0.65→0.23。**残留**：t230 仍"非常 close"、更小的弯（R042 run x≈153,y≈124，t≈101-102）仍轻擦（contact 峰值 3、zmax≈0.47）。R042-b 改到 `turn_in_floor=0.11` 仍轻擦。→ **R043** 按用户要求删除 `turn_in_floor`，远处预瞄项直接乘 `corner_arrival`，后续实跑确认 90° 急弯半径大幅改善，但缓/中等弯仍需处理。
+- **✅ 人工实跑验证（floor 0.25）**：最紧 t≈230 弯从 R041 的**撞栏 12 点**变成**无剐蹭通过**（R042 run 该弯 contact 0 次）。入弯 commit 从 t224.16（lat≈0，车还居中）推迟到 t227.14（lat=−0.14，车真到弯口），弯中 line_offset 峰值 0.65→0.23。**残留**：t230 仍"非常 close"、更小的弯（R042 run x≈153,y≈124，t≈101-102）仍轻擦（contact 峰值 3、zmax≈0.47）。R042-b 改到 `turn_in_floor=0.11` 仍轻擦。→ **R043** 按用户要求删除 `turn_in_floor`，远处预瞄项直接乘 `corner_arrival`，并把 `turn_in_lateral_ref` 调到 0.65（待跑）。
 - **归档**：根因 case `experiments/cases/R042_turn_in_too_early/`（R041 bug 窗 + R042 fix 窗 + 撞栏接触）；对照图在该 case 的 turn_in_before_after.png。
 
 - **用户 R041 实跑结论**：那个位置仍剐蹭（GUI 报 18 接触点 + physics step 警告 = 硬撞），"和上次没区别"，仍系统性半径太小。用户判断："应该晚点再转，此时即便满舵也行；所有半径不足都是入弯太早。"——正确。

@@ -5,7 +5,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.common import TrackState
-from controller.params import CONTROL
+# 脱困倒车/摆动是 with_other_cars（多车）profile 的能力；no_other_cars(R049) 已关闭。
+from controller.params import WITH_OTHER_CARS_CONTROL as CONTROL
 from controller.policy import decide_control, reset_policy_state
 
 
@@ -17,7 +18,7 @@ def _run_frozen(track: TrackState, frames: int = 80) -> float:
     t = 0.0
     for _ in range(frames):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(track, t, mode="no_other_cars")
+        cmd = decide_control(track, t, mode="with_other_cars")
         max_speed = max(max_speed, cmd.speed)
     return max_speed
 
@@ -57,7 +58,7 @@ def test_pinned_left_margin_escapes_right_even_if_geometry_points_left():
     max_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck_left, t, mode="no_other_cars")
+        cmd = decide_control(stuck_left, t, mode="with_other_cars")
         max_steer = max(max_steer, cmd.steering)
 
     assert max_steer >= CONTROL["max_abs_steering"] - 1e-6
@@ -82,10 +83,56 @@ def test_pinned_right_margin_escapes_left_even_if_geometry_points_right():
     min_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck_right, t, mode="no_other_cars")
+        cmd = decide_control(stuck_right, t, mode="with_other_cars")
         min_steer = min(min_steer, cmd.steering)
 
     assert min_steer <= -CONTROL["max_abs_steering"] + 1e-6
+
+
+def test_pinned_escape_uses_reverse_then_forward():
+    # 倒车脱困：顶住栏杆触发 pinned 脱困后，领头若干帧应输出负速度（真倒车拉开距离），
+    # 随后切回正速度前冲。验证两个相位都出现。
+    pinned = TrackState(
+        lateral_error=-0.62,
+        heading_error=0.14,
+        curvature=0.09,
+        lookahead_error=-0.52,
+        confidence=0.83,
+        lost=False,
+        red_environment=False,
+    )
+    reset_policy_state()
+    t = 0.0
+    min_speed = 1.0
+    max_speed = 0.0
+    for _ in range(80):
+        t += CONTROL["nominal_dt"]
+        cmd = decide_control(pinned, t, mode="with_other_cars")
+        min_speed = min(min_speed, cmd.speed)
+        max_speed = max(max_speed, cmd.speed)
+    # 出现过倒车（负速度）
+    assert min_speed < 0.0
+    # 也出现过前冲（正速度），不会卡在倒车里
+    assert max_speed >= CONTROL["escape_pinned_speed"] - 1e-6
+
+
+def test_normal_driving_never_outputs_reverse():
+    # 正常巡线驾驶（非卡死）任何一帧都不应输出负速度，倒车只属于脱困状态机。
+    cruising = TrackState(
+        lateral_error=0.05,
+        heading_error=0.02,
+        curvature=0.03,
+        lookahead_error=0.04,
+        confidence=0.9,
+        lost=False,
+        red_environment=False,
+    )
+    reset_policy_state()
+    t = 0.0
+    for _ in range(120):
+        t += CONTROL["nominal_dt"]
+        cmd = decide_control(cruising, t, mode="with_other_cars")
+        assert cmd.speed >= 0.0
 
 
 def test_centered_frozen_view_does_not_force_pinned_escape():
@@ -105,7 +152,7 @@ def test_centered_frozen_view_does_not_force_pinned_escape():
     max_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(centered, t, mode="no_other_cars")
+        cmd = decide_control(centered, t, mode="with_other_cars")
         max_steer = max(max_steer, abs(cmd.steering))
     assert max_steer < 0.3
 
@@ -132,7 +179,7 @@ def test_boundary_obstacle_stall_escapes_toward_open_margin():
     min_steer = 0.0
     for _ in range(40):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck, t, mode="no_other_cars")
+        cmd = decide_control(stuck, t, mode="with_other_cars")
         max_speed = max(max_speed, cmd.speed)
         min_steer = min(min_steer, cmd.steering)
 
@@ -159,7 +206,7 @@ def test_near_obstacle_with_normal_margins_does_not_boundary_escape():
     max_steer = 0.0
     for _ in range(40):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(clear, t, mode="no_other_cars")
+        cmd = decide_control(clear, t, mode="with_other_cars")
         max_steer = max(max_steer, abs(cmd.steering))
 
     assert max_steer < 0.30

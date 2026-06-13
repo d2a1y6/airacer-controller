@@ -2,7 +2,7 @@
 
 功能概述：把 `controller/` 的模块化代码合并成单个 `team_controller.py`。
 输入输出：读取本地控制器源码，输出平台可上传的自包含文件。
-处理流程：按固定顺序拼接模块，删除本地 import，保留“无其他车 / 有其他车”策略命名入口。
+处理流程：按固定顺序拼接模块，删除本地 import，按 `--mode` 注入运行 profile。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER_DIR = ROOT / "controller"
 DEFAULT_OUTPUTS = {
-    "no_other_cars": ROOT / "submissions" / "final" / "team_controller.py",
+    "no_other_cars": ROOT / "submissions" / "no_other_cars" / "team_controller.py",
     "with_other_cars": ROOT / "submissions" / "with_other_cars" / "team_controller.py",
 }
 MODULE_ORDER = [
@@ -60,37 +60,111 @@ def strip_local_imports(source: str) -> str:
 def strip_submission_text(source: str) -> str:
     """压缩提交源码里的说明文本。
 
-    功能：删除注释和独立字符串表达式，降低最终单文件大小。
+    功能：删除注释和独立字符串 docstring，降低最终单文件大小。
     参数：`source` 是已经拼好的提交源码。
     返回：保留可执行代码后的源码。
-    逻辑：先用 AST 找到独立字符串表达式的行号，再用 tokenizer 去注释，避免误删普通字符串字面量。
+    逻辑：用 tokenizer 处理，避免误删字符串字面量里的 `#` 或中文内容。
+    """
+
+    kept_tokens = []
+    previous_type = tokenize.INDENT
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        token_type, token_text, start, end, line = token
+        if token_type == tokenize.COMMENT and not token_text.startswith("# ----"):
+            continue
+        if token_type == tokenize.STRING and previous_type in {
+            tokenize.INDENT,
+            tokenize.NEWLINE,
+            tokenize.NL,
+        }:
+            previous_type = token_type
+            continue
+        kept_tokens.append((token_type, token_text, start, end, line))
+        if token_type not in {tokenize.NL, tokenize.COMMENT}:
+            previous_type = token_type
+    stripped = tokenize.untokenize(kept_tokens)
+    return "\n".join(
+        line.rstrip()
+        for line in stripped.splitlines()
+        if line.strip() and line.strip() != "\\"
+    )
+
+
+class _SubmissionMinifier(ast.NodeTransformer):
+    """提交文件 AST 压缩器。
+
+    功能：删除运行时不需要的函数类型标注和 docstring，让单文件稳定低于官方 100KB 上限。
+    参数：Python AST。
+    返回：修改后的 AST。
+    逻辑：保留 dataclass 字段标注；只去掉函数签名标注和独立说明字符串，不改变可执行逻辑。
+    """
+
+    @staticmethod
+    def _strip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+        return [
+            stmt for stmt in body
+            if not (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+            )
+        ]
+
+    def visit_Module(self, node: ast.Module) -> ast.AST:
+        self.generic_visit(node)
+        node.body = self._strip_docstring(node.body)
+        return node
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        self.generic_visit(node)
+        node.body = self._strip_docstring(node.body)
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self.generic_visit(node)
+        node.body = self._strip_docstring(node.body)
+        node.returns = None
+        args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+        for arg in args:
+            arg.annotation = None
+        if node.args.vararg is not None:
+            node.args.vararg.annotation = None
+        if node.args.kwarg is not None:
+            node.args.kwarg.annotation = None
+        return node
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        self.generic_visit(node)
+        node.body = self._strip_docstring(node.body)
+        node.returns = None
+        args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+        for arg in args:
+            arg.annotation = None
+        if node.args.vararg is not None:
+            node.args.vararg.annotation = None
+        if node.args.kwarg is not None:
+            node.args.kwarg.annotation = None
+        return node
+
+
+def minify_submission_ast(source: str) -> str:
+    """用 AST 再压一遍提交源码。
+
+    功能：补上 tokenizer 难以稳定处理的模块 docstring 和类型标注压缩。
+    参数：`source` 是已剥离注释的单文件源码。
+    返回：`ast.unparse()` 生成的等价源码；解析失败时由异常暴露给构建流程。
+    逻辑：官方 validator 有 100KB 硬限制，源码保留中文 docstring，但提交物不需要这些文本。
     """
 
     tree = ast.parse(source)
-    docstring_lines: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            for line_no in range(node.lineno, getattr(node, "end_lineno", node.lineno) + 1):
-                docstring_lines.add(line_no)
-
-    without_docstrings = "\n".join(
-        line
-        for line_no, line in enumerate(source.splitlines(), start=1)
-        if line_no not in docstring_lines
-    )
-
-    kept_tokens = []
-    for token in tokenize.generate_tokens(io.StringIO(without_docstrings).readline):
-        token_type, token_text, _, _, _ = token
-        if token_type == tokenize.COMMENT and not token_text.startswith("# ----"):
-            continue
-        kept_tokens.append(token)
-    stripped = tokenize.untokenize(kept_tokens)
-    return "\n".join(line.rstrip() for line in stripped.splitlines())
+    tree = _SubmissionMinifier().visit(tree)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
 
 
 _DEBUG_CONTROL_BLOCK = '''    try:
-        obs = extract_observation(left_img, right_img, timestamp)
+        profile = get_profile(PROFILE)
+        obs = extract_observation(left_img, right_img, timestamp, profile=profile)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
         steering, speed = clamp_cmd(cmd)
@@ -171,7 +245,8 @@ def _debug_control_block(
                     cv2.imwrite(_DBG_FRAME_DIR + "frame_" + _dbg_t + "_right.png", right_img)
             except Exception:
                 pass
-        obs = extract_observation(left_img, right_img, timestamp)
+        profile = get_profile(PROFILE)
+        obs = extract_observation(left_img, right_img, timestamp, profile=profile)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
         steering, speed = clamp_cmd(cmd)
@@ -206,6 +281,9 @@ def _debug_control_block(
                     "left_margin": round(float(track.left_margin_near), 4),
                     "right_margin": round(float(track.right_margin_near), 4),
                     "near_obstacle": bool(track.near_obstacle),
+                    "obstacle_x": round(float(track.obstacle_x), 4),
+                    "obstacle_size": round(float(track.obstacle_size), 5),
+                    "frame_motion": round(float(track.frame_motion), 3),
                 }}) + "\\n")
                 _DBG_FH.flush()
             except Exception:
@@ -227,14 +305,20 @@ def read_module(
     """读取并清理控制器模块。
 
     功能：按文件名读取 `controller/` 下的模块源码。
-    参数：`name` 是模块文件名，`mode` 是策略名；调试参数非空时注入本地探针。
+    参数：`name` 是模块文件名，`mode` 是策略名（注入 team_controller_local 的 PROFILE）；
+        调试参数非空时注入本地探针。
     返回：可拼接到提交文件中的源码片段。
-    逻辑：读取文本后移除本地 import；默认策略为 no_other_cars，并按需注入调试日志。
+    逻辑：读取文本后移除本地 import；按 `mode` 注入 PROFILE（决定 no_other_cars/with_other_cars
+        哪套参数），并按需注入调试日志。
     """
 
     source = (CONTROLLER_DIR / name).read_text(encoding="utf-8")
     source = strip_local_imports(source)
     if name == "team_controller_local.py":
+        # 按构建模式注入控制策略：决定运行时走 no_other_cars 还是 with_other_cars profile。
+        source = source.replace(
+            'PROFILE = "no_other_cars"', f'PROFILE = {mode!r}'
+        )
         if debug_log or dump_frames:
             header_lines = _debug_console_tee_header()
             if debug_log:
@@ -289,7 +373,7 @@ def build_source(
     """构建单文件控制器源码。
 
     功能：生成自包含 Python 源码。
-    参数：`mode` 是策略名；调试参数非空则生成本地调试构建。
+    参数：`mode` 仅决定默认输出路径；调试参数非空则生成本地调试构建。
     返回：完整源码字符串。
     逻辑：写入允许 import，再按契约顺序拼接所有控制器模块。
     """
@@ -316,20 +400,22 @@ def build_source(
     source = "\n".join(parts).strip() + "\n"
     if not (debug_log or dump_frames):
         source = strip_submission_text(source)
+        source = minify_submission_ast(source)
     return source.strip() + "\n"
 
 
 def parse_args():
     """解析命令行参数。
 
-    功能：读取构建策略和输出路径。
+    功能：读取构建模式和输出路径。
     参数：无。
     返回：`argparse.Namespace`。
-    逻辑：只暴露 no_other_cars / with_other_cars 两个策略名；旧输出路径用 --out 指定。
+    逻辑：模式只允许 no_other_cars 和 with_other_cars，未指定输出时写入对应 submissions 目录。
     """
 
     parser = argparse.ArgumentParser(description="Build single-file AI Racer submission.")
-    parser.add_argument("--mode", choices=sorted(DEFAULT_OUTPUTS), default="no_other_cars")
+    parser.add_argument("--mode", choices=sorted(DEFAULT_OUTPUTS), default="no_other_cars",
+                        help="策略：no_other_cars（单车，R049驾驶底座）或 with_other_cars（多车）")
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--debug-log", type=Path, default=None,
                         help="本地调试构建：把每帧内部状态与命令写到该 JSONL（含 open/json，禁止上传）")
@@ -347,15 +433,13 @@ def parse_args():
 def main() -> int:
     """脚本入口。
 
-    功能：生成指定策略的提交文件。
+    功能：生成指定模式的提交文件。
     参数：来自命令行。
     返回：进程退出码。
     逻辑：确定输出路径，创建父目录，写入源码并打印结果摘要。
     """
 
     args = parse_args()
-    if args.mode == "with_other_cars":
-        raise SystemExit("with_other_cars strategy is not implemented yet")
     output = args.out or DEFAULT_OUTPUTS[args.mode]
     output = output if output.is_absolute() else ROOT / output
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -70,7 +70,7 @@
 
 ### 1.4 左右融合 + 置信度
 
-单相机置信度 `_score_scan` 综合有效扫描行占比、宽度/中心稳定性、纹理，并对"有效行少 / mask 太空或太满 / 用了边缘兜底"降权。融合 `_fuse_scans`：只一侧可用就用那侧；两侧冲突选高置信；两侧一致就合并。输出 **`PerceptionObs`**（中心点、左右边界点、道路宽度、置信度、`debug_flags`、`line_offset/heading/confidence`、`near_obstacle`）。
+单相机置信度 `_score_scan` 综合有效扫描行占比、宽度/中心稳定性、纹理，并对"有效行少 / mask 太空或太满 / 用了边缘兜底"降权。融合 `_fuse_scans`：只一侧可用就用那侧；两侧冲突选高置信；两侧一致就合并。输出 **`PerceptionObs`**（中心点、左右边界点、道路宽度、置信度、`debug_flags`、`line_offset/heading/confidence`、`near_obstacle`、`obstacle_x/obstacle_size`）。
 
 ---
 
@@ -98,7 +98,7 @@
 
 ## 3. 控制策略 policy：从状态到舵角 / 速度
 
-参数来自 `NO_OTHER_CARS_CONTROL`（兼容别名 `CONTROL` 仍保留）。当前实现的是无其他车策略；`with_other_cars` 只留命名入口，尚未实现。
+参数来自 `get_profile()` 返回的当前 profile：`no_other_cars` 用于单车计时，`with_other_cars` 用于多车；不再有 basic/fastest/safe 分支。
 
 ### 3.1 风险分量
 
@@ -165,7 +165,7 @@ final_steering = clamp(steering + line_correction, −1, 1)
 ## 5. 速查
 
 - **误差符号**：左负右正；图像 `x→右`、`y→下`。`line_offset` 正 = 白线在车右侧 = 车偏在线左侧。
-- **转弯半径**由"入弯时机门控（3.3a）"主导：`corner_arrival` 只看近处 `lateral` 来判"弯到没"，主要旋钮是 `turn_in_lateral_ref`、`turn_in_speed_comp` 和 `turn_in_hold_decay`。
-- **白线有两条链路**：可信白线会在 estimator 里进入主几何目标；policy 里还有一层最终有界舵角微调。后者不进入风险、模式和速度计算。
-- **参数全在 `controller/params.py`**；当前已实现 `no_other_cars`，`with_other_cars` 只留空入口。
+- **转弯半径**由"入弯时机门控（3.3a）"主导：`corner_arrival` 只看近处 `lateral` 来判"弯到没"，`turn_in_lateral_ref` 是它的唯一旋钮。
+- **白线只在最后一步改舵角**，不污染风险/速度。
+- **参数全在 `controller/params.py`**；当前一套 `CONTROL` 通吃所有赛道和提交模式。
 - 模块职责边界、提交文件禁用模块清单见 `CLAUDE.md`；调参过程与证据见 `experiments/`。

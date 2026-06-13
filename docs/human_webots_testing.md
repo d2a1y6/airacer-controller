@@ -4,7 +4,9 @@
 
 首次安装 Webots 和官方 SDK 见 `docs/official_testing.md`。
 
-## 1. 一键启动（推荐）
+本文只讲**怎么把车跑起来**（单车、多车、接入不同控制器/策略）和产物在哪。当前跑到哪一步、哪个版本最好、未解问题，全部看 `experiments/STATUS.md` / `experiments/notes.md` / `experiments/runs.csv`，本文不维护。
+
+## 1. 单车实跑（一个控制器，一键启动，推荐）
 
 ```bash
 # 默认：控制日志 + 相机帧 PNG（每 10 帧一对，整场约几百 MB）
@@ -79,7 +81,67 @@ pkill -f webots; pkill -f run_local; sleep 1
 
 如需手工分步执行（自定义 mode、输出路径等），等价命令是 `scripts/build_submission.py --debug-log ... [--dump-frames ... --dump-frame-stride N] --out .tmp/run/team_controller_debug.py`，再用 SDK `run_local.py --skip-validate` 启动；细节见 `docs/ai_offline_review.md` 第 1 节。
 
-## 2. 观察要记什么
+## 2. 多车实跑 / 接入不同策略
+
+`basic` 和 `complex` 都是 **6 车布局**（`car_1`…`car_6`）。多车的底层机制是给 `run_local.py` 重复传 `--car`，**每个车位接入一个控制器单文件**：
+
+```bash
+# 先生成多车 profile 的控制器单文件：car_1 带日志/帧，对手用普通构建。
+mkdir -p .tmp/multicar
+
+python scripts/build_submission.py --mode with_other_cars \
+  --debug-log .tmp/multicar/control_complex_car1.jsonl \
+  --dump-frames .tmp/multicar/frames_complex_car1 \
+  --dump-frame-stride 10 \
+  --out .tmp/multicar/team_controller_car1_debug.py
+
+python scripts/build_submission.py --mode with_other_cars \
+  --out .tmp/multicar/team_controller_opp.py
+
+# 通用形式：--car 控制器文件:车位:队名（可重复，最多 6 个车位）
+python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
+  --world complex \
+  --car "$PWD/.tmp/multicar/team_controller_car1_debug.py:car_1:ours" \
+  --car "$PWD/.tmp/multicar/team_controller_opp.py:car_2:oppA" \
+  --car "$PWD/.tmp/multicar/team_controller_opp.py:car_3:oppB" \
+  --skip-validate
+```
+
+- **没指定的车位会停在原地**（变成静态障碍）；要它们当移动对手就得显式 `--car` 接入控制器。
+- **多车模式只用 `--car`，不能再同时传 `--code-path`**（两者互斥，run_local 会报错）。
+- 调试构建含 `open/json`，所以多车一律加 `--skip-validate`。
+
+**接入不同策略 = 给不同车位放不同的控制器单文件**。当前构建有两个 profile：`no_other_cars` 给单车计时，`with_other_cars` 给多车。多车实跑里，移动对手通常也接 `with_other_cars` 构建；要比较历史策略，就给某个车位换成 baseline 单文件。
+
+| 想测什么 | 怎么接入 |
+|---|---|
+| 本控制器 vs 历史基线 | 一个车位放当前构建，另一个放 `baselines/<快照>/team_controller.py` |
+| 本控制器 vs 较慢对手（纯超车场景） | 对手用速度缩放版（见下 `webots_auto_multicar.sh` 第 5 参数） |
+| 本控制器自我对抗（真实交通/拥堵） | 所有车位放同一份当前构建 |
+
+手工生成多个单文件：`python scripts/build_submission.py --mode with_other_cars --out .tmp/multicar/<名字>.py`，再按上面的 `--car` 逐个接入。
+
+### 一键多车脚本
+
+| 脚本 | 场景 | 命令 |
+|---|---|---|
+| `webots_day_multicar.sh` | 6 车都跑本控制器（car_1 带 debug 日志），复现真实交通 / CP3 拥堵 | `bash scripts/webots_day_multicar.sh complex` |
+| `webots_auto_multicar.sh` | **AI 无人值守**：后台启动 Webots + 看门狗（超时或日志静止自动收尾），可降速对手 | `bash scripts/webots_auto_multicar.sh complex 300 30 6 0.55` |
+| `webots_multicar_run.sh` | 双车（两个车位默认都接 `with_other_cars` 构建，队名只是 run_local 标签） | `bash scripts/webots_multicar_run.sh complex` |
+
+`webots_auto_multicar.sh` 的参数：`<world> <最大秒数> <日志静止判定秒数> <车数> [对手速度缩放]`。第 5 个参数 `<1` 会给对手单文件追加一层速度缩放（如 `0.55` = 对手半速），让全速的 car_1 追上并超车——纯超车效率测试。它供 AI 自跑用（人睡觉时也能跑），看门狗保证不会无限挂着。
+
+堵路 / 被撞 / 卡栏这类**极端场景**需要把对手车手动布置到特定位置（用 `webots_jump_run.sh` 传送），不是一个开关能自动摆好的；做法见 `docs/multicar_extreme_tests.md`。
+
+多车产物在 `.tmp/multicar/`（`control_<world>_car1.jsonl`、`contact_<world>_car1.jsonl`、`frames_<world>_car1/`）。
+
+> **多车看日志的铁律**：`contact_*.jsonl` 记录的是**所有车**的接触，每行带 `car_slot`。只看本车要加过滤，否则会把对手车卡栏误当成本车撞栏：
+> ```bash
+> python scripts/analyze_contact_log.py .tmp/multicar/contact_complex_car1.jsonl --car-slot car_1
+> python scripts/analyze_escape_episodes.py .tmp/multicar/control_complex_car1.jsonl  # 脱困/倒车段
+> ```
+
+## 3. 观察要记什么
 
 日常迭代可以由 AI 自己跑 Webots、看日志和截图。关键验收时，人类观察仍很重要。请尽量记录这些事实：
 
@@ -93,39 +155,7 @@ pkill -f webots; pkill -f run_local; sleep 1
 
 截图很有价值。能截就截，但不要为了截图中断关键观察。
 
-### 当前 Phase 2.2 complex 验收清单
-
-这轮只需要回答一个核心问题：车在 complex 过弯时，视觉上是否沿着中间白色虚线走，而不是切到内侧栏杆。AI 可以先自跑并筛候选；当 AI 判断已经接近解决，或准备标完成/合 main/提交 final 时，再让人类按这张表确认。
-
-建议从头跑：
-
-```bash
-bash scripts/webots_run.sh complex
-```
-
-重点看这些窗口，看到异常就记时间/截图：
-
-| 窗口 | 大致时间/位置 | 要看什么 |
-|---|---|---|
-| 第一个左弯 | `t≈27→43`，`x≈170→199,y≈-30→6` | 是否还擦左栏；车身是否从偏离虚线回到中间虚线附近 |
-| 旧后段内切点 | `t≈130→185`，旧 `x≈169,y≈111` 附近 | 是否再次贴内侧栏杆或长时间慢爬 |
-| 旧 R018 风险窗 | `t≈280→330`，`x≈9,y≈87` 到起点前 | 是否突然切进内侧、是否把栏杆/白车当虚线 |
-| 旧 R024 空间点 | `x≈-42,y≈124` 附近 | 是否能顺着虚线过弯，不贴栏停住 |
-| 旧起点前 | `x≈-10,y≈-27` / `x≈28,y≈-28` | 是否还有起点前长时间近停或贴栏挣扎 |
-
-反馈时尽量用下面的格式：
-
-```text
-R0xx human complex:
-- 第一个左弯：通过 / 擦左 / 撞左 / 没骑线，时间约 ...
-- 旧 x≈169,y≈111：通过 / 贴栏 / 慢爬，时间约 ...
-- 旧 x≈-42,y≈124：通过 / 贴栏 / 慢爬，时间约 ...
-- 起点前：通过 / 近停 / 撞栏，时间约 ...
-- 总体走线：车身中心基本压白色虚线 / 长期在线左 / 长期在线右 / 入弯切内
-- 截图或备注：
-```
-
-## 3. 跑完交给 AI 或进入复盘
+## 4. 跑完交给 AI 或进入复盘
 
 跑完后，把观察结论告诉 AI，并说明 `.tmp/run/` 里有哪些产物。如果是 AI 自跑，也要把这些结论写进 notes 或下一步分析里，例如：
 
@@ -138,19 +168,21 @@ R0xx human complex:
 
 **不要手动删 `.tmp`**。下一次 `scripts/webots_run.sh` 会把旧产物移到 `.tmp/run.archive/`，并滚动保留最近 10 个归档；全量清理由 AI 在确认结论已写入 `experiments/`、且 notes 的"下一步"不依赖这些产物后执行（见 `docs/ai_offline_review.md` 第 8 节）。
 
-## 4. 正式提交版
+## 5. 正式提交版
 
 确认要上传或做正式验证时，重新生成干净单文件：
 
+两类场次各生成一份（两个 profile，见 CLAUDE.md「Profile 隔离」）：
+
 ```bash
-python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
-python scripts/build_submission.py --mode no_other_cars --out submissions/fastest/team_controller.py  # 兼容旧输出目录
-python scripts/build_submission.py --mode no_other_cars --out submissions/safe/team_controller.py     # 兼容旧输出目录
+python scripts/build_submission.py --mode no_other_cars     # 单车：R049驾驶底座；R068为当前官方成绩
+python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 
 pytest -q
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
+python scripts/validate_submission.py submissions/with_other_cars/team_controller.py
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 

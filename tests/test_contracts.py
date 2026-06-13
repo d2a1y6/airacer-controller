@@ -29,7 +29,7 @@ def test_module_contracts_on_mock_lane():
     reset_policy_state()
     image = make_lane_image()
 
-    obs = extract_observation(image, image, 0.0)
+    obs = extract_observation(image, image, 0.0, profile=get_profile("no_other_cars"))
     assert isinstance(obs, PerceptionObs)
     assert obs.center_points.ndim == 2
     assert obs.center_points.shape[1] == 2
@@ -48,29 +48,21 @@ def test_module_contracts_on_mock_lane():
     assert 0.0 <= speed <= 1.0
 
 
-def test_no_other_cars_strategy_does_not_call_opponent_detection(monkeypatch):
-    assert OPPONENT_PROFILE["enable_opponent_avoidance"] is False
+def test_opponent_detection_is_enabled_for_static_cars(monkeypatch):
+    assert OPPONENT_PROFILE["enable_opponent_avoidance"] is True
     assert "near_obstacle_min_timestamp" not in VISION_PROFILE
     called = {"value": False}
 
     def mark_called(*_args, **_kwargs):
         called["value"] = True
-        return False
+        return False, 0.0, 0.0
 
-    monkeypatch.setattr(perception, "detect_near_vehicle_obstacle", mark_called)
+    monkeypatch.setattr(perception, "detect_near_vehicle_obstacle_state", mark_called)
     image = make_lane_image()
-    obs = extract_observation(image, image, 999.0)
-    assert called["value"] is False
+    obs = extract_observation(image, image, 999.0, profile=get_profile("with_other_cars"))
+    assert called["value"] is True
     assert isinstance(obs, PerceptionObs)
     assert len(obs.center_points) >= 4
-
-
-def test_with_other_cars_strategy_is_named_but_not_implemented():
-    try:
-        get_profile("with_other_cars")
-    except NotImplementedError:
-        return
-    raise AssertionError("with_other_cars should stay an explicit placeholder until implemented")
 
 
 def test_estimator_lost_contract_on_empty_observation():
@@ -90,11 +82,9 @@ def test_estimator_lost_contract_on_too_few_points():
     assert track.lost is True
 
 
-def test_policy_invalid_mode_is_rejected():
+def test_policy_invalid_mode_uses_no_other_cars_defaults():
     reset_policy_state()
     track = TrackState(0.0, 0.0, 0.0, 0.0, 1.0, False)
-    try:
-        decide_control(track, 2.0, mode="unknown")
-    except ValueError:
-        return
-    raise AssertionError("unknown strategy names should be rejected")
+    cmd = decide_control(track, 2.0, mode="unknown")
+    assert isinstance(cmd, ControlCmd)
+    assert 0.0 <= cmd.speed <= 1.0
