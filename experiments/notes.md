@@ -34,6 +34,30 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R071 — W014 优化前 no_other_cars 同环境对照：254.495s（2026-06-13, complex, 1-car）
+- **构建**: `main` working tree；使用 `.tmp/perf/preopt_no_other.py`（W014 优化前的 `no_other_cars` 单文件）构建到 `.tmp/R071_no_other_preopt_real/team_controller.py`。
+- **配置**: 当前 SDK、真正单车入口：`run_local.py --world complex --code-path ... --car-slot car_1 --fast --minimize --batch --skip-validate`。
+- **记录完整性**: clean；metadata/telemetry/race_config 归档到 `.tmp/R071_no_other_preopt_real/`。无残留 Webots/run_local 进程。
+- **结果**: 官方 metadata：rank=1，`best_lap=254.560s`，`total_time=254.495s`，`duration_sim=315.328s`，status=normal，0 major。
+- **现象**: 与 R069（W014 优化后当前 `no_other_cars`）完全一致；两轮 checkpoint 事件时间也一致（CP4 117.120、CP8 230.656、lap_complete 254.560）。
+- **结论/下一步**: R069 慢于 R068 不是 W014 优化导致的控制退化；同一当前 SDK 环境下，优化前后单车成绩完全相同。R068 仍是历史最好单次成绩，R069/R071 表明优化本身不改变单车真实运行结果。
+
+### R070 — W014 优化后 with_other_cars 6车真实复测：与 R065 持平（2026-06-13, complex, 6-car）
+- **构建**: `main` working tree；当前 `with_other_cars` no-debug 单文件，构建到 `.tmp/R070_with_other_w014_real_6car/team_controller.py`。
+- **配置**: 6 车都使用同一当前 `with_other_cars` 控制器；`run_local.py --world complex --fast --minimize --batch --car ... --skip-validate`。
+- **记录完整性**: telemetry complete / metadata missing。6 车全部完赛事件已写入 telemetry，并归档到 `.tmp/R070_with_other_w014_real_6car/telemetry_complex.jsonl`；但 run_local/Webots 在 `race_end`/`metadata.json` 写出前退出，故本轮不算官方 metadata 完整 run。
+- **结果**: telemetry 事件：`oppA` 第 1 完赛（lap 252.768 / finish 253.472），`ours` 第 2 完赛（lap 256.864 / finish 257.600），`oppB` 第 3，`oppC` 第 4，`oppE` 第 5，`oppD` 第 6。KPI：major=0、minor=0、contact_starts=0、stall=0、mean speed=5.12、median=5.29。
+- **对比 R065**: `ours best_lap=256.864s` 与 R065 完全一致；完赛次序也一致（oppA、ours、oppB、oppC、oppE、oppD）；没有新增碰撞、卡死或 DQ 迹象。
+- **结论/下一步**: 多车真实运行没有显示 W014 优化造成策略下降。若需要“官方 metadata 完整”证据，应再跑一轮并等待 `metadata.json`，但当前 telemetry 已足以说明控制表现与 R065 持平。
+
+### R069 — W014 优化后 no_other_cars 单车真实复测：254.495s（2026-06-13, complex, 1-car）
+- **构建**: `main` working tree；当前 W014 优化后的 `no_other_cars` no-debug 单文件，构建到 `.tmp/R069_no_other_w014_real/team_controller.py`。
+- **配置**: 当前 SDK、真正单车入口：`run_local.py --world complex --code-path ... --car-slot car_1 --fast --minimize --batch --skip-validate`。
+- **记录完整性**: clean；metadata/telemetry/race_config 归档到 `.tmp/R069_no_other_w014_real/`。metadata 写出后 run_local 未自动退出，手动终止残留进程；结果文件完整。
+- **结果**: 官方 metadata：rank=1，`best_lap=254.560s`，`total_time=254.495s`，`duration_sim=315.328s`，status=normal，0 major。
+- **对比**: 比 R068 历史最好单次成绩慢约 1.632s（`total_time`），但与 R071 优化前同环境对照完全一致，也与 R067 one-car 单车入口成绩一致。
+- **结论/下一步**: 单看 R069 不能说明 W014 优化让单车变慢；R071 对照证明优化前后在当前环境下成绩相同。若要继续追 R068 的最好单次成绩，应单独排查 SDK/Webots 运行差异或多跑取分布。
+
 ### R068 — no_other_cars 真正单车入口官方 metadata：252.863s（2026-06-13, complex, 1-car）
 - **构建**: `day-with_other_cars` working tree；`no_other_cars` no-debug 单文件，构建到 `.tmp/R068_no_other_single_entry_fixed/team_controller.py`。本轮前修复 SDK `run_local.py`：单车 `--code-path/--car-slot` 生成配置时也传 `--world`，避免退回旧 checkpoint。
 - **配置**: 真正单车入口：`run_local.py --world complex --code-path ... --car-slot car_1 --fast --minimize --batch --skip-validate`。`race_config.json` 顶层含 `world=complex`，1 辆车 `local_team/car_1/CarPhoenix`。

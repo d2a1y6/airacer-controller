@@ -64,6 +64,7 @@ class _CameraScan:
     near_obstacle: bool = False
     obstacle_x: float = 0.0
     obstacle_size: float = 0.0
+    red_environment: bool = False
 
 
 def _empty_points() -> np.ndarray:
@@ -84,6 +85,23 @@ def _valid_image(image) -> bool:
     """检查输入是否是三通道 BGR 图像。"""
 
     return image is not None and hasattr(image, "shape") and len(image.shape) == 3 and image.shape[2] == 3
+
+
+def _is_synthetic_grayscale_frame(image: np.ndarray) -> bool:
+    """识别无色差占位帧。
+
+    功能：用少量采样点判断整帧是否近似纯灰度，避免在无真实视觉信息的输入上跑完整分割。
+    参数：`image` 是 BGR 图像。
+    返回：采样点三通道差值几乎为 0 时返回 True。
+    逻辑：真实 Webots 帧通常含天空、草地、红地、车身或带色差沥青；纯灰度帧多来自 mock、
+        传感器占位或合成测试输入。多车 profile 即使走快速路径，也仍会保留近车检测。
+    """
+
+    sample = image[::32, ::32, :]
+    if sample.size == 0:
+        return False
+    chroma = sample.max(axis=2) - sample.min(axis=2)
+    return int(np.max(chroma)) <= 2
 
 
 def _is_red_environment(image: np.ndarray) -> bool:
@@ -414,7 +432,13 @@ def _red_environment_single_line_candidate(
     return offset, heading, clamp(scaled_confidence, 0.0, 1.0)
 
 
-def _stereo_line_state(left_img, right_img, profile: dict, timestamp=None) -> tuple[float, float, float]:
+def _stereo_line_state(
+    left_img,
+    right_img,
+    profile: dict,
+    timestamp=None,
+    red_environment: bool | None = None,
+) -> tuple[float, float, float]:
     """融合左右相机的白线状态。
 
     功能：估计白线相对车身中轴的位置和方向。
@@ -432,8 +456,9 @@ def _stereo_line_state(left_img, right_img, profile: dict, timestamp=None) -> tu
         single = _startup_single_line_candidate(left or right, profile, timestamp)
         if single is not None:
             return single
-        red_environment = _is_red_environment(left_img) or _is_red_environment(right_img)
-        single = _red_environment_single_line_candidate(left or right, profile, red_environment)
+        if red_environment is None:
+            red_environment = _is_red_environment(left_img) or _is_red_environment(right_img)
+        single = _red_environment_single_line_candidate(left or right, profile, bool(red_environment))
         if single is not None:
             return single
         return 0.0, 0.0, 0.0
@@ -734,6 +759,20 @@ def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _
         return _empty_scan()
 
     _maybe_reset_perception_by_timestamp(timestamp)
+    if _is_synthetic_grayscale_frame(image):
+        _save_frame_centers([])
+        scan = _empty_scan(debug_flags=4)
+        if enable_opp and OPPONENT_PROFILE["enable_opponent_avoidance"]:
+            try:
+                current_time = float(timestamp)
+            except (TypeError, ValueError):
+                current_time = 0.0
+            if current_time >= OPPONENT_PROFILE["near_obstacle_min_timestamp"]:
+                scan.near_obstacle, scan.obstacle_x, scan.obstacle_size = detect_near_vehicle_obstacle_state(
+                    image,
+                    OPPONENT_PROFILE,
+                )
+        return scan
     road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle, obstacle_x, obstacle_size = _build_masks(
         image,
         timestamp,
@@ -788,6 +827,7 @@ def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _
         scan.near_obstacle = bool(near_obstacle)
         scan.obstacle_x = float(obstacle_x)
         scan.obstacle_size = float(obstacle_size)
+        scan.red_environment = bool(red_environment)
         return scan
 
     confidence, debug_flags = _score_scan(
@@ -811,6 +851,7 @@ def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _
         near_obstacle=bool(near_obstacle),
         obstacle_x=float(obstacle_x),
         obstacle_size=float(obstacle_size),
+        red_environment=bool(red_environment),
     )
 
 
@@ -934,19 +975,34 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
     )
 
 
-def _with_line_state(obs: PerceptionObs, left_img, right_img, timestamp=None) -> PerceptionObs:
+def _with_line_state(
+    obs: PerceptionObs,
+    left_img,
+    right_img,
+    timestamp=None,
+    red_environment: bool | None = None,
+) -> PerceptionObs:
     """把双目白线状态写入观测结果。
 
     不依赖道路观测质量：道路 mask 饱和（蓝门/天空）或丢线时白线往往仍可见，
     是 R011 后置修正在这些帧上唯一的方向来源。
     """
 
-    line_offset, line_heading, line_confidence = _stereo_line_state(
-        left_img,
-        right_img,
-        LINE_FOLLOW_PROFILE,
-        timestamp,
-    )
+    if (
+        _valid_image(left_img)
+        and _valid_image(right_img)
+        and _is_synthetic_grayscale_frame(left_img)
+        and _is_synthetic_grayscale_frame(right_img)
+    ):
+        line_offset, line_heading, line_confidence = 0.0, 0.0, 0.0
+    else:
+        line_offset, line_heading, line_confidence = _stereo_line_state(
+            left_img,
+            right_img,
+            LINE_FOLLOW_PROFILE,
+            timestamp,
+            red_environment=red_environment,
+        )
     obs.line_offset = line_offset
     obs.line_heading = line_heading
     obs.line_confidence = line_confidence
@@ -988,7 +1044,13 @@ def extract_observation(left_img, right_img, timestamp=None, profile=None) -> Pe
     left_scan = _scan_image(left_img, timestamp, enable_opp) if _valid_image(left_img) else _empty_scan()
     right_scan = _scan_image(right_img, timestamp, enable_opp) if _valid_image(right_img) else _empty_scan()
     obs = _fuse_scans(left_scan, right_scan)
-    obs = _with_line_state(obs, left_img, right_img, timestamp)
+    obs = _with_line_state(
+        obs,
+        left_img,
+        right_img,
+        timestamp,
+        red_environment=bool(left_scan.red_environment or right_scan.red_environment),
+    )
     # 光流卡死检测（frame_motion）只属于 with_other_cars；单车不算，省每帧 resize 开销，
     # 且默认 frame_motion=100（视作在动）保证 motion-stall 永不触发。
     if enable_opp:

@@ -82,3 +82,6 @@
 2026-06-13,day-with_other_cars,no_other_cars,complex,0,,103.808,0,invalid_single_entry_missing_world,"R066 | 旧单车入口 --code-path 未把 world 写进 race_config，SDK 退回旧checkpoint导致lap_progress恒0；中断，不作为成绩。详见notes.md R066。"
 2026-06-13,day-with_other_cars,no_other_cars,complex,1,254.56,315.328,0,grace_period_expired,"R067 | 用 --car 单车配置绕开R066问题，拿到官方metadata：rank=1/total_time=254.495/best_lap=254.560/0 major。详见notes.md R067。"
 2026-06-13,day-with_other_cars,no_other_cars,complex,1,252.928,313.696,0,grace_period_expired,"R068 | 修复SDK单车入口传world后，用真正 --code-path/--car-slot 复测：官方rank=1/total_time=252.863/best_lap=252.928/0 major。详见notes.md R068。"
+2026-06-13,main,no_other_cars,complex,1,254.56,315.328,0,grace_period_expired,"R069 | W014优化后当前no_other_cars真实单车复测：官方rank=1/total_time=254.495/best_lap=254.560/0 major；与R071优化前对照完全一致。详见notes.md R069。"
+2026-06-13,main,with_other_cars,complex,1,256.864,275.904,0,all_finished_no_metadata,"R070 | W014优化后当前with_other_cars 6车真实复测：telemetry显示6车全完赛，ours第2完赛/best_lap=256.864/0碰撞；metadata未写出。详见notes.md R070。"
+2026-06-13,main,no_other_cars,complex,1,254.56,315.328,0,grace_period_expired,"R071 | 用W014优化前no_other_cars提交文件在同一当前SDK环境复跑：官方rank=1/total_time=254.495/best_lap=254.560/0 major，用于对照R069。详见notes.md R071。"

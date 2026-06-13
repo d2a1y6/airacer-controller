@@ -166,6 +166,7 @@ class _CameraScan:
     near_obstacle: bool = False
     obstacle_x: float = 0.0
     obstacle_size: float = 0.0
+    red_environment: bool = False
 
 def _empty_points():
     return np.empty((0, 2), dtype=np.float32)
@@ -180,6 +181,13 @@ def _empty_obs(debug_flags=1):
 
 def _valid_image(image):
     return image is not None and hasattr(image, 'shape') and (len(image.shape) == 3) and (image.shape[2] == 3)
+
+def _is_synthetic_grayscale_frame(image):
+    sample = image[::32, ::32, :]
+    if sample.size == 0:
+        return False
+    chroma = sample.max(axis=2) - sample.min(axis=2)
+    return int(np.max(chroma)) <= 2
 
 def _is_red_environment(image):
     height = image.shape[0]
@@ -372,7 +380,7 @@ def _red_environment_single_line_candidate(line, profile, red_environment):
     scaled_confidence = confidence * profile['single_camera_confidence_scale']
     return (offset, heading, clamp(scaled_confidence, 0.0, 1.0))
 
-def _stereo_line_state(left_img, right_img, profile, timestamp=None):
+def _stereo_line_state(left_img, right_img, profile, timestamp=None, red_environment=None):
     if not profile['enable']:
         return (0.0, 0.0, 0.0)
     left = _camera_line_state(left_img, profile)
@@ -381,8 +389,9 @@ def _stereo_line_state(left_img, right_img, profile, timestamp=None):
         single = _startup_single_line_candidate(left or right, profile, timestamp)
         if single is not None:
             return single
-        red_environment = _is_red_environment(left_img) or _is_red_environment(right_img)
-        single = _red_environment_single_line_candidate(left or right, profile, red_environment)
+        if red_environment is None:
+            red_environment = _is_red_environment(left_img) or _is_red_environment(right_img)
+        single = _red_environment_single_line_candidate(left or right, profile, bool(red_environment))
         if single is not None:
             return single
         return (0.0, 0.0, 0.0)
@@ -550,6 +559,17 @@ def _scan_image(image, timestamp=None, enable_opp=True):
         _save_frame_centers([])
         return _empty_scan()
     _maybe_reset_perception_by_timestamp(timestamp)
+    if _is_synthetic_grayscale_frame(image):
+        _save_frame_centers([])
+        scan = _empty_scan(debug_flags=4)
+        if enable_opp and OPPONENT_PROFILE['enable_opponent_avoidance']:
+            try:
+                current_time = float(timestamp)
+            except (TypeError, ValueError):
+                current_time = 0.0
+            if current_time >= OPPONENT_PROFILE['near_obstacle_min_timestamp']:
+                scan.near_obstacle, scan.obstacle_x, scan.obstacle_size = detect_near_vehicle_obstacle_state(image, OPPONENT_PROFILE)
+        return scan
     road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle, obstacle_x, obstacle_size = _build_masks(image, timestamp, enable_opp)
     red_environment = _is_red_environment(image)
     wide_localize_enabled = red_environment
@@ -584,12 +604,13 @@ def _scan_image(image, timestamp=None, enable_opp=True):
         scan.near_obstacle = bool(near_obstacle)
         scan.obstacle_x = float(obstacle_x)
         scan.obstacle_size = float(obstacle_size)
+        scan.red_environment = bool(red_environment)
         return scan
     confidence, debug_flags = _score_scan(centers, widths, texture_score, mask_fill_ratio, fallback_count, red_environment=red_environment)
     if red_environment:
         debug_flags |= _RED_ENVIRONMENT_FLAG
     _save_frame_centers(centers)
-    return _CameraScan(np.array(centers, dtype=np.float32), np.array(left_edges, dtype=np.float32), np.array(right_edges, dtype=np.float32), float(np.median(np.array(widths, dtype=np.float32))), confidence, debug_flags=debug_flags, near_obstacle=bool(near_obstacle), obstacle_x=float(obstacle_x), obstacle_size=float(obstacle_size))
+    return _CameraScan(np.array(centers, dtype=np.float32), np.array(left_edges, dtype=np.float32), np.array(right_edges, dtype=np.float32), float(np.median(np.array(widths, dtype=np.float32))), confidence, debug_flags=debug_flags, near_obstacle=bool(near_obstacle), obstacle_x=float(obstacle_x), obstacle_size=float(obstacle_size), red_environment=bool(red_environment))
 
 def _usable(scan):
     return scan.center_points.size > 0 and scan.confidence >= VISION_PROFILE['min_camera_confidence']
@@ -654,8 +675,11 @@ def _fuse_scans(left_scan, right_scan):
     road_width_est = float(np.average(width_values, weights=weights))
     return PerceptionObs(center_points, left_edge_points, right_edge_points, road_width_est, clamp(confidence, 0.0, 1.0), debug_flags=left_scan.debug_flags | right_scan.debug_flags, near_obstacle=near_obstacle, obstacle_x=obstacle_x, obstacle_size=obstacle_size)
 
-def _with_line_state(obs, left_img, right_img, timestamp=None):
-    line_offset, line_heading, line_confidence = _stereo_line_state(left_img, right_img, LINE_FOLLOW_PROFILE, timestamp)
+def _with_line_state(obs, left_img, right_img, timestamp=None, red_environment=None):
+    if _valid_image(left_img) and _valid_image(right_img) and _is_synthetic_grayscale_frame(left_img) and _is_synthetic_grayscale_frame(right_img):
+        line_offset, line_heading, line_confidence = (0.0, 0.0, 0.0)
+    else:
+        line_offset, line_heading, line_confidence = _stereo_line_state(left_img, right_img, LINE_FOLLOW_PROFILE, timestamp, red_environment=red_environment)
     obs.line_offset = line_offset
     obs.line_heading = line_heading
     obs.line_confidence = line_confidence
@@ -674,7 +698,7 @@ def extract_observation(left_img, right_img, timestamp=None, profile=None):
     left_scan = _scan_image(left_img, timestamp, enable_opp) if _valid_image(left_img) else _empty_scan()
     right_scan = _scan_image(right_img, timestamp, enable_opp) if _valid_image(right_img) else _empty_scan()
     obs = _fuse_scans(left_scan, right_scan)
-    obs = _with_line_state(obs, left_img, right_img, timestamp)
+    obs = _with_line_state(obs, left_img, right_img, timestamp, red_environment=bool(left_scan.red_environment or right_scan.red_environment))
     if enable_opp:
         obs.frame_motion = _update_frame_motion(left_img, timestamp)
     return obs
