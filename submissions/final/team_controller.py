@@ -41,6 +41,9 @@ class PerceptionObs:
     near_obstacle: bool = False
 
 
+    frame_motion: float = 100.0
+
+
 @dataclass
 class TrackState:
 \
@@ -64,6 +67,8 @@ class TrackState:
     left_margin_near: float = 1.0
     right_margin_near: float = 1.0
     near_obstacle: bool = False
+
+    frame_motion: float = 100.0
 
 
 @dataclass
@@ -99,9 +104,15 @@ def clamp_cmd(cmd: ControlCmd) -> tuple[float, float]:
 \
 \
 \
+\
+\
+\
+\
+\
+\
 
 
-    return clamp(cmd.steering, -1.0, 1.0), clamp(cmd.speed, 0.0, 1.0)
+    return clamp(cmd.steering, -1.0, 1.0), clamp(cmd.speed, -1.0, 1.0)
 
 
 
@@ -226,9 +237,11 @@ OPPONENT_PROFILE = {
     "near_obstacle_white_sat_max": 80.0,
     "near_obstacle_black_gray_max": 30.0,
     "near_obstacle_black_value_max": 45.0,
-    "near_obstacle_min_area": 700.0,
-    "near_obstacle_min_width": 28.0,
-    "near_obstacle_min_height": 18.0,
+
+
+    "near_obstacle_min_area": 500.0,
+    "near_obstacle_min_width": 24.0,
+    "near_obstacle_min_height": 14.0,
 }
 
 LINE_FOLLOW_PROFILE = {
@@ -536,14 +549,23 @@ CONTROL = {
     "escape_boundary_steering": 0.92,
     "escape_boundary_speed": 0.45,
 
+
+
+    "escape_reverse_speed": 0.42,
+    "escape_pinned_reverse_frames": 16,
+    "escape_low_speed_reverse_frames": 30,
+    "escape_boundary_reverse_frames": 26,
+
     "opponent_speed_factor": 0.72,
 
     "opponent_corner_speed_factor": 0.55,
     "opponent_corner_curve_threshold": 0.25,
 
+
+
     "opponent_avoid_steering_enable": True,
-    "opponent_avoid_steering_gain": 0.40,
-    "opponent_avoid_steering_max": 0.18,
+    "opponent_avoid_steering_gain": 0.65,
+    "opponent_avoid_steering_max": 0.42,
 
 
 
@@ -554,6 +576,17 @@ CONTROL = {
 
     "force_reverse_zero_speed_threshold": 0.08,
     "force_reverse_zero_speed_frames": 60,
+
+
+    "force_reverse_back_speed": 0.45,
+    "force_reverse_back_frames": 40,
+
+
+
+
+    "motion_still_threshold": 0.2,
+    "motion_still_frames": 40,
+    "motion_still_min_cmd_speed": 0.35,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }
@@ -1551,7 +1584,51 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
     left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
     right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
     obs = _fuse_scans(left_scan, right_scan)
-    return _with_line_state(obs, left_img, right_img, timestamp)
+    obs = _with_line_state(obs, left_img, right_img, timestamp)
+    obs.frame_motion = _update_frame_motion(left_img, timestamp)
+    return obs
+
+
+_PREV_MOTION_GRAY = None
+_PREV_MOTION_T = None
+
+
+def _update_frame_motion(image, timestamp=None) -> float:
+\
+\
+\
+\
+\
+\
+\
+
+
+    global _PREV_MOTION_GRAY, _PREV_MOTION_T
+    if not _valid_image(image):
+        return 100.0
+    small = cv2.resize(
+        cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (64, 48), interpolation=cv2.INTER_AREA
+    )
+    if (
+        _PREV_MOTION_T is not None
+        and timestamp is not None
+        and float(timestamp) < _PREV_MOTION_T - 1e-6
+    ):
+        _PREV_MOTION_GRAY = None
+    prev = _PREV_MOTION_GRAY
+    _PREV_MOTION_GRAY = small
+    _PREV_MOTION_T = None if timestamp is None else float(timestamp)
+    if prev is None:
+        return 100.0
+    return float(np.mean(np.abs(small.astype(np.int16) - prev.astype(np.int16))))
+
+
+def reset_frame_motion_state() -> None:
+
+
+    global _PREV_MOTION_GRAY, _PREV_MOTION_T
+    _PREV_MOTION_GRAY = None
+    _PREV_MOTION_T = None
 
 
 
@@ -1620,6 +1697,7 @@ def _lost_track(
         _LAST_TRACK.left_margin_near,
         _LAST_TRACK.right_margin_near,
         near_obstacle,
+        obs.frame_motion,
     )
 
 
@@ -1854,6 +1932,7 @@ def _line_only_track(obs: PerceptionObs, timestamp: float, red_environment: bool
         _LAST_TRACK.left_margin_near,
         _LAST_TRACK.right_margin_near,
         bool(obs.near_obstacle),
+        obs.frame_motion,
     )
     return track
 
@@ -2134,6 +2213,7 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         left_margin_near,
         right_margin_near,
         bool(obs.near_obstacle),
+        obs.frame_motion,
     )
     _LAST_TRACK = track
     _LAST_TIMESTAMP = timestamp
@@ -2164,6 +2244,11 @@ _ESCAPE_FRAMES = 0
 _ESCAPE_STEERING_SIGN = 1.0
 _ESCAPE_STEERING_MAGNITUDE = 0.0
 _ESCAPE_SPEED = 0.0
+
+
+
+_ESCAPE_TOTAL_FRAMES = 0
+_ESCAPE_REVERSE_FRAMES = 0
 _LAST_TRACK_SIGNATURE = None
 _STRAIGHT_MEMORY_FRAMES = 0
 _HARD_TURN_CANDIDATE_FRAMES = 0
@@ -2188,7 +2273,13 @@ _FORCE_ESCAPE_SPEED = 0.0
 _FORCE_ESCAPE_STEERING = 0.0
 _FORCE_ESCAPE_SIGN = 1.0
 
+_FORCE_ESCAPE_TOTAL_FRAMES = 0
+_FORCE_ESCAPE_REVERSE_FRAMES = 0
+
 _ZERO_SPEED_STREAK = 0
+
+
+_MOTION_STALL_STREAK = 0
 
 
 def reset_policy_state() -> None:
@@ -2203,11 +2294,13 @@ def reset_policy_state() -> None:
     global _LAST_STEERING, _LAST_SPEED, _LAST_TIMESTAMP
     global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
+    global _ESCAPE_TOTAL_FRAMES, _ESCAPE_REVERSE_FRAMES
+    global _FORCE_ESCAPE_TOTAL_FRAMES, _FORCE_ESCAPE_REVERSE_FRAMES
     global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF, _TURN_IN_LATCH
-    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _ZERO_SPEED_STREAK
+    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _ZERO_SPEED_STREAK, _MOTION_STALL_STREAK
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
@@ -2221,7 +2314,12 @@ def reset_policy_state() -> None:
     _FORCE_ESCAPE_SPEED = 0.0
     _FORCE_ESCAPE_STEERING = 0.0
     _FORCE_ESCAPE_SIGN = 1.0
+    _FORCE_ESCAPE_TOTAL_FRAMES = 0
+    _FORCE_ESCAPE_REVERSE_FRAMES = 0
+    _ESCAPE_TOTAL_FRAMES = 0
+    _ESCAPE_REVERSE_FRAMES = 0
     _ZERO_SPEED_STREAK = 0
+    _MOTION_STALL_STREAK = 0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -2750,6 +2848,7 @@ def _escape_if_stalled(
 
 
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
+    global _ESCAPE_TOTAL_FRAMES, _ESCAPE_REVERSE_FRAMES
     global _LAST_TRACK_SIGNATURE
 
     signature = _track_signature(track)
@@ -2765,11 +2864,21 @@ def _escape_if_stalled(
 
         wiggle = 1.0 if (_ESCAPE_FRAMES // 10) % 2 == 0 else -1.0
         wiggle_amplitude = float(profile.get("escape_wiggle_amplitude", 0.20))
-        escape_steering = _ESCAPE_STEERING_SIGN * (_ESCAPE_STEERING_MAGNITUDE + wiggle * wiggle_amplitude)
         max_abs = profile["max_abs_steering"]
+
+
+
+        elapsed = _ESCAPE_TOTAL_FRAMES - _ESCAPE_FRAMES
+        if elapsed <= _ESCAPE_REVERSE_FRAMES:
+            phase_sign = -_ESCAPE_STEERING_SIGN
+            speed_out = -float(profile.get("escape_reverse_speed", 0.40))
+        else:
+            phase_sign = _ESCAPE_STEERING_SIGN
+            speed_out = max(speed, _ESCAPE_SPEED)
+        escape_steering = phase_sign * (_ESCAPE_STEERING_MAGNITUDE + wiggle * wiggle_amplitude)
         return (
             clamp(escape_steering, -max_abs, max_abs),
-            max(speed, _ESCAPE_SPEED),
+            speed_out,
             "escaping",
         )
 
@@ -2818,6 +2927,9 @@ def _escape_if_stalled(
     escape_frames = int(profile["escape_turn_frames"])
     escape_steering = profile["escape_turn_steering"]
     escape_speed = profile["escape_turn_speed"]
+
+
+    escape_reverse_frames = 0
     if large_offset_stall:
         should_count_stall = True
         trigger_frames = int(profile["escape_offset_trigger_frames"])
@@ -2833,6 +2945,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_boundary_frames"])
         escape_steering = profile["escape_boundary_steering"]
         escape_speed = profile["escape_boundary_speed"]
+        escape_reverse_frames = int(profile.get("escape_boundary_reverse_frames", 0))
         escape_sign = _contact_escape_sign(track, escape_sign, profile)
     elif (
         allow_geometry_escape
@@ -2851,6 +2964,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_pinned_frames"])
         escape_steering = profile["escape_pinned_steering"]
         escape_speed = profile["escape_pinned_speed"]
+        escape_reverse_frames = int(profile.get("escape_pinned_reverse_frames", 0))
         escape_sign = _contact_escape_sign(track, escape_sign, profile)
     elif low_speed_stall:
         should_count_stall = True
@@ -2860,6 +2974,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_low_speed_frames"])
         escape_steering = profile["escape_low_speed_steering"]
         escape_speed = profile["escape_low_speed_speed"]
+        escape_reverse_frames = int(profile.get("escape_low_speed_reverse_frames", 0))
         escape_sign = _contact_escape_sign(track, escape_sign, profile)
 
     confidence_ok = (not require_confidence) or (
@@ -2876,6 +2991,9 @@ def _escape_if_stalled(
         _ESCAPE_STEERING_MAGNITUDE = escape_steering
         _ESCAPE_SPEED = escape_speed
         _ESCAPE_FRAMES = escape_frames
+        _ESCAPE_TOTAL_FRAMES = escape_frames
+
+        _ESCAPE_REVERSE_FRAMES = min(escape_reverse_frames, escape_frames // 2)
 
     return steering, speed, mode
 
@@ -3042,6 +3160,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED
     global _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES, _ZERO_SPEED_STREAK
+    global _FORCE_ESCAPE_TOTAL_FRAMES, _FORCE_ESCAPE_REVERSE_FRAMES, _MOTION_STALL_STREAK
 
     profile = get_profile(mode)
     timestamp = float(timestamp)
@@ -3051,9 +3170,17 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     if _FORCE_ESCAPE_ACTIVE:
         if _FORCE_ESCAPE_FRAMES > 0:
             _FORCE_ESCAPE_FRAMES -= 1
+
+
+
+
+            elapsed = _FORCE_ESCAPE_TOTAL_FRAMES - _FORCE_ESCAPE_FRAMES
             esc_steering = _FORCE_ESCAPE_SIGN * _FORCE_ESCAPE_STEERING
+            if elapsed <= _FORCE_ESCAPE_REVERSE_FRAMES:
+                speed_out = -float(profile.get("force_reverse_back_speed", 0.42))
+            else:
+                speed_out = _FORCE_ESCAPE_SPEED
             steering_out = clamp(esc_steering, -1.0, 1.0)
-            speed_out = _FORCE_ESCAPE_SPEED
             _update_policy_state(track, steering_out, speed_out, "escaping", timestamp, profile)
             return ControlCmd(steering_out, speed_out)
         else:
@@ -3110,15 +3237,38 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
         _ZERO_SPEED_STREAK = 0
     _zero_trigger = _ZERO_SPEED_STREAK >= zero_speed_frames
 
-    if (_LOST_STREAK >= lost_streak_threshold or _zero_trigger) and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
+
+    motion_still_threshold = float(profile.get("motion_still_threshold", 2.5))
+    motion_still_frames = int(profile.get("motion_still_frames", 40))
+    motion_min_cmd_speed = float(profile.get("motion_still_min_cmd_speed", 0.35))
+    if (
+        track.frame_motion < motion_still_threshold
+        and speed >= motion_min_cmd_speed
+        and drive_mode != "escaping"
+    ):
+        _MOTION_STALL_STREAK += 1
+    else:
+        _MOTION_STALL_STREAK = 0
+    _motion_trigger = _MOTION_STALL_STREAK >= motion_still_frames
+
+    if (_LOST_STREAK >= lost_streak_threshold or _zero_trigger or _motion_trigger) and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
         _FORCE_ESCAPE_ACTIVE = True
         _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 120))
+        _FORCE_ESCAPE_TOTAL_FRAMES = _FORCE_ESCAPE_FRAMES
+
+
+        _FORCE_ESCAPE_REVERSE_FRAMES = min(
+            int(profile.get("force_reverse_back_frames", 65)),
+            int(_FORCE_ESCAPE_FRAMES * 0.6),
+        )
         _FORCE_ESCAPE_SPEED = float(profile.get("force_reverse_lost_speed", 0.35))
         _FORCE_ESCAPE_STEERING = float(profile.get("force_reverse_lost_steering", 0.88))
-        _FORCE_ESCAPE_SIGN = _road_direction_sign(track)
+
+        _FORCE_ESCAPE_SIGN = _margin_escape_sign(track, _road_direction_sign(track))
         _LOST_STREAK = 0
         _NOT_STUCK_FRAMES = 0
         _ZERO_SPEED_STREAK = 0
+        _MOTION_STALL_STREAK = 0
 
 
     if (

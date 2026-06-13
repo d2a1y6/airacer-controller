@@ -65,6 +65,7 @@ def _lost_track(
         _LAST_TRACK.left_margin_near,
         _LAST_TRACK.right_margin_near,
         near_obstacle,
+        obs.frame_motion,
     )
 
 
@@ -299,6 +300,7 @@ def _line_only_track(obs: PerceptionObs, timestamp: float, red_environment: bool
         _LAST_TRACK.left_margin_near,
         _LAST_TRACK.right_margin_near,
         bool(obs.near_obstacle),
+        obs.frame_motion,
     )
     return track
 
@@ -579,6 +581,7 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         left_margin_near,
         right_margin_near,
         bool(obs.near_obstacle),
+        obs.frame_motion,
     )
     _LAST_TRACK = track
     _LAST_TIMESTAMP = timestamp

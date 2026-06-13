@@ -50,9 +50,11 @@ def test_curves_control_sign_and_reduce_speed():
     reset_policy_state()
     straight = warm_policy(make_track(), mode="fastest")
     reset_policy_state()
-    right_curve = warm_policy(make_track(lateral=0.70, heading=0.25, curvature=0.35, lookahead=0.30), mode="fastest")
+    # lateral 用 0.30（< pinned 阈值 0.38）避免冻结的大横偏被当成顶栏脱困触发；
+    # 本测试只验证弯道转向符号 + 减速，不应进入脱困状态机。
+    right_curve = warm_policy(make_track(lateral=0.30, heading=0.25, curvature=0.35, lookahead=0.30), mode="fastest")
     reset_policy_state()
-    left_curve = warm_policy(make_track(lateral=-0.70, heading=-0.25, curvature=-0.35, lookahead=-0.30), mode="fastest")
+    left_curve = warm_policy(make_track(lateral=-0.30, heading=-0.25, curvature=-0.35, lookahead=-0.30), mode="fastest")
 
     assert right_curve.steering > 0.05
     assert left_curve.steering < -0.05

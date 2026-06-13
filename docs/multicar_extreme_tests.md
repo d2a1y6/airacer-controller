@@ -27,7 +27,7 @@ bash scripts/webots_multicar_run.sh basic --no-frames
 输出产物：
 - `.tmp/multicar/control_<world>_car1.jsonl` — 我方控制日志
 - `.tmp/multicar/control_<world>_car2.jsonl` — 对手控制日志
-- `.tmp/multicar/contact_<world>_car1.jsonl` — 我方撞栏接触日志
+- `.tmp/multicar/contact_<world>_car1.jsonl` — 撞栏接触日志（含**所有车**，按 `car_slot` 过滤，见下「跑完后的分析」）
 - `.tmp/multicar/frames_<world>_car1/` — 我方相机帧
 
 ## 极端场景
@@ -161,8 +161,14 @@ python scripts/analyze_control_log.py .tmp/multicar/control_basic_car2.jsonl
 ```
 
 ### 撞栏接触日志
+接触日志记录的是**所有车**的接触（每行带 `car_slot`）。只看本车要加 `--car-slot`，否则会把对手车卡栏误当成本车撞栏：
 ```bash
-python scripts/analyze_contact_log.py .tmp/multicar/contact_basic_car1.jsonl
+python scripts/analyze_contact_log.py .tmp/multicar/contact_basic_car1.jsonl --car-slot car_1
+```
+
+### 脱困 / 倒车段
+```bash
+python scripts/analyze_escape_episodes.py .tmp/multicar/control_basic_car1.jsonl
 ```
 
 ### 轨迹总览（需要 telemetry）

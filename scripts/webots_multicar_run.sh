@@ -121,7 +121,6 @@ echo "car_1: $SLOT1"
 echo "car_2: $SLOT2"
 
 python "$SDK/run_local.py" \
-  --code-path "$PWD/.tmp/multicar/team_controller_car1_debug.py" \
   --world "$WORLD" \
   --car "$SLOT1" \
   --car "$SLOT2" \

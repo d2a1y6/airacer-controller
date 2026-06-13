@@ -117,9 +117,11 @@ OPPONENT_PROFILE = {
     "near_obstacle_white_sat_max": 80.0,
     "near_obstacle_black_gray_max": 30.0,
     "near_obstacle_black_value_max": 45.0,
-    "near_obstacle_min_area": 700.0,
-    "near_obstacle_min_width": 28.0,
-    "near_obstacle_min_height": 18.0,
+    # 略降检测阈值让对手车更早进入视野就触发避让（晚触发=已被夹）。
+    # near_obstacle 只驱动有界的避让偏置+减速，偶发误触发也基本无害。
+    "near_obstacle_min_area": 500.0,
+    "near_obstacle_min_width": 24.0,
+    "near_obstacle_min_height": 14.0,
 }
 
 LINE_FOLLOW_PROFILE = {
@@ -426,15 +428,24 @@ CONTROL = {
     "escape_boundary_frames": 90,
     "escape_boundary_steering": 0.92,
     "escape_boundary_speed": 0.45,
+    # ── 倒车脱困（仅卡死类脱困先倒车拉开距离，再前冲）──
+    # nominal_dt≈0.032s/帧：30 帧≈1s。倒车帧数会被自动限制为不超过该脱困总帧数的一半。
+    # 倒车阶段输出负速度（本地 Driver API 直接倒车；线上 clamp 到 0，靠后段前冲兜底）。
+    "escape_reverse_speed": 0.42,
+    "escape_pinned_reverse_frames": 16,
+    "escape_low_speed_reverse_frames": 30,
+    "escape_boundary_reverse_frames": 26,
     # ── 多车安全 ──
     "opponent_speed_factor": 0.72,
     # 弯道中近处有对手车时额外减速（防止多车弯道碰撞卡死）
     "opponent_corner_speed_factor": 0.55,
     "opponent_corner_curve_threshold": 0.25,
-    # 对手车主动避让转向：基于边界余量差，朝远离障碍方向加舵角偏置
+    # 对手车主动避让转向：基于边界余量差，朝余量大的开阔侧加舵角偏置。
+    # 实跑（CP3 进堆）发现 ±0.18 太弱，被角区循线抵消、压不出果断变道 → 调强。
+    # 仍以 near_obstacle 检测为门控（只有真检测到对手才生效），且偏置天然朝开阔侧，安全。
     "opponent_avoid_steering_enable": True,
-    "opponent_avoid_steering_gain": 0.40,
-    "opponent_avoid_steering_max": 0.18,
+    "opponent_avoid_steering_gain": 0.65,
+    "opponent_avoid_steering_max": 0.42,
     # ── 丢线强制脱困（多车/卡死安全网）──
     # 持续丢线后朝路面方向打硬舵+低速前进，作为所有几何脱困的兜底。
     # 不依赖特定速度/偏移/余量条件，只靠丢线持续时间触发。
@@ -445,6 +456,17 @@ CONTROL = {
     # 物理卡死检测：指令速度≤此值持续过多帧即触发 force_escape（不依赖丢线）
     "force_reverse_zero_speed_threshold": 0.08,
     "force_reverse_zero_speed_frames": 60,
+    # force_escape 领头倒车：倒够距离脱开卡点（栏杆/车）并改变视野，再前冲朝开阔侧。
+    # 40 帧≈1.3s：顶栏需要倒离才能重新看见路；但不做净后退（6 车 gridlock 时怼后车有害）。
+    "force_reverse_back_speed": 0.45,
+    "force_reverse_back_frames": 40,
+    # 光流卡死检测（撞栏顶住空转、控制器自以为在巡航）：
+    # frame_motion(64×48 灰度帧间 MAD) < 阈值 且 命令速度 ≥ min 持续 N 帧即触发 force_escape。
+    # 实测标定：全速行驶 frame_motion≥0.47（中位 0.81），被顶住不动≈0.07。
+    # 阈值 0.2 取两者之间；cmd≥0.35 + 连续 40 帧(~1.3s) 防慢速/纹理稀疏段误触发。
+    "motion_still_threshold": 0.2,
+    "motion_still_frames": 40,
+    "motion_still_min_cmd_speed": 0.35,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }

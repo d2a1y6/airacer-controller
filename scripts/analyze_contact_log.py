@@ -44,9 +44,15 @@ def main():
     ap.add_argument("--window", nargs=2, type=float, metavar=("START", "END"),
                     help="只看该时间窗")
     ap.add_argument("--gap", type=float, default=0.3, help="episode 合并的最大时间间隔（秒）")
+    ap.add_argument("--car-slot", default="car_1",
+                    help="多车日志里只看该车位的接触（默认 car_1）；传 all 看全部车")
     args = ap.parse_args()
 
     rows = load(args.path)
+    # 多车 contact 日志记录所有车的接触（每行带 car_slot）。默认只看本车 car_1，
+    # 否则会把对手车卡栏杆误当成本车撞栏（缺 car_slot 字段的旧单车日志全保留）。
+    if args.car_slot != "all":
+        rows = [r for r in rows if r.get("car_slot", args.car_slot) == args.car_slot]
     if args.window:
         lo, hi = args.window
         rows = [r for r in rows if lo <= r["t"] <= hi]
@@ -62,9 +68,9 @@ def main():
     print(f"episode  : {len(eps)}")
     print(f"{'t_start':>8} {'t_end':>7} {'帧':>4} {'峰值点':>5} {'类型':>14}  {'pos(x,y)':>16}  {'zmax':>5}")
     for e in eps:
-        zmax = max(p[2] for r in e for p in r["points"])
-        peak = max(r["count"] for r in e)
-        kinds = {r["kind"] for r in e}
+        zmax = max((p[2] for r in e for p in r.get("points", []) if len(p) >= 3), default=0.0)
+        peak = max((r.get("count", 0) for r in e), default=0)
+        kinds = {r.get("kind") for r in e}
         kind = "car_car" if "car_car" in kinds else "static_geometry"
         mid = e[len(e) // 2]
         print(f"{e[0]['t']:>8.1f} {e[-1]['t']:>7.1f} {len(e):>4} {peak:>5} {kind:>14}  "

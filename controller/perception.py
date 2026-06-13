@@ -926,4 +926,48 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
     left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
     right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
     obs = _fuse_scans(left_scan, right_scan)
-    return _with_line_state(obs, left_img, right_img, timestamp)
+    obs = _with_line_state(obs, left_img, right_img, timestamp)
+    obs.frame_motion = _update_frame_motion(left_img, timestamp)
+    return obs
+
+
+_PREV_MOTION_GRAY = None
+_PREV_MOTION_T = None
+
+
+def _update_frame_motion(image, timestamp=None) -> float:
+    """估计帧间图像变化量（下采样灰度平均绝对差）。
+
+    功能：给一个"画面在不在流动"的标量——高=车在动，低≈被顶住不动（物理卡死）。
+    参数：`image` 单张 BGR 图（用左相机），`timestamp` 用于检测仿真重启清状态。
+    返回：MAD（约 0~50）；首帧或无上一帧时返回高值（视作在动）。
+    逻辑：几何签名在直路和顶栏时都稳定、区分不了卡死；原始像素帧差能区分——
+        车真在开时场景流动、MAD 大，被顶住不动时画面几乎不变、MAD≈传感器噪声。
+    """
+
+    global _PREV_MOTION_GRAY, _PREV_MOTION_T
+    if not _valid_image(image):
+        return 100.0
+    small = cv2.resize(
+        cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (64, 48), interpolation=cv2.INTER_AREA
+    )
+    if (
+        _PREV_MOTION_T is not None
+        and timestamp is not None
+        and float(timestamp) < _PREV_MOTION_T - 1e-6
+    ):
+        _PREV_MOTION_GRAY = None  # 仿真重启/时间回退：清上一帧
+    prev = _PREV_MOTION_GRAY
+    _PREV_MOTION_GRAY = small
+    _PREV_MOTION_T = None if timestamp is None else float(timestamp)
+    if prev is None:
+        return 100.0
+    return float(np.mean(np.abs(small.astype(np.int16) - prev.astype(np.int16))))
+
+
+def reset_frame_motion_state() -> None:
+    """清空帧间运动检测的跨帧状态（新仿真/测试前调用）。"""
+
+    global _PREV_MOTION_GRAY, _PREV_MOTION_T
+    _PREV_MOTION_GRAY = None
+    _PREV_MOTION_T = None

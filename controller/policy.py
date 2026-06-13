@@ -22,6 +22,11 @@ _ESCAPE_FRAMES = 0
 _ESCAPE_STEERING_SIGN = 1.0
 _ESCAPE_STEERING_MAGNITUDE = 0.0
 _ESCAPE_SPEED = 0.0
+# 倒车脱困：脱困触发时的总帧数与其中"先倒车"的领头帧数。倒车阶段输出负速度
+# 拉开与卡点（栏杆/对手）的距离，随后切回前冲。仅卡死类脱困（pinned/low_speed/
+# boundary）启用倒车；正常巡弯漂移类（turn/large_offset）reverse_frames=0。
+_ESCAPE_TOTAL_FRAMES = 0
+_ESCAPE_REVERSE_FRAMES = 0
 _LAST_TRACK_SIGNATURE = None
 _STRAIGHT_MEMORY_FRAMES = 0
 _HARD_TURN_CANDIDATE_FRAMES = 0
@@ -45,8 +50,14 @@ _FORCE_ESCAPE_FRAMES = 0
 _FORCE_ESCAPE_SPEED = 0.0
 _FORCE_ESCAPE_STEERING = 0.0
 _FORCE_ESCAPE_SIGN = 1.0
+# force_escape 倒车相位：总帧数 + 领头倒车帧数（先倒车拉开距离再前冲脱困）
+_FORCE_ESCAPE_TOTAL_FRAMES = 0
+_FORCE_ESCAPE_REVERSE_FRAMES = 0
 # 指令速度接近零计数器：物理卡死检测（速度被平台压到≈0 即物理卡死，不依赖丢线判断）
 _ZERO_SPEED_STREAK = 0
+# 光流卡死计数器：命令在前进但画面几乎不动（被顶住空转），control() 拿不到真实速度，
+# 只能靠帧间图像变化识别。撞栏顶住时控制器常以为自己在巡航，这是唯一能察觉的信号。
+_MOTION_STALL_STREAK = 0
 
 
 def reset_policy_state() -> None:
@@ -61,11 +72,13 @@ def reset_policy_state() -> None:
     global _LAST_STEERING, _LAST_SPEED, _LAST_TIMESTAMP
     global _LOST_FRAMES, _RECOVERY_FRAMES, _LAST_GOOD_BIAS, _LAST_MODE
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
+    global _ESCAPE_TOTAL_FRAMES, _ESCAPE_REVERSE_FRAMES
+    global _FORCE_ESCAPE_TOTAL_FRAMES, _FORCE_ESCAPE_REVERSE_FRAMES
     global _LAST_TRACK_SIGNATURE, _STRAIGHT_MEMORY_FRAMES
     global _HARD_TURN_CANDIDATE_FRAMES, _RECOVERY_CANDIDATE_FRAMES
     global _LAST_MODE_REASON, _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _LINE_STREAK, _LINE_LAST_OFFSET, _LINE_CORRECTION, _LINE_HOLD_FRAMES, _CORNER_RELIEF, _TURN_IN_LATCH
-    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _ZERO_SPEED_STREAK
+    global _LOST_STREAK, _NOT_STUCK_FRAMES, _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED, _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _ZERO_SPEED_STREAK, _MOTION_STALL_STREAK
     _LINE_STREAK = 0
     _LINE_LAST_OFFSET = 0.0
     _LINE_CORRECTION = 0.0
@@ -79,7 +92,12 @@ def reset_policy_state() -> None:
     _FORCE_ESCAPE_SPEED = 0.0
     _FORCE_ESCAPE_STEERING = 0.0
     _FORCE_ESCAPE_SIGN = 1.0
+    _FORCE_ESCAPE_TOTAL_FRAMES = 0
+    _FORCE_ESCAPE_REVERSE_FRAMES = 0
+    _ESCAPE_TOTAL_FRAMES = 0
+    _ESCAPE_REVERSE_FRAMES = 0
     _ZERO_SPEED_STREAK = 0
+    _MOTION_STALL_STREAK = 0
     _LAST_STEERING = 0.0
     _LAST_SPEED = 0.0
     _LAST_TIMESTAMP = None
@@ -608,6 +626,7 @@ def _escape_if_stalled(
     """
 
     global _STALL_FRAMES, _ESCAPE_FRAMES, _ESCAPE_STEERING_SIGN, _ESCAPE_STEERING_MAGNITUDE, _ESCAPE_SPEED
+    global _ESCAPE_TOTAL_FRAMES, _ESCAPE_REVERSE_FRAMES
     global _LAST_TRACK_SIGNATURE
 
     signature = _track_signature(track)
@@ -623,11 +642,21 @@ def _escape_if_stalled(
         # 每 10 帧切换一次方向，叠加在已设置的基准舵角上。
         wiggle = 1.0 if (_ESCAPE_FRAMES // 10) % 2 == 0 else -1.0
         wiggle_amplitude = float(profile.get("escape_wiggle_amplitude", 0.20))
-        escape_steering = _ESCAPE_STEERING_SIGN * (_ESCAPE_STEERING_MAGNITUDE + wiggle * wiggle_amplitude)
         max_abs = profile["max_abs_steering"]
+        # 倒车相位：脱困的领头若干帧先后退（负速度）拉开与卡点的距离。仅卡死类脱困
+        # 设了 reverse_frames>0。三点掉头式：自行车模型 dθ/dt=(v/L)tanδ，倒车 v<0 时
+        # 要让车头转向开阔侧，方向盘需反向打（与前冲相位相反），否则车头会越倒越扎进夹角。
+        elapsed = _ESCAPE_TOTAL_FRAMES - _ESCAPE_FRAMES
+        if elapsed <= _ESCAPE_REVERSE_FRAMES:
+            phase_sign = -_ESCAPE_STEERING_SIGN
+            speed_out = -float(profile.get("escape_reverse_speed", 0.40))
+        else:
+            phase_sign = _ESCAPE_STEERING_SIGN
+            speed_out = max(speed, _ESCAPE_SPEED)
+        escape_steering = phase_sign * (_ESCAPE_STEERING_MAGNITUDE + wiggle * wiggle_amplitude)
         return (
             clamp(escape_steering, -max_abs, max_abs),
-            max(speed, _ESCAPE_SPEED),
+            speed_out,
             "escaping",
         )
 
@@ -676,6 +705,9 @@ def _escape_if_stalled(
     escape_frames = int(profile["escape_turn_frames"])
     escape_steering = profile["escape_turn_steering"]
     escape_speed = profile["escape_turn_speed"]
+    # 倒车领头帧：默认 0（漂移/巡弯类脱困不倒车）；卡死类（pinned/low_speed/boundary）
+    # 才先倒车拉开距离。
+    escape_reverse_frames = 0
     if large_offset_stall:
         should_count_stall = True
         trigger_frames = int(profile["escape_offset_trigger_frames"])
@@ -691,6 +723,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_boundary_frames"])
         escape_steering = profile["escape_boundary_steering"]
         escape_speed = profile["escape_boundary_speed"]
+        escape_reverse_frames = int(profile.get("escape_boundary_reverse_frames", 0))
         escape_sign = _contact_escape_sign(track, escape_sign, profile)
     elif (
         allow_geometry_escape
@@ -709,6 +742,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_pinned_frames"])
         escape_steering = profile["escape_pinned_steering"]
         escape_speed = profile["escape_pinned_speed"]
+        escape_reverse_frames = int(profile.get("escape_pinned_reverse_frames", 0))
         escape_sign = _contact_escape_sign(track, escape_sign, profile)
     elif low_speed_stall:
         should_count_stall = True
@@ -718,6 +752,7 @@ def _escape_if_stalled(
         escape_frames = int(profile["escape_low_speed_frames"])
         escape_steering = profile["escape_low_speed_steering"]
         escape_speed = profile["escape_low_speed_speed"]
+        escape_reverse_frames = int(profile.get("escape_low_speed_reverse_frames", 0))
         escape_sign = _contact_escape_sign(track, escape_sign, profile)
 
     confidence_ok = (not require_confidence) or (
@@ -734,6 +769,9 @@ def _escape_if_stalled(
         _ESCAPE_STEERING_MAGNITUDE = escape_steering
         _ESCAPE_SPEED = escape_speed
         _ESCAPE_FRAMES = escape_frames
+        _ESCAPE_TOTAL_FRAMES = escape_frames
+        # 倒车帧数不超过总帧数的一半，保证后半段一定有前冲把车开出去。
+        _ESCAPE_REVERSE_FRAMES = min(escape_reverse_frames, escape_frames // 2)
 
     return steering, speed, mode
 
@@ -900,6 +938,7 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     global _LAST_TARGET_STEERING, _LAST_TARGET_SPEED, _LAST_SIGNALS, _LAST_STRAIGHT_MEMORY_ACTIVE
     global _FORCE_ESCAPE_ACTIVE, _FORCE_ESCAPE_FRAMES, _FORCE_ESCAPE_SPEED
     global _FORCE_ESCAPE_STEERING, _FORCE_ESCAPE_SIGN, _LOST_STREAK, _NOT_STUCK_FRAMES, _ZERO_SPEED_STREAK
+    global _FORCE_ESCAPE_TOTAL_FRAMES, _FORCE_ESCAPE_REVERSE_FRAMES, _MOTION_STALL_STREAK
 
     profile = get_profile(mode)
     timestamp = float(timestamp)
@@ -909,9 +948,17 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     if _FORCE_ESCAPE_ACTIVE:
         if _FORCE_ESCAPE_FRAMES > 0:
             _FORCE_ESCAPE_FRAMES -= 1
+            # 物理卡死/丢线兜底（多车堆里被另一辆车顶住是典型场景）：倒车相位**与前冲同向**
+            # 朝开阔侧（余量大的一侧）后退，把车从车堆里整体倒进开阔角落，而不是像顶栏 K-turn
+            # 那样反打、把车尾甩向旁边的堵车。倒车相位占比更大（净后退才能脱开堵车）。
+            # 线上 speed 被 clamp 到 0，倒车退化为短暂停顿，前进相位仍朝开阔侧脱困。
+            elapsed = _FORCE_ESCAPE_TOTAL_FRAMES - _FORCE_ESCAPE_FRAMES
             esc_steering = _FORCE_ESCAPE_SIGN * _FORCE_ESCAPE_STEERING
+            if elapsed <= _FORCE_ESCAPE_REVERSE_FRAMES:
+                speed_out = -float(profile.get("force_reverse_back_speed", 0.42))
+            else:
+                speed_out = _FORCE_ESCAPE_SPEED
             steering_out = clamp(esc_steering, -1.0, 1.0)
-            speed_out = _FORCE_ESCAPE_SPEED
             _update_policy_state(track, steering_out, speed_out, "escaping", timestamp, profile)
             return ControlCmd(steering_out, speed_out)
         else:
@@ -967,16 +1014,39 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
     else:
         _ZERO_SPEED_STREAK = 0
     _zero_trigger = _ZERO_SPEED_STREAK >= zero_speed_frames
+    # 触发C：光流卡死——命令在前进（speed 够大）但画面几乎不动（被顶住空转）。
+    # 这是控制器唯一能察觉"撞栏顶住但自以为在巡航"的信号（control() 拿不到真实速度）。
+    motion_still_threshold = float(profile.get("motion_still_threshold", 2.5))
+    motion_still_frames = int(profile.get("motion_still_frames", 40))
+    motion_min_cmd_speed = float(profile.get("motion_still_min_cmd_speed", 0.35))
+    if (
+        track.frame_motion < motion_still_threshold
+        and speed >= motion_min_cmd_speed
+        and drive_mode != "escaping"
+    ):
+        _MOTION_STALL_STREAK += 1
+    else:
+        _MOTION_STALL_STREAK = 0
+    _motion_trigger = _MOTION_STALL_STREAK >= motion_still_frames
 
-    if (_LOST_STREAK >= lost_streak_threshold or _zero_trigger) and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
+    if (_LOST_STREAK >= lost_streak_threshold or _zero_trigger or _motion_trigger) and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
         _FORCE_ESCAPE_ACTIVE = True
         _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 120))
+        _FORCE_ESCAPE_TOTAL_FRAMES = _FORCE_ESCAPE_FRAMES
+        # 领头倒车帧：丢线/卡死兜底走净后退（reverse 占主导），上限放到总帧 0.6，
+        # 但仍留 ≥40% 前冲把车开出去。
+        _FORCE_ESCAPE_REVERSE_FRAMES = min(
+            int(profile.get("force_reverse_back_frames", 65)),
+            int(_FORCE_ESCAPE_FRAMES * 0.6),
+        )
         _FORCE_ESCAPE_SPEED = float(profile.get("force_reverse_lost_speed", 0.35))
         _FORCE_ESCAPE_STEERING = float(profile.get("force_reverse_lost_steering", 0.88))
-        _FORCE_ESCAPE_SIGN = _road_direction_sign(track)
+        # 丢线/卡死时几何方向不可靠，优先按左右余量差朝开阔侧脱困（车堆里这是唯一可信信号）。
+        _FORCE_ESCAPE_SIGN = _margin_escape_sign(track, _road_direction_sign(track))
         _LOST_STREAK = 0
         _NOT_STUCK_FRAMES = 0
         _ZERO_SPEED_STREAK = 0
+        _MOTION_STALL_STREAK = 0
 
     # ── 对手车主动避让转向：基于左右边界余量差，朝开阔侧加舵角偏置 ──
     if (

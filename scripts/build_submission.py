@@ -202,6 +202,7 @@ def _debug_control_block(
                     "left_margin": round(float(track.left_margin_near), 4),
                     "right_margin": round(float(track.right_margin_near), 4),
                     "near_obstacle": bool(track.near_obstacle),
+                    "frame_motion": round(float(track.frame_motion), 3),
                 }}) + "\\n")
                 _DBG_FH.flush()
             except Exception:
