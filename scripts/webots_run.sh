@@ -138,7 +138,8 @@ mkdir -p .tmp/run/webots_console
 echo "team_controller stdout/stderr tee → $PWD/.tmp/run/webots_console/*.log"
 
 # 3. 构建 debug 控制器（含 open/json/cv2.imwrite，禁止上传）
-python scripts/build_submission.py --mode fastest \
+#    单车 harness 默认测 no_other_cars(R049) profile；要单车里看多车控制器改 with_other_cars。
+python scripts/build_submission.py --mode no_other_cars \
   --debug-log ".tmp/run/control_${WORLD}.jsonl" \
   ${FRAMES_ARGS[@]+"${FRAMES_ARGS[@]}"} \
   --out .tmp/run/team_controller_debug.py

@@ -396,7 +396,7 @@ ESTIMATOR_PROFILE = {
     "timestamp_reset_gap": 2.0,
 }
 
-CONTROL = {
+WITH_OTHER_CARS_CONTROL = {
     "base_speed": 0.96,
     "max_speed": 1.00,
     "min_speed": 0.16,
@@ -591,6 +591,67 @@ CONTROL = {
     "timestamp_reset_gap": 2.0,
 }
 
+STRATEGY_NO_OTHER_CARS = "no_other_cars"
+STRATEGY_WITH_OTHER_CARS = "with_other_cars"
+
+
+
+
+
+
+
+
+NO_OTHER_CARS_CONTROL = dict(WITH_OTHER_CARS_CONTROL)
+NO_OTHER_CARS_CONTROL.update({
+
+    "escape_min_confidence": 0.48,
+    "escape_signature_delta": 0.13,
+    "escape_pinned_lateral_min": 0.45,
+    "escape_pinned_steering_min": 0.55,
+    "escape_pinned_speed_max": 0.55,
+    "escape_pinned_trigger_frames": 20,
+    "escape_pinned_frames": 28,
+    "escape_pinned_steering": 0.80,
+    "escape_pinned_speed": 0.62,
+    "escape_low_speed_threshold": 0.22,
+    "escape_low_speed_trigger_frames": 120,
+    "escape_low_speed_frames": 120,
+    "escape_low_speed_steering": 0.74,
+    "escape_low_speed_speed": 0.90,
+    "escape_boundary_trigger_frames": 8,
+    "escape_boundary_frames": 72,
+    "escape_boundary_steering": 0.86,
+    "escape_boundary_speed": 0.86,
+
+    "opponent_speed_factor": 1.0,
+    "opponent_corner_speed_factor": 1.0,
+    "opponent_corner_curve_threshold": 0.25,
+    "opponent_avoid_steering_enable": False,
+    "opponent_avoid_steering_gain": 0.0,
+    "opponent_avoid_steering_max": 0.0,
+    "escape_wiggle_amplitude": 0.0,
+    "escape_reverse_speed": 0.0,
+    "escape_pinned_reverse_frames": 0,
+    "escape_low_speed_reverse_frames": 0,
+    "escape_boundary_reverse_frames": 0,
+    "force_reverse_lost_streak": 10**9,
+    "force_reverse_zero_speed_frames": 10**9,
+    "force_reverse_zero_speed_threshold": 0.0,
+    "force_reverse_lost_frames": 0,
+    "force_reverse_lost_speed": 0.0,
+    "force_reverse_lost_steering": 0.0,
+    "force_reverse_back_frames": 0,
+    "force_reverse_back_speed": 0.0,
+    "motion_still_threshold": 0.0,
+    "motion_still_frames": 10**9,
+    "motion_still_min_cmd_speed": 1.0,
+})
+
+
+
+CONTROL = NO_OTHER_CARS_CONTROL
+
+
 def get_profile(name: str) -> dict:
 \
 \
@@ -598,10 +659,12 @@ def get_profile(name: str) -> dict:
 \
 \
 \
+\
 
 
-    del name
-    return dict(CONTROL)
+    if name == STRATEGY_WITH_OTHER_CARS:
+        return dict(WITH_OTHER_CARS_CONTROL)
+    return dict(NO_OTHER_CARS_CONTROL)
 
 
 
@@ -3297,7 +3360,10 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
 """
 
 
-PROFILE = "unified"
+
+
+
+PROFILE = 'no_other_cars'
 
 
 def control(left_img, right_img, timestamp):

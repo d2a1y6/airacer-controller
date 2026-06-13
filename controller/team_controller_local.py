@@ -10,7 +10,10 @@ from controller.estimator import estimate_track
 from controller.policy import decide_control
 from controller.perception import extract_observation
 
-PROFILE = "unified"
+# 选择控制策略：no_other_cars（单车=R049）或 with_other_cars（多车）。
+# build_submission.py 按 --mode 注入对应值；本地默认单车。两个 profile 共享核心驾驶参数，
+# 只在对手避让/倒车/脱困激进度上不同（见 controller/params.py 与 CLAUDE.md「Profile 隔离」）。
+PROFILE = "no_other_cars"
 
 
 def control(left_img, right_img, timestamp):

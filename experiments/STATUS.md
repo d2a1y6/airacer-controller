@@ -13,17 +13,19 @@
 
 > 注：上面这套是 day 分支的新增层；下面 R049/R052 的入弯门控/单车完赛口径仍是底座，未改。
 
-转弯半径/入弯时机问题已**系统性解决并实跑确认**，速度也大幅提上来了。当前 `submissions/final/team_controller.py`（MD5 `79ffbdbfe1259cc41824123e296bd49b`）= **R049 当前最佳**，已存快照 `baselines/R049_turn_in_speed_best_2026-06-13/`。
-实跑：转弯不撞、全程明显更快（mean 速度 0.85 / median 0.90、0 lost）、contact 日志无硬撞（全是轻擦）。
+转弯半径/入弯时机问题已**系统性解决并实跑确认**，速度也大幅提上来了。`submissions/final/team_controller.py` 现在是 **no_other_cars = R049 口径**（共享驾驶参数与 R049 快照一致，多车增量全关；按当前代码重建，MD5 会与旧快照不同），快照见 `baselines/R049_turn_in_speed_best_2026-06-13/`。
+R049 实跑：转弯不撞、全程明显更快（mean 速度 0.85 / median 0.90、0 lost）、contact 日志无硬撞（全是轻擦）。
 
 **控制器整体逻辑见 `docs/technical_manual.md`（交付版，已较稳定）。** 入弯门控的演进细节见下「核心机制」。
 
 ## 当前最好版本
 
-- 提交文件：`submissions/final/team_controller.py`（R049，MD5 `79ffbdbfe1259cc41824123e296bd49b`）。统一策略：`fastest/safe/basic` 不再分叉，`get_profile` 只返回 `CONTROL`。
+- **两个 profile（2026-06-13 拆分，见 CLAUDE.md「Profile 隔离」）**：
+  - `submissions/final/team_controller.py` = `no_other_cars` = R049 单车最佳（核心驾驶参数与下方 R049 口径一致，多车增量全关）。
+  - `submissions/with_other_cars/team_controller.py` = `with_other_cars` = R049 + 对手避让/倒车/force_escape/光流卡死（R053–R058 自跑迭代）。
 - baseline 快照：`baselines/R049_turn_in_speed_best_2026-06-13/`（含 README + 单文件）。
 - 回退点：`baselines/R038_phase22_best_human_2026-06-12/`（更保守、更慢的上一代）。
-- 全套测试 + 本地/官方 validator 通过；提交文件不含调试 I/O。
+- 全套测试（127）+ 本地/官方 validator 对两个 profile 都通过；提交文件不含调试 I/O。
 
 ## 核心机制（接手必读：入弯门控是这几轮的重点）
 
@@ -63,10 +65,12 @@
 
 ```bash
 pytest -q
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars     # 单车 → submissions/final/
+python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 python scripts/validate_submission.py submissions/final/team_controller.py
-bash scripts/webots_run.sh complex          # 实跑（默认存帧 + 撞栏接触日志）
-python scripts/analyze_contact_log.py .tmp/run/contact_complex.jsonl
+bash scripts/webots_run.sh complex              # 单车实跑（no_other_cars，默认存帧 + 撞栏接触日志）
+bash scripts/webots_auto_multicar.sh complex 300 30 6   # 6 车自跑（with_other_cars）
+python scripts/analyze_contact_log.py .tmp/multicar/contact_complex_car1.jsonl --car-slot car_1
 python scripts/analyze_control_log.py .tmp/run/control_complex.jsonl
 ```
 

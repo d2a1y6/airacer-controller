@@ -22,7 +22,7 @@ def test_turn_in_gate_reduces_steering_when_centered():
         lateral_error=0.0, heading_error=0.0, curvature=0.6, lookahead_error=0.3,
         confidence=0.7, lost=False, red_environment=False,
     )
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
 
     gated = _steer(track, profile)
     assert abs(gated) < 0.02
@@ -34,7 +34,7 @@ def test_turn_in_gate_fully_opens_when_corner_arrived():
         lateral_error=0.40, heading_error=0.30, curvature=0.6, lookahead_error=0.3,
         confidence=0.7, lost=False, red_environment=False,
     )
-    profile = get_profile("fastest")
+    profile = get_profile("no_other_cars")
 
     arrived = _steer(track, profile)
     centered = _steer(

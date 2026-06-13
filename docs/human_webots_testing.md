@@ -160,13 +160,15 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 
 确认要上传或做正式验证时，重新生成干净单文件：
 
+两类场次各生成一份（两个 profile，见 CLAUDE.md「Profile 隔离」）：
+
 ```bash
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
-python scripts/build_submission.py --mode fastest --out submissions/fastest/team_controller.py
-python scripts/build_submission.py --mode safe --out submissions/safe/team_controller.py  # 兼容输出名；策略内容相同
+python scripts/build_submission.py --mode no_other_cars     # 单车=R049 → submissions/final/
+python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 
 pytest -q
 python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/with_other_cars/team_controller.py
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
   --code-path submissions/final/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml

@@ -5,7 +5,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.common import TrackState
-from controller.params import CONTROL
+# 脱困倒车/摆动是 with_other_cars（多车）profile 的能力；no_other_cars(R049) 已关闭。
+from controller.params import WITH_OTHER_CARS_CONTROL as CONTROL
 from controller.policy import decide_control, reset_policy_state
 
 
@@ -17,7 +18,7 @@ def _run_frozen(track: TrackState, frames: int = 80) -> float:
     t = 0.0
     for _ in range(frames):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(track, t, mode="fastest")
+        cmd = decide_control(track, t, mode="with_other_cars")
         max_speed = max(max_speed, cmd.speed)
     return max_speed
 
@@ -57,7 +58,7 @@ def test_pinned_left_margin_escapes_right_even_if_geometry_points_left():
     max_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck_left, t, mode="fastest")
+        cmd = decide_control(stuck_left, t, mode="with_other_cars")
         max_steer = max(max_steer, cmd.steering)
 
     assert max_steer >= CONTROL["max_abs_steering"] - 1e-6
@@ -82,7 +83,7 @@ def test_pinned_right_margin_escapes_left_even_if_geometry_points_right():
     min_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck_right, t, mode="fastest")
+        cmd = decide_control(stuck_right, t, mode="with_other_cars")
         min_steer = min(min_steer, cmd.steering)
 
     assert min_steer <= -CONTROL["max_abs_steering"] + 1e-6
@@ -106,7 +107,7 @@ def test_pinned_escape_uses_reverse_then_forward():
     max_speed = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(pinned, t, mode="fastest")
+        cmd = decide_control(pinned, t, mode="with_other_cars")
         min_speed = min(min_speed, cmd.speed)
         max_speed = max(max_speed, cmd.speed)
     # 出现过倒车（负速度）
@@ -130,7 +131,7 @@ def test_normal_driving_never_outputs_reverse():
     t = 0.0
     for _ in range(120):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(cruising, t, mode="fastest")
+        cmd = decide_control(cruising, t, mode="with_other_cars")
         assert cmd.speed >= 0.0
 
 
@@ -151,7 +152,7 @@ def test_centered_frozen_view_does_not_force_pinned_escape():
     max_steer = 0.0
     for _ in range(80):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(centered, t, mode="fastest")
+        cmd = decide_control(centered, t, mode="with_other_cars")
         max_steer = max(max_steer, abs(cmd.steering))
     assert max_steer < 0.3
 
@@ -178,7 +179,7 @@ def test_boundary_obstacle_stall_escapes_toward_open_margin():
     min_steer = 0.0
     for _ in range(40):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(stuck, t, mode="fastest")
+        cmd = decide_control(stuck, t, mode="with_other_cars")
         max_speed = max(max_speed, cmd.speed)
         min_steer = min(min_steer, cmd.steering)
 
@@ -205,7 +206,7 @@ def test_near_obstacle_with_normal_margins_does_not_boundary_escape():
     max_steer = 0.0
     for _ in range(40):
         t += CONTROL["nominal_dt"]
-        cmd = decide_control(clear, t, mode="fastest")
+        cmd = decide_control(clear, t, mode="with_other_cars")
         max_steer = max(max_steer, abs(cmd.steering))
 
     assert max_steer < 0.30

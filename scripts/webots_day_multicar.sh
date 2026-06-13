@@ -49,13 +49,13 @@ FRAMES_ARGS=()
 if [[ "$DUMP_FRAMES" -eq 1 ]]; then
   FRAMES_ARGS+=(--dump-frames ".tmp/multicar/frames_${WORLD}_car1" --dump-frame-stride "$STRIDE")
 fi
-python scripts/build_submission.py --mode fastest \
+python scripts/build_submission.py --mode with_other_cars \
   --debug-log ".tmp/multicar/control_${WORLD}_car1.jsonl" \
   ${FRAMES_ARGS[@]+"${FRAMES_ARGS[@]}"} \
   --out .tmp/multicar/team_controller_car1_debug.py
 
 # 4. 构建对手普通控制器（无 debug I/O，5 辆共用）
-python scripts/build_submission.py --mode fastest \
+python scripts/build_submission.py --mode with_other_cars \
   --out .tmp/multicar/team_controller_opp.py
 
 # 5. 接触日志 + console 日志环境变量

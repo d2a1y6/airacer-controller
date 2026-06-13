@@ -35,7 +35,7 @@ python scripts/analyze_contact_log.py .tmp/run/contact_complex.jsonl --window 22
 调试构建命令（含 `open/json/np.save`，**禁上传**，跑 `run_local` 时配 `--skip-validate`）：
 
 ```bash
-python scripts/build_submission.py --mode fastest \
+python scripts/build_submission.py --mode no_other_cars \
   --debug-log .tmp/run/control_basic.jsonl \
   --dump-frames .tmp/run/frames_basic \
   --out .tmp/run/team_controller_debug.py

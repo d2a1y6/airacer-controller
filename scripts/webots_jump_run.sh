@@ -135,7 +135,7 @@ python scripts/make_teleport_world.py \
 
 archive_jump_path "$SDK/.local/recordings/telemetry.jsonl" "telemetry_${WORLD}" ".jsonl"
 
-python scripts/build_submission.py --mode fastest \
+python scripts/build_submission.py --mode no_other_cars \
   --debug-log .tmp/jump_run/control_${WORLD}.jsonl \
   --dump-frames .tmp/jump_run/frames \
   --dump-frame-stride "$FRAME_STRIDE" \

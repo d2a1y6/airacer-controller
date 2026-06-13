@@ -5,7 +5,7 @@
 处理流程：解析逐帧内部状态与发出命令 → 统计震荡频率/偏置/耦合 → 可选 join 遥测定位爬行点。
 设计目的：回答"为什么慢/为什么左右磨/内侧偏多少"，且只打印聚合结果，token 成本极低。
 
-日志由 `python scripts/build_submission.py --mode fastest --debug-log <PATH> --out <调试单文件>` 产生。
+日志由 `python scripts/build_submission.py --mode no_other_cars --debug-log <PATH> --out <调试单文件>` 产生。
 """
 
 from __future__ import annotations

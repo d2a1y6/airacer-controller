@@ -41,7 +41,7 @@ def test_module_contracts_on_mock_lane():
     assert -1.0 <= track.lateral_error <= 1.0
     assert 0.0 <= track.confidence <= 1.0
 
-    cmd = decide_control(track, 0.0, mode="fastest")
+    cmd = decide_control(track, 0.0, mode="no_other_cars")
     assert isinstance(cmd, ControlCmd)
     steering, speed = clamp_cmd(cmd)
     assert -1.0 <= steering <= 1.0

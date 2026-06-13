@@ -75,13 +75,11 @@ pip install -r requirements.txt
 
 pytest -q
 
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
-python scripts/build_submission.py --mode fastest --out submissions/fastest/team_controller.py
-python scripts/build_submission.py --mode safe --out submissions/safe/team_controller.py
+python scripts/build_submission.py --mode no_other_cars     # 单车=R049 → submissions/final/
+python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 
 python scripts/validate_submission.py submissions/final/team_controller.py
-python scripts/validate_submission.py submissions/fastest/team_controller.py
-python scripts/validate_submission.py submissions/safe/team_controller.py
+python scripts/validate_submission.py submissions/with_other_cars/team_controller.py
 
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
   --code-path submissions/final/team_controller.py \

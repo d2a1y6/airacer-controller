@@ -165,7 +165,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="离线开环回放 P2.5 保存的左右相机帧。")
     parser.add_argument("frames", type=Path, help="包含 frame_<t>_left.png/right.png 的目录")
     parser.add_argument("--out", type=Path, required=True, help="输出 control 同 schema JSONL")
-    parser.add_argument("--mode", choices=("fastest", "safe"), default="fastest")
+    parser.add_argument("--mode", choices=("no_other_cars", "with_other_cars"), default="no_other_cars")
     parser.add_argument("--limit", type=int, default=None, help="最多回放多少帧，默认不限")
     return parser.parse_args()
 

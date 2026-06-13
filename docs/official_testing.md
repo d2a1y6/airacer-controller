@@ -39,13 +39,14 @@ sdk/webots/                   Webots 赛道、车型和控制器资产
 在本仓库根目录执行：
 
 ```bash
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+# 单车场次（计时赛）= R049
+python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
 ```
 
-如果要测试稳健版本：
+如果要测多车场次版本（对手避让/倒车脱困）：
 
 ```bash
-python scripts/build_submission.py --mode safe --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode with_other_cars --out submissions/with_other_cars/team_controller.py
 ```
 
 后面的官方测试都使用：
@@ -186,8 +187,8 @@ controller_path:slot:team
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
   --world basic \
-  --car "$PWD/submissions/fastest/team_controller.py:car_1:fastest" \
-  --car "$PWD/submissions/safe/team_controller.py:car_2:safe"
+  --car "$PWD/submissions/with_other_cars/team_controller.py:car_1:fastest" \
+  --car "$PWD/submissions/with_other_cars/team_controller.py:car_2:opp"
 ```
 
 本地多车测试可以观察基本交互，但仍不能完全替代线上平台的碰撞判定、赛制和测试队列。
@@ -202,7 +203,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 ## 10. 推荐提交前顺序
 
 ```bash
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
 python scripts/validate_submission.py submissions/final/team_controller.py
 pytest
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \

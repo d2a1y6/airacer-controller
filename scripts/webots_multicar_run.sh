@@ -13,8 +13,8 @@
 #
 #   # 自定义每个车位的控制器和 team 名称
 #   bash scripts/webots_multicar_run.sh basic \
-#     --slot1 submissions/fastest/team_controller.py:car_1:fastest \
-#     --slot2 submissions/safe/team_controller.py:car_2:safe
+#     --slot1 submissions/with_other_cars/team_controller.py:car_1:fastest \
+#     --slot2 submissions/with_other_cars/team_controller.py:car_2:opp
 #
 # 产物（每车独立）：
 #   .tmp/multicar/control_<world>_car1.jsonl
@@ -88,13 +88,13 @@ if [[ "$DUMP_FRAMES" -eq 1 ]]; then
   FRAMES_ARGS+=(--dump-frames ".tmp/multicar/frames_${WORLD}_car1" --dump-frame-stride "$STRIDE")
 fi
 
-python scripts/build_submission.py --mode fastest \
+python scripts/build_submission.py --mode with_other_cars \
   --debug-log ".tmp/multicar/control_${WORLD}_car1.jsonl" \
   ${FRAMES_ARGS[@]+"${FRAMES_ARGS[@]}"} \
   --out .tmp/multicar/team_controller_car1_debug.py
 
 # 4. 构建对手控制器（car_2，无帧）
-python scripts/build_submission.py --mode safe \
+python scripts/build_submission.py --mode with_other_cars \
   --debug-log ".tmp/multicar/control_${WORLD}_car2.jsonl" \
   --out .tmp/multicar/team_controller_car2_debug.py
 

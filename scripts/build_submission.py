@@ -15,8 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER_DIR = ROOT / "controller"
 DEFAULT_OUTPUTS = {
-    "fastest": ROOT / "submissions" / "fastest" / "team_controller.py",
-    "safe": ROOT / "submissions" / "safe" / "team_controller.py",
+    "no_other_cars": ROOT / "submissions" / "final" / "team_controller.py",
+    "with_other_cars": ROOT / "submissions" / "with_other_cars" / "team_controller.py",
 }
 MODULE_ORDER = [
     "common.py",
@@ -224,14 +224,20 @@ def read_module(
     """读取并清理控制器模块。
 
     功能：按文件名读取 `controller/` 下的模块源码。
-    参数：`name` 是模块文件名，`mode` 仅决定默认输出路径；调试参数非空时注入本地探针。
+    参数：`name` 是模块文件名，`mode` 是策略名（注入 team_controller_local 的 PROFILE）；
+        调试参数非空时注入本地探针。
     返回：可拼接到提交文件中的源码片段。
-    逻辑：读取文本后移除本地 import；策略固定为 unified，并按需注入调试日志。
+    逻辑：读取文本后移除本地 import；按 `mode` 注入 PROFILE（决定 no_other_cars/with_other_cars
+        哪套参数），并按需注入调试日志。
     """
 
     source = (CONTROLLER_DIR / name).read_text(encoding="utf-8")
     source = strip_local_imports(source)
     if name == "team_controller_local.py":
+        # 按构建模式注入控制策略：决定运行时走 no_other_cars 还是 with_other_cars profile。
+        source = source.replace(
+            'PROFILE = "no_other_cars"', f'PROFILE = {mode!r}'
+        )
         if debug_log or dump_frames:
             header_lines = _debug_console_tee_header()
             if debug_log:
@@ -326,7 +332,8 @@ def parse_args():
     """
 
     parser = argparse.ArgumentParser(description="Build single-file AI Racer submission.")
-    parser.add_argument("--mode", choices=sorted(DEFAULT_OUTPUTS), default="fastest")
+    parser.add_argument("--mode", choices=sorted(DEFAULT_OUTPUTS), default="no_other_cars",
+                        help="策略：no_other_cars（单车=R049）或 with_other_cars（多车）")
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--debug-log", type=Path, default=None,
                         help="本地调试构建：把每帧内部状态与命令写到该 JSONL（含 open/json，禁止上传）")

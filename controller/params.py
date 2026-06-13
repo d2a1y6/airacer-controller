@@ -276,7 +276,7 @@ ESTIMATOR_PROFILE = {
     "timestamp_reset_gap": 2.0,
 }
 
-CONTROL = {
+WITH_OTHER_CARS_CONTROL = {
     "base_speed": 0.96,
     "max_speed": 1.00,
     "min_speed": 0.16,
@@ -471,14 +471,77 @@ CONTROL = {
     "timestamp_reset_gap": 2.0,
 }
 
-def get_profile(name: str) -> dict:
-    """读取控制 profile。
+STRATEGY_NO_OTHER_CARS = "no_other_cars"
+STRATEGY_WITH_OTHER_CARS = "with_other_cars"
 
-    功能：为顶层控制器提供当前唯一维护的控制参数。
-    参数：`name` 保留兼容构建脚本和提交文件中的旧模式标记。
-    返回：`CONTROL` 参数字典的浅拷贝。
-    逻辑：所有模式、赛道和提交文件都返回同一套参数；不再维护 basic/fastest/safe 分支。
+# no_other_cars = R049 单车最佳（baselines/R049_turn_in_speed_best_2026-06-13，提交 commit a9ba0a1）。
+# 它与 with_other_cars 共享**核心驾驶参数**（入弯门控、速度、曲率等——同一辆车的物理一致），
+# 只在两处不同：
+#   (a) escape 用 R049 更保守的值（rebecca R050-R052 为多车把脱困调激进了，单车不需要）；
+#   (b) 所有多车增量全部关闭——对手避让/减速、倒车相位、force_escape、摆动、光流卡死检测。
+# 因此从 with_other_cars 派生再覆盖这两类键，既保证共享驾驶参数同步、又避免多车行为泄漏到单车。
+# 历史教训见 CLAUDE.md「Profile 隔离」。
+NO_OTHER_CARS_CONTROL = dict(WITH_OTHER_CARS_CONTROL)
+NO_OTHER_CARS_CONTROL.update({
+    # (a) R049 原始（更保守）的 escape 值
+    "escape_min_confidence": 0.48,
+    "escape_signature_delta": 0.13,
+    "escape_pinned_lateral_min": 0.45,
+    "escape_pinned_steering_min": 0.55,
+    "escape_pinned_speed_max": 0.55,
+    "escape_pinned_trigger_frames": 20,
+    "escape_pinned_frames": 28,
+    "escape_pinned_steering": 0.80,
+    "escape_pinned_speed": 0.62,
+    "escape_low_speed_threshold": 0.22,
+    "escape_low_speed_trigger_frames": 120,
+    "escape_low_speed_frames": 120,
+    "escape_low_speed_steering": 0.74,
+    "escape_low_speed_speed": 0.90,
+    "escape_boundary_trigger_frames": 8,
+    "escape_boundary_frames": 72,
+    "escape_boundary_steering": 0.86,
+    "escape_boundary_speed": 0.86,
+    # (b) 多车增量全部关闭（R049 没有这些）
+    "opponent_speed_factor": 1.0,
+    "opponent_corner_speed_factor": 1.0,
+    "opponent_corner_curve_threshold": 0.25,
+    "opponent_avoid_steering_enable": False,
+    "opponent_avoid_steering_gain": 0.0,
+    "opponent_avoid_steering_max": 0.0,
+    "escape_wiggle_amplitude": 0.0,          # R049 脱困不摆动
+    "escape_reverse_speed": 0.0,             # 无倒车相位
+    "escape_pinned_reverse_frames": 0,
+    "escape_low_speed_reverse_frames": 0,
+    "escape_boundary_reverse_frames": 0,
+    "force_reverse_lost_streak": 10**9,      # force_escape 永不触发
+    "force_reverse_zero_speed_frames": 10**9,
+    "force_reverse_zero_speed_threshold": 0.0,
+    "force_reverse_lost_frames": 0,
+    "force_reverse_lost_speed": 0.0,
+    "force_reverse_lost_steering": 0.0,
+    "force_reverse_back_frames": 0,
+    "force_reverse_back_speed": 0.0,
+    "motion_still_threshold": 0.0,           # 光流卡死检测关闭（frame_motion<0 永假）
+    "motion_still_frames": 10**9,
+    "motion_still_min_cmd_speed": 1.0,
+})
+
+# 兼容旧测试和局部脚本里直接导入 CONTROL 的用法：默认指向单车 profile（与 origin/main 一致）。
+# 多车行为请显式用 get_profile("with_other_cars") 或 WITH_OTHER_CARS_CONTROL。
+CONTROL = NO_OTHER_CARS_CONTROL
+
+
+def get_profile(name: str) -> dict:
+    """按策略名读取控制 profile。
+
+    功能：给顶层控制器返回对应场景的控制参数浅拷贝。
+    参数：`name` 是策略名——`no_other_cars`（单车=R049）或 `with_other_cars`（多车）。
+    返回：对应 CONTROL 字典的浅拷贝。
+    逻辑：两个 profile 共享核心驾驶参数，only 多车增量（避让/倒车/force_escape/光流卡死）和
+        escape 激进度不同。未知名按单车处理（最保守、永不输出倒车）。
     """
 
-    del name
-    return dict(CONTROL)
+    if name == STRATEGY_WITH_OTHER_CARS:
+        return dict(WITH_OTHER_CARS_CONTROL)
+    return dict(NO_OTHER_CARS_CONTROL)

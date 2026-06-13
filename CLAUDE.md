@@ -19,11 +19,9 @@ def control(left_img, right_img, timestamp):
 # 安装依赖
 pip install -r requirements.txt
 
-# 修改 controller/ 后重新构建
-python scripts/build_submission.py --mode fastest
-
-# 生成准备上传的最终版本
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+# 修改 controller/ 后重新构建（两个策略 profile，见下「Profile 隔离」）
+python scripts/build_submission.py --mode no_other_cars     # 单车=R049 → submissions/final/
+python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 
 # 本地校验 + 测试
 python scripts/validate_submission.py submissions/final/team_controller.py
@@ -95,15 +93,30 @@ left_img, right_img
 
 **误差符号**：左负右正。图像坐标按 OpenCV：`x` 向右，`y` 向下。
 
-**参数唯一源**：所有控制参数集中在 `params.py`，不在模块内硬编码调参值。当前只维护一套 unified 策略；`fastest` / `safe` / `basic` 不再有独立参数分支。
+**参数唯一源**：所有控制参数集中在 `params.py`，不在模块内硬编码调参值。控制参数现在分两个 profile（见下「Profile 隔离」），不再有 `fastest` / `safe` / `basic` 分支。
 
 **场景感知**：`estimator.py` 会在连续红色环境帧后锁存 `red_environment = True`（写入 `TrackState`）。它现在是感知/诊断特征，不再用于切换 basic/complex 控制参数。单帧误检不会触发锁存；`reset_estimator_state()` 或时间戳回退会清空。
 
 **提交文件约束**：`controller/` 代码最终会被合并进单文件提交，**禁止**使用以下模块：`os, sys, socket, subprocess, multiprocessing, threading, time, datetime, io, builtins, ctypes, shutil, tempfile, requests, urllib, http, pickle, importlib`，以及 `open, eval, exec, compile, globals, locals`。`scripts/` 和 `tests/` 可以使用标准库。
 
+## Profile 隔离（重要：曾因混用出过事，务必遵守）
+
+赛事有两类场次，对应两个**控制策略 profile**，平台 `control(left,right,t)` 不传场景标志，所以靠**构建不同的提交文件**区分：
+
+| profile | 提交目录 | 是什么 | `--mode` |
+|---|---|---|---|
+| `no_other_cars` | `submissions/final/` | 单车计时赛 = **R049 单车最佳**（baseline `R049_turn_in_speed_best_2026-06-13`，commit `a9ba0a1`）。无对手避让/倒车/force_escape/光流卡死。 | `--mode no_other_cars` |
+| `with_other_cars` | `submissions/with_other_cars/` | 多车赛 = R049 驾驶 + 对手避让、倒车脱困、force_escape、光流卡死检测。 | `--mode with_other_cars` |
+
+机制：`params.py` 里 `NO_OTHER_CARS_CONTROL` 从 `WITH_OTHER_CARS_CONTROL` 派生——**共享核心驾驶参数**（入弯门控/速度/曲率，同一辆车的物理一致），只覆盖两类键：(a) escape 用 R049 更保守值；(b) 所有多车增量置为禁用。`get_profile(name)` 按名分派；`team_controller_local.py` 的 `PROFILE` 决定运行时用哪个，`build_submission.py --mode` 注入它。
+
+**铁律——加多车/避让/脱困相关的改动时，只动 `WITH_OTHER_CARS_CONTROL`，绝不要污染 `no_other_cars`。** 改单车驾驶（入弯/速度/感知）才动共享区。policy/perception 里新增的多车行为必须用 profile 参数门控（默认禁用），让 `no_other_cars` 仍退化为纯 R049。
+
+> **教训（2026-06-13）**：本分支早期（R053–R058 自跑迭代）把对手避让、倒车（`clamp_cmd` 放宽负速）、force_escape、光流卡死检测**直接加到了当时唯一的统一 `CONTROL` 上**，等于把多车策略也强加给了单车 `no_other_cars`——单车计时赛会无谓地触发避让/倒车、甚至因 `motion_still` 阈值误判而乱倒车。后来按本节拆回两个 profile（R049→no_other_cars，多车→with_other_cars）。**新会话改控制参数前先确认自己在改哪个 profile。**
+
 ## 构建机制
 
-`scripts/build_submission.py` 按固定顺序拼接 `controller/` 各模块（`common → params → opponent → perception → estimator → policy → team_controller_local`），删除本地 import，输出自包含的单文件。`--mode` 只保留为旧工作流和默认输出路径兼容，不再改变策略内容。
+`scripts/build_submission.py` 按固定顺序拼接 `controller/` 各模块（`common → params → opponent → perception → estimator → policy → team_controller_local`），删除本地 import，输出自包含的单文件。`--mode {no_other_cars,with_other_cars}` 决定**走哪个 profile**（注入 `team_controller_local.PROFILE`）和默认输出路径。
 
 ## Baseline 与实验记录
 

@@ -16,8 +16,8 @@ def load_submission(path):
 
 
 def test_generated_submission_has_callable_control():
-    path = ROOT / "submissions" / "fastest" / "team_controller.py"
-    subprocess.run(["python", "scripts/build_submission.py", "--mode", "fastest"], cwd=ROOT, check=True)
+    path = ROOT / "submissions" / "final" / "team_controller.py"
+    subprocess.run(["python", "scripts/build_submission.py", "--mode", "no_other_cars"], cwd=ROOT, check=True)
     module = load_submission(path)
     assert callable(module.control)
 

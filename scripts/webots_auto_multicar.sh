@@ -26,12 +26,12 @@ rm -rf .tmp/multicar
 mkdir -p .tmp/multicar/frames_${WORLD}_car1 .tmp/multicar/webots_console
 
 # 我方 car_1 debug（控制日志 + 抽帧）
-python scripts/build_submission.py --mode fastest \
+python scripts/build_submission.py --mode with_other_cars \
   --debug-log ".tmp/multicar/control_${WORLD}_car1.jsonl" \
   --dump-frames ".tmp/multicar/frames_${WORLD}_car1" --dump-frame-stride 10 \
   --out .tmp/multicar/team_controller_car1_debug.py || exit 1
 # 对手普通构建（无 debug I/O）
-python scripts/build_submission.py --mode fastest \
+python scripts/build_submission.py --mode with_other_cars \
   --out .tmp/multicar/team_controller_opp.py || exit 1
 # 可选：给对手追加速度缩放包装（慢速对手=纯超车测试）。control 后定义者生效。
 if [[ "$OPP_SPEED_SCALE" != "1.0" ]]; then
