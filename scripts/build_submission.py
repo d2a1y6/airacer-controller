@@ -86,7 +86,8 @@ def strip_submission_text(source: str) -> str:
 
 
 _DEBUG_CONTROL_BLOCK = '''    try:
-        obs = extract_observation(left_img, right_img, timestamp)
+        profile = get_profile(PROFILE)
+        obs = extract_observation(left_img, right_img, timestamp, profile=profile)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
         steering, speed = clamp_cmd(cmd)
@@ -167,7 +168,8 @@ def _debug_control_block(
                     cv2.imwrite(_DBG_FRAME_DIR + "frame_" + _dbg_t + "_right.png", right_img)
             except Exception:
                 pass
-        obs = extract_observation(left_img, right_img, timestamp)
+        profile = get_profile(PROFILE)
+        obs = extract_observation(left_img, right_img, timestamp, profile=profile)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
         steering, speed = clamp_cmd(cmd)

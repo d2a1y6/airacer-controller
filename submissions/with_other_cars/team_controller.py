@@ -556,6 +556,9 @@ WITH_OTHER_CARS_CONTROL = {
     "escape_low_speed_reverse_frames": 30,
     "escape_boundary_reverse_frames": 26,
 
+
+
+    "enable_opponent": True,
     "opponent_speed_factor": 0.72,
 
     "opponent_corner_speed_factor": 0.55,
@@ -623,6 +626,7 @@ NO_OTHER_CARS_CONTROL.update({
     "escape_boundary_steering": 0.86,
     "escape_boundary_speed": 0.86,
 
+    "enable_opponent": False,
     "opponent_speed_factor": 1.0,
     "opponent_corner_speed_factor": 1.0,
     "opponent_corner_curve_threshold": 0.25,
@@ -855,7 +859,7 @@ def _sampled_color_mask(hsv: np.ndarray, lab: np.ndarray, color_name: str) -> np
     return hsv_match & lab_match
 
 
-def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndarray, float, float, bool]:
+def _build_masks(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> tuple[np.ndarray, np.ndarray, float, float, bool]:
 \
 \
 \
@@ -935,7 +939,9 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
     texture_score = clamp(float(np.std(gray_roi)) / VISION_PROFILE["texture_gray_std_scale"], 0.0, 1.0)
     mask_fill_ratio = float(np.count_nonzero(road_roi)) / max(float(road_roi.size), 1.0)
     near_obstacle = False
-    if OPPONENT_PROFILE["enable_opponent_avoidance"]:
+
+
+    if enable_opp and OPPONENT_PROFILE["enable_opponent_avoidance"]:
         try:
             current_time = float(timestamp)
         except (TypeError, ValueError):
@@ -1432,7 +1438,8 @@ def _score_scan(
     return clamp(confidence, 0.0, 1.0), debug_flags
 
 
-def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
+def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _CameraScan:
+\
 \
 \
 \
@@ -1446,7 +1453,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
         return _empty_scan()
 
     _maybe_reset_perception_by_timestamp(timestamp)
-    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp)
+    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp, enable_opp)
     red_environment = _is_red_environment(image)
     wide_localize_enabled = red_environment
     height, width = road_mask.shape
@@ -1635,7 +1642,12 @@ def reset_perception_state() -> None:
     _LAST_FRAME_TIMESTAMP = None
 
 
-def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
+def extract_observation(left_img, right_img, timestamp=None, profile=None) -> PerceptionObs:
+\
+\
+\
+\
+\
 \
 \
 \
@@ -1644,11 +1656,19 @@ def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
 \
 
 
-    left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
-    right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
+    if profile is None:
+        enable_opp = bool(OPPONENT_PROFILE["enable_opponent_avoidance"])
+    else:
+        enable_opp = bool(profile.get("enable_opponent", False))
+
+    left_scan = _scan_image(left_img, timestamp, enable_opp) if _valid_image(left_img) else _empty_scan()
+    right_scan = _scan_image(right_img, timestamp, enable_opp) if _valid_image(right_img) else _empty_scan()
     obs = _fuse_scans(left_scan, right_scan)
     obs = _with_line_state(obs, left_img, right_img, timestamp)
-    obs.frame_motion = _update_frame_motion(left_img, timestamp)
+
+
+    if enable_opp:
+        obs.frame_motion = _update_frame_motion(left_img, timestamp)
     return obs
 
 
@@ -3314,7 +3334,14 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
         _MOTION_STALL_STREAK = 0
     _motion_trigger = _MOTION_STALL_STREAK >= motion_still_frames
 
-    if (_LOST_STREAK >= lost_streak_threshold or _zero_trigger or _motion_trigger) and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
+
+
+    if (
+        profile.get("enable_opponent", True)
+        and (_LOST_STREAK >= lost_streak_threshold or _zero_trigger or _motion_trigger)
+        and not _FORCE_ESCAPE_ACTIVE
+        and timestamp > 3.0
+    ):
         _FORCE_ESCAPE_ACTIVE = True
         _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 120))
         _FORCE_ESCAPE_TOTAL_FRAMES = _FORCE_ESCAPE_FRAMES
@@ -3373,10 +3400,13 @@ def control(left_img, right_img, timestamp):
 \
 \
 \
+\
+\
 
 
     try:
-        obs = extract_observation(left_img, right_img, timestamp)
+        profile = get_profile(PROFILE)
+        obs = extract_observation(left_img, right_img, timestamp, profile=profile)
         track = estimate_track(obs, timestamp)
         cmd = decide_control(track, timestamp, mode=PROFILE)
         steering, speed = clamp_cmd(cmd)

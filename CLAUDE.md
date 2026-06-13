@@ -87,7 +87,7 @@ left_img, right_img
 | `opponent.py` | 近处车身检测 | 道路分割或控制决策 |
 | `team_controller_local.py` | 接线、异常兜底、最终限幅 | 算法实现 |
 
-`opponent.py` 的 `detect_near_vehicle_obstacle` 由 `OPPONENT_PROFILE["enable_opponent_avoidance"]` 控制；当前为开启，用于 basic/complex 近处静态车避让。
+`opponent.py` 的 `detect_near_vehicle_obstacle` 受**两层**控制：模块级 `OPPONENT_PROFILE["enable_opponent_avoidance"]` + **active profile 的 `enable_opponent`**（见下「Profile 隔离」）。只有 `with_other_cars` 下 perception 才会调用它；`no_other_cars` 完全不跑对手检测。
 
 ## 关键约定
 
@@ -108,9 +108,14 @@ left_img, right_img
 | `no_other_cars` | `submissions/final/` | 单车计时赛 = **R049 单车最佳**（baseline `R049_turn_in_speed_best_2026-06-13`，commit `a9ba0a1`）。无对手避让/倒车/force_escape/光流卡死。 | `--mode no_other_cars` |
 | `with_other_cars` | `submissions/with_other_cars/` | 多车赛 = R049 驾驶 + 对手避让、倒车脱困、force_escape、光流卡死检测。 | `--mode with_other_cars` |
 
-机制：`params.py` 里 `NO_OTHER_CARS_CONTROL` 从 `WITH_OTHER_CARS_CONTROL` 派生——**共享核心驾驶参数**（入弯门控/速度/曲率，同一辆车的物理一致），只覆盖两类键：(a) escape 用 R049 更保守值；(b) 所有多车增量置为禁用。`get_profile(name)` 按名分派；`team_controller_local.py` 的 `PROFILE` 决定运行时用哪个，`build_submission.py --mode` 注入它。
+机制（两层隔离）：
+1. **参数层**：`params.py` 里 `NO_OTHER_CARS_CONTROL` 从 `WITH_OTHER_CARS_CONTROL` 派生——**共享核心驾驶参数**（入弯门控/速度/曲率，同一辆车的物理一致），只覆盖两类键：(a) escape 用 R049 更保守值；(b) 所有多车增量置为禁用（含总开关 `enable_opponent=False`）。`get_profile(name)` 按名分派。
+2. **管线层（active profile 贯穿整条流水线）**：`team_controller_local.control()` 每帧 `profile = get_profile(PROFILE)`，把它传给 `extract_observation(left,right,t, profile=profile)`。perception 据 `profile["enable_opponent"]` 决定**是否调用** `detect_near_vehicle_obstacle`、**是否计算** `frame_motion`——`no_other_cars` 下两者都不跑：`near_obstacle` 恒 False（不会触发 `segment_gap`/白线门控）、`frame_motion` 保持默认 100（motion-stall 永不触发）。policy 的 force_escape/motion-stall 触发再用 `enable_opponent` 守一道。`build_submission.py --mode` 注入 `team_controller_local.PROFILE`，决定运行时用哪个 profile。
+   - 效果：`no_other_cars` 真正不走任何多车代码路径（不只是参数为 0），单车每帧还省 ~5ms（跳过检测+frame_motion）。
 
-**铁律——加多车/避让/脱困相关的改动时，只动 `WITH_OTHER_CARS_CONTROL`，绝不要污染 `no_other_cars`。** 改单车驾驶（入弯/速度/感知）才动共享区。policy/perception 里新增的多车行为必须用 profile 参数门控（默认禁用），让 `no_other_cars` 仍退化为纯 R049。
+**铁律——加多车/避让/脱困相关的改动时，只动 `WITH_OTHER_CARS_CONTROL`，并用 `profile["enable_opponent"]`（或专属参数）门控新行为，绝不要污染 `no_other_cars`。** 改单车驾驶（入弯/速度/感知共享逻辑）才动共享区。新增多车感知/策略必须默认在 `no_other_cars` 下完全不执行（参数禁用 + 管线开关双保险），让它仍退化为纯 R049。`tests/test_profile_isolation.py` 锁定这条。
+
+> 注：两个 profile 仍**共享 policy/perception 代码**（`enable_opponent` 是运行时开关，不是按 build 删代码）。曾考虑过构建层不拼接 `opponent.py` 来做"代码级隔离"，但 policy 的多车分支穿插在共享代码里无法按 build 剥离，剥离只能半途、还引入 NameError/validator 风险——所以选**运行时门控 + 测试 + 本节铁律**来防污染，而不是删代码。
 
 > **教训（2026-06-13）**：本分支早期（R053–R058 自跑迭代）把对手避让、倒车（`clamp_cmd` 放宽负速）、force_escape、光流卡死检测**直接加到了当时唯一的统一 `CONTROL` 上**，等于把多车策略也强加给了单车 `no_other_cars`——单车计时赛会无谓地触发避让/倒车、甚至因 `motion_still` 阈值误判而乱倒车。后来按本节拆回两个 profile（R049→no_other_cars，多车→with_other_cars）。**新会话改控制参数前先确认自己在改哪个 profile。**
 

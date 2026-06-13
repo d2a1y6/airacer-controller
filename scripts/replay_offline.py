@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from controller.common import clamp_cmd
 from controller.estimator import estimate_track, reset_estimator_state
+from controller.params import get_profile
 from controller.perception import extract_observation
 from controller.policy import decide_control, reset_policy_state
 import controller.policy as policy_state
@@ -82,6 +83,7 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "fastest", limit:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     reset_estimator_state()
     reset_policy_state()
+    profile = get_profile(mode)  # 让 perception 的对手检测/光流卡死按 profile 门控
 
     written = 0
     with out_path.open("w", encoding="utf-8") as handle:
@@ -89,7 +91,7 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "fastest", limit:
             try:
                 left_img = cv2.imread(str(left_path))
                 right_img = cv2.imread(str(right_path))
-                obs = extract_observation(left_img, right_img, timestamp)
+                obs = extract_observation(left_img, right_img, timestamp, profile=profile)
                 track = estimate_track(obs, timestamp)
                 cmd = decide_control(track, timestamp, mode=mode)
                 steering, speed = clamp_cmd(cmd)

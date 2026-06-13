@@ -134,7 +134,7 @@ def _sampled_color_mask(hsv: np.ndarray, lab: np.ndarray, color_name: str) -> np
     return hsv_match & lab_match
 
 
-def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndarray, float, float, bool]:
+def _build_masks(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> tuple[np.ndarray, np.ndarray, float, float, bool]:
     """生成道路表面 mask 和边缘 fallback mask。
 
     功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
@@ -214,7 +214,9 @@ def _build_masks(image: np.ndarray, timestamp=None) -> tuple[np.ndarray, np.ndar
     texture_score = clamp(float(np.std(gray_roi)) / VISION_PROFILE["texture_gray_std_scale"], 0.0, 1.0)
     mask_fill_ratio = float(np.count_nonzero(road_roi)) / max(float(road_roi.size), 1.0)
     near_obstacle = False
-    if OPPONENT_PROFILE["enable_opponent_avoidance"]:
+    # 对手检测只在 with_other_cars profile 下进行（enable_opp）：no_other_cars(单车=R049)
+    # 既不调用 detect_near_vehicle_obstacle，也不让 near_obstacle 影响 segment_gap/白线门控。
+    if enable_opp and OPPONENT_PROFILE["enable_opponent_avoidance"]:
         try:
             current_time = float(timestamp)
         except (TypeError, ValueError):
@@ -711,11 +713,12 @@ def _score_scan(
     return clamp(confidence, 0.0, 1.0), debug_flags
 
 
-def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
+def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _CameraScan:
     """按扫描线跟踪单张图像的道路走廊。
 
     功能：输出中心点、左右边界点、道路宽度和置信度。
-    参数：`image` 是单个摄像头 BGR 图像，`timestamp` 用于限制末段障碍处理。
+    参数：`image` 是单个摄像头 BGR 图像，`timestamp` 用于限制末段障碍处理，
+        `enable_opp` 控制是否做对手车检测（仅 with_other_cars profile）。
     返回：`_CameraScan`。
     逻辑：从近处向远处扫描，每条线选择离上一条有效中心最近的连续道路 segment。
     """
@@ -725,7 +728,7 @@ def _scan_image(image: np.ndarray, timestamp=None) -> _CameraScan:
         return _empty_scan()
 
     _maybe_reset_perception_by_timestamp(timestamp)
-    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp)
+    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp, enable_opp)
     red_environment = _is_red_environment(image)
     wide_localize_enabled = red_environment
     height, width = road_mask.shape
@@ -914,20 +917,33 @@ def reset_perception_state() -> None:
     _LAST_FRAME_TIMESTAMP = None
 
 
-def extract_observation(left_img, right_img, timestamp=None) -> PerceptionObs:
+def extract_observation(left_img, right_img, timestamp=None, profile=None) -> PerceptionObs:
     """提取左右摄像头的赛道观测。
 
     功能：输出中心点、边界点、道路宽度估计和感知置信度。
-    参数：`left_img` 与 `right_img` 是平台传入的 BGR 图像，`timestamp` 预留给后续时间上下文。
+    参数：`left_img` 与 `right_img` 是平台传入的 BGR 图像，`timestamp` 是仿真时间，
+        `profile` 是当前控制 profile（决定整条感知链是否启用对手检测/光流卡死，即
+        no_other_cars vs with_other_cars）。`profile=None` 时退回旧行为（按 OPPONENT_PROFILE
+        全局开关），供测试/replay 直接调用。
     返回：`PerceptionObs`。
     逻辑：分别扫描左右图像；单侧有效则使用单侧，双侧一致则合并，双侧冲突则选择高置信度结果。
+        active profile 贯穿到这里，让 no_other_cars 真正不跑对手检测、也不算 frame_motion，
+        多车感知能力不会泄漏到单车（见 CLAUDE.md「Profile 隔离」）。
     """
 
-    left_scan = _scan_image(left_img, timestamp) if _valid_image(left_img) else _empty_scan()
-    right_scan = _scan_image(right_img, timestamp) if _valid_image(right_img) else _empty_scan()
+    if profile is None:
+        enable_opp = bool(OPPONENT_PROFILE["enable_opponent_avoidance"])
+    else:
+        enable_opp = bool(profile.get("enable_opponent", False))
+
+    left_scan = _scan_image(left_img, timestamp, enable_opp) if _valid_image(left_img) else _empty_scan()
+    right_scan = _scan_image(right_img, timestamp, enable_opp) if _valid_image(right_img) else _empty_scan()
     obs = _fuse_scans(left_scan, right_scan)
     obs = _with_line_state(obs, left_img, right_img, timestamp)
-    obs.frame_motion = _update_frame_motion(left_img, timestamp)
+    # 光流卡死检测（frame_motion）只属于 with_other_cars；单车不算，省每帧 resize 开销，
+    # 且默认 frame_motion=100（视作在动）保证 motion-stall 永不触发。
+    if enable_opp:
+        obs.frame_motion = _update_frame_motion(left_img, timestamp)
     return obs
 
 

@@ -1029,7 +1029,14 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
         _MOTION_STALL_STREAK = 0
     _motion_trigger = _MOTION_STALL_STREAK >= motion_still_frames
 
-    if (_LOST_STREAK >= lost_streak_threshold or _zero_trigger or _motion_trigger) and not _FORCE_ESCAPE_ACTIVE and timestamp > 3.0:
+    # force_escape（含倒车）与 motion-stall 只属于 with_other_cars：no_other_cars 总开关关闭，
+    # 即使参数被误改也不会在单车里触发倒车脱困（参数门控之外的第二道保险）。
+    if (
+        profile.get("enable_opponent", True)
+        and (_LOST_STREAK >= lost_streak_threshold or _zero_trigger or _motion_trigger)
+        and not _FORCE_ESCAPE_ACTIVE
+        and timestamp > 3.0
+    ):
         _FORCE_ESCAPE_ACTIVE = True
         _FORCE_ESCAPE_FRAMES = int(profile.get("force_reverse_lost_frames", 120))
         _FORCE_ESCAPE_TOTAL_FRAMES = _FORCE_ESCAPE_FRAMES

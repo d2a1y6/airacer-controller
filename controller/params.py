@@ -436,6 +436,9 @@ WITH_OTHER_CARS_CONTROL = {
     "escape_low_speed_reverse_frames": 30,
     "escape_boundary_reverse_frames": 26,
     # ── 多车安全 ──
+    # 总开关：是否启用整条多车能力（perception 的对手检测/光流卡死 + policy 的避让/减速/
+    # 倒车/force_escape）。no_other_cars 置 False，让单车彻底不跑多车代码路径。
+    "enable_opponent": True,
     "opponent_speed_factor": 0.72,
     # 弯道中近处有对手车时额外减速（防止多车弯道碰撞卡死）
     "opponent_corner_speed_factor": 0.55,
@@ -503,6 +506,7 @@ NO_OTHER_CARS_CONTROL.update({
     "escape_boundary_steering": 0.86,
     "escape_boundary_speed": 0.86,
     # (b) 多车增量全部关闭（R049 没有这些）
+    "enable_opponent": False,         # 总开关：perception 不跑对手检测/光流卡死，policy 不跑多车分支
     "opponent_speed_factor": 1.0,
     "opponent_corner_speed_factor": 1.0,
     "opponent_corner_curve_threshold": 0.25,
