@@ -39,8 +39,8 @@ sdk/webots/                   Webots 赛道、车型和控制器资产
 在本仓库根目录执行：
 
 ```bash
-# 单车场次（计时赛）= R049
-python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
+# 单车场次（计时赛）：R049驾驶底座；当前官方 complex 成绩见 experiments R068
+python scripts/build_submission.py --mode no_other_cars --out submissions/no_other_cars/team_controller.py
 ```
 
 如果要测多车场次版本（对手避让/倒车脱困）：
@@ -52,13 +52,13 @@ python scripts/build_submission.py --mode with_other_cars --out submissions/with
 后面的官方测试都使用：
 
 ```text
-submissions/final/team_controller.py
+submissions/no_other_cars/team_controller.py
 ```
 
 ## 3. 先跑本仓库校验
 
 ```bash
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
 pytest
 ```
 
@@ -70,7 +70,7 @@ pytest
 
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 
@@ -78,7 +78,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
 
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml \
   --json
 ```
@@ -87,7 +87,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
 
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml \
   --strict
 ```
@@ -130,7 +130,7 @@ export WEBOTS_HOME=/Applications/Webots.app
 
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --validate-only
 ```
 
@@ -148,7 +148,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py --list-worlds
 
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --world basic \
   --car-slot car_1
 ```
@@ -157,7 +157,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --world complex \
   --car-slot car_1
 ```
@@ -166,13 +166,13 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --world basic \
   --car-slot car_1 \
   --batch
 ```
 
-Webots 启动后，官方车端控制器会加载 `submissions/final/team_controller.py`，不断传入左右摄像头图像和时间戳，再执行我们返回的 `steering`、`speed`。
+Webots 启动后，官方车端控制器会加载 `submissions/no_other_cars/team_controller.py`，不断传入左右摄像头图像和时间戳，再执行我们返回的 `steering`、`speed`。
 
 ## 8. 多车本地测试
 
@@ -187,7 +187,7 @@ controller_path:slot:team
 ```bash
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
   --world basic \
-  --car "$PWD/submissions/with_other_cars/team_controller.py:car_1:fastest" \
+  --car "$PWD/submissions/with_other_cars/team_controller.py:car_1:ours" \
   --car "$PWD/submissions/with_other_cars/team_controller.py:car_2:opp"
 ```
 
@@ -203,14 +203,14 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 ## 10. 推荐提交前顺序
 
 ```bash
-python scripts/build_submission.py --mode no_other_cars --out submissions/final/team_controller.py
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/no_other_cars/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
 pytest
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --validate-only
 ```
 

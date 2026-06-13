@@ -2,7 +2,7 @@
 # 多车极端场景 Webots 测试：构建多车 debug 控制器并启动。
 #
 # 用法：
-#   # 双车 basic（我方 fastest vs 对手 safe）
+#   # 双车 basic（两个车位都接 with_other_cars 构建）
 #   bash scripts/webots_multicar_run.sh basic
 #
 #   # 双车 complex
@@ -13,7 +13,7 @@
 #
 #   # 自定义每个车位的控制器和 team 名称
 #   bash scripts/webots_multicar_run.sh basic \
-#     --slot1 submissions/with_other_cars/team_controller.py:car_1:fastest \
+#     --slot1 submissions/with_other_cars/team_controller.py:car_1:ours \
 #     --slot2 submissions/with_other_cars/team_controller.py:car_2:opp
 #
 # 产物（每车独立）：
@@ -100,10 +100,10 @@ python scripts/build_submission.py --mode with_other_cars \
 
 # 5. 设置 car slot 参数
 if [[ -z "$SLOT1" ]]; then
-  SLOT1="$PWD/.tmp/multicar/team_controller_car1_debug.py:car_1:fastest"
+  SLOT1="$PWD/.tmp/multicar/team_controller_car1_debug.py:car_1:ours"
 fi
 if [[ -z "$SLOT2" ]]; then
-  SLOT2="$PWD/.tmp/multicar/team_controller_car2_debug.py:car_2:safe"
+  SLOT2="$PWD/.tmp/multicar/team_controller_car2_debug.py:car_2:opp"
 fi
 
 # 6. 启动 Webots 多车

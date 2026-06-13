@@ -108,6 +108,7 @@ python scripts/analyze_control_log.py .tmp/run/control_basic.jsonl
 
 ```bash
 python scripts/analyze_perception_dump.py .tmp/run/frames_basic \
+  --mode no_other_cars \
   --control-log .tmp/run/control_basic.jsonl \
   --out .tmp/run/perception_after.json \
   --overlay-dir .tmp/run/overlays \
@@ -143,6 +144,7 @@ bash scripts/webots_jump_run.sh complex 144 --duration 5 \
 
 ```bash
 python scripts/replay_offline.py .tmp/run/frames_basic \
+  --mode no_other_cars \
   --out .tmp/run/replay_basic.jsonl
 
 python scripts/analyze_control_log.py .tmp/run/replay_basic.jsonl

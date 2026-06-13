@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT))
 
 from controller.common import ControlCmd, PerceptionObs, TrackState, clamp_cmd
 from controller.estimator import estimate_track, reset_estimator_state
-from controller.params import OPPONENT_PROFILE, VISION_PROFILE
+from controller.params import OPPONENT_PROFILE, VISION_PROFILE, get_profile
 from controller.policy import decide_control, reset_policy_state
 import controller.perception as perception
 from controller.perception import extract_observation
@@ -29,7 +29,7 @@ def test_module_contracts_on_mock_lane():
     reset_policy_state()
     image = make_lane_image()
 
-    obs = extract_observation(image, image, 0.0)
+    obs = extract_observation(image, image, 0.0, profile=get_profile("no_other_cars"))
     assert isinstance(obs, PerceptionObs)
     assert obs.center_points.ndim == 2
     assert obs.center_points.shape[1] == 2
@@ -55,11 +55,11 @@ def test_opponent_detection_is_enabled_for_static_cars(monkeypatch):
 
     def mark_called(*_args, **_kwargs):
         called["value"] = True
-        return False
+        return False, 0.0, 0.0
 
-    monkeypatch.setattr(perception, "detect_near_vehicle_obstacle", mark_called)
+    monkeypatch.setattr(perception, "detect_near_vehicle_obstacle_state", mark_called)
     image = make_lane_image()
-    obs = extract_observation(image, image, 999.0)
+    obs = extract_observation(image, image, 999.0, profile=get_profile("with_other_cars"))
     assert called["value"] is True
     assert isinstance(obs, PerceptionObs)
     assert len(obs.center_points) >= 4
@@ -82,7 +82,7 @@ def test_estimator_lost_contract_on_too_few_points():
     assert track.lost is True
 
 
-def test_policy_invalid_mode_uses_fastest_defaults():
+def test_policy_invalid_mode_uses_no_other_cars_defaults():
     reset_policy_state()
     track = TrackState(0.0, 0.0, 0.0, 0.0, 1.0, False)
     cmd = decide_control(track, 2.0, mode="unknown")

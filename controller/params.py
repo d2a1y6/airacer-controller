@@ -60,6 +60,16 @@ COLOR_PROFILE = {
         "hsv_tolerance": (14.0, 45.0, 35.0),
         "lab_tolerance": (28.0, 12.0, 25.0),
     },
+    # 官方 6 车 PROTO 基础色（sdk/webots/protos/Car*.proto）。
+    # 每项是 (BGR, HSV, HSV tolerance)，顺序：Phoenix红、Thunder蓝、Viper绿、Nova黄、Frost白、Shadow黑。
+    "car_body_colors": (
+        ((60, 20, 220), (174, 232, 220), (10, 65, 80)),
+        ((255, 144, 30), (105, 225, 255), (10, 60, 70)),
+        ((34, 139, 34), (60, 193, 139), (10, 38, 70)),
+        ((0, 215, 255), (25, 255, 255), (10, 65, 80)),
+        ((247, 242, 242), (120, 5, 247), (90, 45, 70)),
+        ((38, 38, 38), (0, 0, 38), (90, 60, 42)),
+    ),
 }
 
 VISION_PROFILE = {
@@ -440,36 +450,42 @@ WITH_OTHER_CARS_CONTROL = {
     # 倒车/force_escape）。no_other_cars 置 False，让单车彻底不跑多车代码路径。
     "enable_opponent": True,
     "opponent_speed_factor": 0.72,
+    # 偏侧对手车不该触发与正前方挡车同等幅度的让速；否则一被超就长期缩在后面。
+    "opponent_side_speed_factor": 0.92,
+    "opponent_center_x": 0.28,
     # 弯道中近处有对手车时额外减速（防止多车弯道碰撞卡死）
     "opponent_corner_speed_factor": 0.55,
     "opponent_corner_curve_threshold": 0.25,
-    # 对手车主动避让转向：基于边界余量差，朝余量大的开阔侧加舵角偏置。
+    # 对手车主动避让转向：优先用对手车左右位置决定绕行方向，再用边界余量约束。
     # 实跑（CP3 进堆）发现 ±0.18 太弱，被角区循线抵消、压不出果断变道 → 调强。
     # 仍以 near_obstacle 检测为门控（只有真检测到对手才生效），且偏置天然朝开阔侧，安全。
     "opponent_avoid_steering_enable": True,
     "opponent_avoid_steering_gain": 0.65,
     "opponent_avoid_steering_max": 0.42,
+    "opponent_direction_deadzone": 0.16,
+    "opponent_direction_steering_gain": 0.20,
     # ── 丢线强制脱困（多车/卡死安全网）──
     # 持续丢线后朝路面方向打硬舵+低速前进，作为所有几何脱困的兜底。
     # 不依赖特定速度/偏移/余量条件，只靠丢线持续时间触发。
     "force_reverse_lost_streak": 45,
-    "force_reverse_lost_frames": 120,
-    "force_reverse_lost_speed": 0.40,
+    "force_reverse_lost_frames": 150,
+    "force_reverse_lost_speed": 0.45,
     "force_reverse_lost_steering": 0.95,
     # 物理卡死检测：指令速度≤此值持续过多帧即触发 force_escape（不依赖丢线）
     "force_reverse_zero_speed_threshold": 0.08,
     "force_reverse_zero_speed_frames": 60,
     # force_escape 领头倒车：倒够距离脱开卡点（栏杆/车）并改变视野，再前冲朝开阔侧。
-    # 40 帧≈1.3s：顶栏需要倒离才能重新看见路；但不做净后退（6 车 gridlock 时怼后车有害）。
-    "force_reverse_back_speed": 0.45,
-    "force_reverse_back_frames": 40,
+    # R059 绿车贴边卡死说明 40 帧偏短；55 帧≈1.8s，仍保留足够前冲阶段。
+    "force_reverse_back_speed": 0.50,
+    "force_reverse_back_frames": 55,
     # 光流卡死检测（撞栏顶住空转、控制器自以为在巡航）：
     # frame_motion(64×48 灰度帧间 MAD) < 阈值 且 命令速度 ≥ min 持续 N 帧即触发 force_escape。
     # 实测标定：全速行驶 frame_motion≥0.47（中位 0.81），被顶住不动≈0.07。
-    # 阈值 0.2 取两者之间；cmd≥0.35 + 连续 40 帧(~1.3s) 防慢速/纹理稀疏段误触发。
-    "motion_still_threshold": 0.2,
-    "motion_still_frames": 40,
-    "motion_still_min_cmd_speed": 0.35,
+    # R059 贴边时可能有画面抖动，阈值放宽到 0.28；cmd≥0.40 + 连续 30 帧(~1s)。
+    # 0.32 在三车复测中误触发，0.28 则没有正常行驶连续 30 帧满足触发条件。
+    "motion_still_threshold": 0.28,
+    "motion_still_frames": 30,
+    "motion_still_min_cmd_speed": 0.40,
     "nominal_dt": 0.032,
     "timestamp_reset_gap": 2.0,
 }
@@ -477,7 +493,7 @@ WITH_OTHER_CARS_CONTROL = {
 STRATEGY_NO_OTHER_CARS = "no_other_cars"
 STRATEGY_WITH_OTHER_CARS = "with_other_cars"
 
-# no_other_cars = R049 单车最佳（baselines/R049_turn_in_speed_best_2026-06-13，提交 commit a9ba0a1）。
+# no_other_cars = R049 驾驶底座（baselines/R049_turn_in_speed_best_2026-06-13，提交 commit a9ba0a1）。
 # 它与 with_other_cars 共享**核心驾驶参数**（入弯门控、速度、曲率等——同一辆车的物理一致），
 # 只在两处不同：
 #   (a) escape 用 R049 更保守的值（rebecca R050-R052 为多车把脱困调激进了，单车不需要）；
@@ -508,11 +524,15 @@ NO_OTHER_CARS_CONTROL.update({
     # (b) 多车增量全部关闭（R049 没有这些）
     "enable_opponent": False,         # 总开关：perception 不跑对手检测/光流卡死，policy 不跑多车分支
     "opponent_speed_factor": 1.0,
+    "opponent_side_speed_factor": 1.0,
+    "opponent_center_x": 0.28,
     "opponent_corner_speed_factor": 1.0,
     "opponent_corner_curve_threshold": 0.25,
     "opponent_avoid_steering_enable": False,
     "opponent_avoid_steering_gain": 0.0,
     "opponent_avoid_steering_max": 0.0,
+    "opponent_direction_deadzone": 1.0,
+    "opponent_direction_steering_gain": 0.0,
     "escape_wiggle_amplitude": 0.0,          # R049 脱困不摆动
     "escape_reverse_speed": 0.0,             # 无倒车相位
     "escape_pinned_reverse_frames": 0,
@@ -540,7 +560,7 @@ def get_profile(name: str) -> dict:
     """按策略名读取控制 profile。
 
     功能：给顶层控制器返回对应场景的控制参数浅拷贝。
-    参数：`name` 是策略名——`no_other_cars`（单车=R049）或 `with_other_cars`（多车）。
+    参数：`name` 是策略名——`no_other_cars`（单车，R049驾驶底座）或 `with_other_cars`（多车）。
     返回：对应 CONTROL 字典的浅拷贝。
     逻辑：两个 profile 共享核心驾驶参数，only 多车增量（避让/倒车/force_escape/光流卡死）和
         escape 激进度不同。未知名按单车处理（最保守、永不输出倒车）。

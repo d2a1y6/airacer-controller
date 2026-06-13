@@ -9,12 +9,12 @@
 
 - Webots 已安装并可从命令行启动
 - 官方 SDK 位于 `/Users/day/Desktop/Github/pkudsa.airacer/sdk/`
-- 本仓库已正确构建 `submissions/final/team_controller.py`
+- 本仓库已正确构建 `submissions/with_other_cars/team_controller.py`
 
 ## 快速开始：默认双车测试
 
 ```bash
-# 双车 basic（我方 fastest vs 对手 safe）
+# 双车 basic（两个车位默认都接 with_other_cars 构建，队名只是 run_local 标签）
 bash scripts/webots_multicar_run.sh basic
 
 # 双车 complex
@@ -39,9 +39,9 @@ bash scripts/webots_multicar_run.sh basic --no-frames
 **当前应对机制**：
 | 机制 | 行为 | 参数 |
 |---|---|---|
-| 对手车检测 | `detect_near_vehicle_obstacle()` 检测近处车身色块 | `OPPONENT_PROFILE` |
-| 对手降速 | `near_obstacle=True` → 速度 ×0.72 | `opponent_speed_factor=0.72` |
-| 主动避让转向 | 基于左右边界余量差朝开阔侧加舵角偏置 | `opponent_avoid_steering_gain=0.40, max=0.18` |
+| 对手车检测 | `detect_near_vehicle_obstacle_state()` 检测近处车身色块，并输出 `obstacle_x/obstacle_size` | `OPPONENT_PROFILE` |
+| 对手降速 | 正前方挡车重降速，偏侧车辆轻降速 | `opponent_speed_factor=0.72`, `opponent_side_speed_factor=0.92` |
+| 主动避让转向 | 基于车身左右位置和边界余量叠加绕行舵角 | `opponent_avoid_steering_gain=0.65`, `opponent_direction_steering_gain=0.20` |
 
 **测试方法 A（双车自然相遇）**：
 ```bash
@@ -183,6 +183,7 @@ python scripts/plot_run.py \
 ### 感知 overlay（需要帧）
 ```bash
 python scripts/analyze_perception_dump.py .tmp/multicar/frames_basic_car1 \
+  --mode with_other_cars \
   --control-log .tmp/multicar/control_basic_car1.jsonl \
   --overlay-dir .tmp/multicar/overlays \
   --at <timestamps>
@@ -205,7 +206,7 @@ python scripts/analyze_perception_dump.py .tmp/multicar/frames_basic_car1 \
 ### R0xx — 多车极端场景测试 (2026-06-XX, <world>)
 - **构建**: commit <sha>, multi-car 分支
 - **场景**: 前车堵路 / 被撞 / 卡栏杆
-- **配置**: <world>, car_1=fastest, car_2=safe
+- **配置**: <world>, car_1=ours, car_2=opponent（均为 with_other_cars 构建，除非手工指定 baseline）
 - **结果**:
   - 前车堵路: 减速 OK / 避让 OK/NG / 碰撞 有/无
   - 被撞: 恢复 OK/NG / 耗时 ~Xs

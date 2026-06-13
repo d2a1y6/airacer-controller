@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from controller.estimator import ESTIMATOR_PROFILE
+from controller.params import get_profile
 from controller.perception import _build_masks, _scan_image, extract_observation
 
 
@@ -71,9 +72,16 @@ def _first_center_x(obs) -> float | None:
     return float(obs.center_points[0, 0])
 
 
-def _scan_debug(image: np.ndarray, timestamp: float) -> dict:
-    road_mask, edge_mask, _texture, mask_fill_ratio, _near_obstacle = _build_masks(image, timestamp)
-    scan = _scan_image(image, timestamp)
+def _scan_debug(image: np.ndarray, timestamp: float, profile: dict) -> dict:
+    """按当前 profile 重算单侧感知调试信息。"""
+
+    enable_opp = bool(profile.get("enable_opponent", False))
+    road_mask, edge_mask, _texture, mask_fill_ratio, _near_obstacle, _obstacle_x, _obstacle_size = _build_masks(
+        image,
+        timestamp,
+        enable_opp,
+    )
+    scan = _scan_image(image, timestamp, enable_opp)
     return {
         "mask_fill_ratio": float(mask_fill_ratio),
         "points": int(len(scan.center_points)),
@@ -128,6 +136,7 @@ def _write_overlay(
 def analyze_dump(
     frame_dir: Path,
     control_log: Path,
+    mode: str = "no_other_cars",
     overlay_dir: Path | None = None,
     overlay_limit: int = 12,
     baseline_json: Path | None = None,
@@ -136,7 +145,7 @@ def analyze_dump(
     """分析 dump 帧感知结果。
 
     功能：重算每帧 perception，统计对齐可信度、感知丢线率和相对 baseline 的中心漂移。
-    参数：`frame_dir` 是帧目录，`control_log` 是实车日志，`overlay_dir` 可保存例图；
+    参数：`frame_dir` 是帧目录，`control_log` 是实车日志，`mode` 是控制 profile，`overlay_dir` 可保存例图；
         `overlay_at` 给定时只为这些时间戳最近的帧出 overlay（不论是否丢线），用于报告取证；
         为 None 时退回默认行为：自动挑前 `overlay_limit` 个丢线帧出 overlay。
     返回：可写入 JSON 的指标字典。
@@ -145,6 +154,7 @@ def analyze_dump(
 
     pairs = _frame_pairs(frame_dir)
     control_rows = _load_control_log(control_log)
+    profile = get_profile(mode)
     forced_keys: set[int] = set()
     if overlay_at and pairs:
         for req in overlay_at:
@@ -167,7 +177,7 @@ def analyze_dump(
         row = control_rows.get(key)
         left_img = cv2.imread(str(left_path))
         right_img = cv2.imread(str(right_path))
-        obs = extract_observation(left_img, right_img, timestamp)
+        obs = extract_observation(left_img, right_img, timestamp, profile=profile)
         obs_points = int(len(obs.center_points))
         obs_conf = _round4(obs.confidence)
         debug_flags = int(obs.debug_flags)
@@ -198,8 +208,8 @@ def analyze_dump(
         else:
             want_overlay = perception_lost and len(overlay_paths) < overlay_limit
         if want_overlay and overlay_dir is not None:
-            left_debug = _scan_debug(left_img, timestamp)
-            right_debug = _scan_debug(right_img, timestamp)
+            left_debug = _scan_debug(left_img, timestamp, profile)
+            right_debug = _scan_debug(right_img, timestamp, profile)
             overlay_paths.append(_write_overlay(overlay_dir, timestamp, left_img, right_img, left_debug, right_debug, row))
 
         frames.append({
@@ -209,6 +219,8 @@ def analyze_dump(
             "obs_conf": float(obs_conf),
             "debug_flags": debug_flags,
             "road_width": round(float(obs.road_width_est), 2),
+            "near_obstacle": bool(obs.near_obstacle),
+            "frame_motion": round(float(obs.frame_motion), 3),
             "perception_lost": perception_lost,
             "center_x": center_x,
         })
@@ -224,6 +236,7 @@ def analyze_dump(
     return {
         "frame_dir": str(frame_dir),
         "control_log": str(control_log),
+        "mode": mode,
         "total_frames": len(frames),
         "joined_frames": sum(1 for item in frames if _time_key(item["t"]) in control_rows),
         "perception_lost_frames": lost_count,
@@ -241,6 +254,7 @@ def _print_summary(metrics: dict) -> None:
     print("================ PERCEPTION DUMP 分析 ================")
     print(f"帧目录     : {metrics['frame_dir']}")
     print(f"控制日志   : {metrics['control_log']}")
+    print(f"profile    : {metrics.get('mode', 'no_other_cars')}")
     print(f"帧数/join  : {metrics['total_frames']} / {metrics['joined_frames']}")
     print(f"复现差异   : {metrics['mismatch_count']} 处")
     print(f"感知丢线率 : {metrics['perception_lost_frames']}/{metrics['total_frames']} "
@@ -258,6 +272,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="分析 dump 帧 perception 复现度与丢线率。")
     parser.add_argument("frames", type=Path, help="frame_<t>_left/right.png 所在目录")
     parser.add_argument("--control-log", type=Path, required=True, help="同一次 run 的 control JSONL")
+    parser.add_argument("--mode", choices=("no_other_cars", "with_other_cars"), default="no_other_cars",
+                        help="按哪个控制 profile 重算 perception；默认 no_other_cars")
     parser.add_argument("--out", type=Path, default=None, help="输出指标 JSON")
     parser.add_argument("--baseline", type=Path, default=None, help="before 指标 JSON，用于中心漂移对比")
     parser.add_argument("--overlay-dir", type=Path, default=None, help="保存 overlay 的目录")
@@ -283,6 +299,7 @@ def main() -> int:
     metrics = analyze_dump(
         args.frames,
         args.control_log,
+        mode=args.mode,
         overlay_dir=args.overlay_dir,
         overlay_limit=max(args.overlay_limit, 0),
         baseline_json=args.baseline,

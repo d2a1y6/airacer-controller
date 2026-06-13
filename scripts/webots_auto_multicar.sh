@@ -48,10 +48,15 @@ export AIRACER_CONTROLLER_CONSOLE_LOG_DIR="$PWD/.tmp/multicar/webots_console"
 export AIRACER_CONTACT_LOG=1
 export AIRACER_CONTACT_LOG_PATH="$PWD/.tmp/multicar/contact_${WORLD}_car1.jsonl"
 
+# telemetry.jsonl 是 append 累积的；删掉旧文件，确保本次跑出的是单段干净 telemetry，
+# 供 scripts/analyze_multicar_kpi.py 直接消费名次/超车/互挤等 KPI。
+REC="$SDK/.local/recordings"
+rm -f "$REC/telemetry.jsonl" "$REC/metadata.json" 2>/dev/null || true
+
 CAR1="$PWD/.tmp/multicar/team_controller_car1_debug.py"
 OPP="$PWD/.tmp/multicar/team_controller_opp.py"
 
-CAR_ARGS=(--car "${CAR1}:car_1:fastest")
+CAR_ARGS=(--car "${CAR1}:car_1:ours")
 for slot in 2 3 4 5 6; do
   [[ "$slot" -le "$NCARS" ]] && CAR_ARGS+=(--car "${OPP}:car_${slot}:opp")
 done
@@ -81,3 +86,12 @@ elapsed=$(( $(date +%s) - start ))
 fsize=$(stat -f%z "$LOG" 2>/dev/null || echo 0)
 frames=$(wc -l < "$LOG" 2>/dev/null || echo 0)
 echo "[auto] DONE world=$WORLD elapsed=${elapsed}s control_log_bytes=$fsize control_frames=$frames"
+
+# 收集 supervisor 产物（全车位姿 + 官方名次/碰撞）并打印多车 KPI。
+cp -f "$REC/telemetry.jsonl" ".tmp/multicar/telemetry_${WORLD}.jsonl" 2>/dev/null || true
+cp -f "$REC/metadata.json" ".tmp/multicar/metadata_${WORLD}.json" 2>/dev/null || true
+if [[ -f ".tmp/multicar/telemetry_${WORLD}.jsonl" ]]; then
+  echo "[auto] ----- 多车 KPI -----"
+  python scripts/analyze_multicar_kpi.py ".tmp/multicar/telemetry_${WORLD}.jsonl" \
+    --metadata ".tmp/multicar/metadata_${WORLD}.json" --team ours || true
+fi

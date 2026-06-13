@@ -46,11 +46,15 @@ def _lost_track(
         line_heading = clamp(float(obs.line_heading), -1.0, 1.0)
         line_confidence = clamp(float(obs.line_confidence), 0.0, 1.0)
         near_obstacle = bool(obs.near_obstacle)
+        obstacle_x = clamp(float(obs.obstacle_x), -1.0, 1.0)
+        obstacle_size = max(float(obs.obstacle_size), 0.0)
     else:
         line_offset = _LAST_TRACK.line_offset
         line_heading = _LAST_TRACK.line_heading
         line_confidence = 0.0
         near_obstacle = _LAST_TRACK.near_obstacle
+        obstacle_x = _LAST_TRACK.obstacle_x
+        obstacle_size = _LAST_TRACK.obstacle_size
     return TrackState(
         _LAST_TRACK.lateral_error * ESTIMATOR_PROFILE["lost_lateral_decay"],
         _LAST_TRACK.heading_error * ESTIMATOR_PROFILE["lost_heading_decay"],
@@ -65,6 +69,8 @@ def _lost_track(
         _LAST_TRACK.left_margin_near,
         _LAST_TRACK.right_margin_near,
         near_obstacle,
+        obstacle_x,
+        obstacle_size,
         obs.frame_motion,
     )
 
@@ -300,6 +306,8 @@ def _line_only_track(obs: PerceptionObs, timestamp: float, red_environment: bool
         _LAST_TRACK.left_margin_near,
         _LAST_TRACK.right_margin_near,
         bool(obs.near_obstacle),
+        clamp(float(obs.obstacle_x), -1.0, 1.0),
+        max(float(obs.obstacle_size), 0.0),
         obs.frame_motion,
     )
     return track
@@ -581,6 +589,8 @@ def estimate_track(obs: PerceptionObs, timestamp: float) -> TrackState:
         left_margin_near,
         right_margin_near,
         bool(obs.near_obstacle),
+        clamp(float(obs.obstacle_x), -1.0, 1.0),
+        max(float(obs.obstacle_size), 0.0),
         obs.frame_motion,
     )
     _LAST_TRACK = track

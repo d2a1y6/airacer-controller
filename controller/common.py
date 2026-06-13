@@ -32,6 +32,10 @@ class PerceptionObs:
     left_margin_near: float = 1.0
     right_margin_near: float = 1.0
     near_obstacle: bool = False
+    # 近处对手车横向位置：-1=图像左侧，+1=图像右侧，0=正前方/未检测。
+    obstacle_x: float = 0.0
+    # 近处对手车强度：当前用最大连通车身块占 ROI 的比例，越大通常表示越近。
+    obstacle_size: float = 0.0
     # 帧间图像变化量（下采样灰度 MAD）：高=画面在流动(车在动)，低≈静止(可能被顶住不动)。
     # 默认设高值，让直接构造的 dataclass（测试）默认判为"在动"、不触发卡死检测。
     frame_motion: float = 100.0
@@ -60,6 +64,8 @@ class TrackState:
     left_margin_near: float = 1.0
     right_margin_near: float = 1.0
     near_obstacle: bool = False
+    obstacle_x: float = 0.0
+    obstacle_size: float = 0.0
     # 帧间图像变化量（见 PerceptionObs.frame_motion）：低≈物理卡死（命令在前进但画面不动）。
     frame_motion: float = 100.0
 

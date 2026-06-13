@@ -34,6 +34,86 @@
 
 ## 当前记录（新格式，最新在上）
 
+### R068 — no_other_cars 真正单车入口官方 metadata：252.863s（2026-06-13, complex, 1-car）
+- **构建**: `day-with_other_cars` working tree；`no_other_cars` no-debug 单文件，构建到 `.tmp/R068_no_other_single_entry_fixed/team_controller.py`。本轮前修复 SDK `run_local.py`：单车 `--code-path/--car-slot` 生成配置时也传 `--world`，避免退回旧 checkpoint。
+- **配置**: 真正单车入口：`run_local.py --world complex --code-path ... --car-slot car_1 --fast --minimize --batch --skip-validate`。`race_config.json` 顶层含 `world=complex`，1 辆车 `local_team/car_1/CarPhoenix`。
+- **记录完整性**: clean；telemetry/metadata 归档到 `.tmp/R068_no_other_single_entry_fixed/telemetry_complex.jsonl` 和 `.tmp/R068_no_other_single_entry_fixed/metadata_complex.json`。无残留 Webots/run_local 进程。
+- **结果**: 官方 metadata：`finish_reason=grace_period_expired`，`duration_sim=313.696s`，`final_rankings=[local_team rank=1]`，`best_lap=252.928s`，`total_time=252.863s`，status=normal，`collision_major_count=0`。telemetry 最大进度 1.222，末帧已进入第二圈 0.222。
+- **现象**: 单车 checkpoint/完赛/排名现在能走 SDK 原生逻辑，不再需要旧的 physical_finish_unofficial 口径。
+- **结论/下一步**: 当前 `no_other_cars` 单车 complex 最好官方成绩更新为 **252.863s**。R049 的 257.70s 仍是旧 SDK/人工口径；后续报告应优先引用 R068。
+
+### R067 — 用 one-car `--car` 入口拿到 no_other_cars 官方 metadata（2026-06-13, complex, 1-car）
+- **构建**: `day-with_other_cars` working tree；`no_other_cars` no-debug 单文件，构建到 `.tmp/R067_no_other_car_entry/team_controller.py`。
+- **配置**: `run_local.py --world complex --car <controller>:car_1:ours --fast --minimize --batch --skip-validate`，即多车入口但只有 1 辆车。该入口会把 `world=complex` 写入 `race_config.json`。
+- **记录完整性**: clean；telemetry/metadata 归档到 `.tmp/R067_no_other_car_entry/`。
+- **结果**: 官方 metadata：rank=1，`best_lap=254.560s`，`total_time=254.495s`，0 major，DQ=False。
+- **现象**: 这证明当前 SDK checkpoint 能给单车出官方成绩；但它不是用户最常用的 `--code-path` 单车入口。
+- **结论/下一步**: 作为 R066 的绕行验证；真正单车入口修复后以 R068 为准。
+
+### R066 — 旧单车入口缺 world，导致 checkpoint 退回旧占位（2026-06-13, complex, invalid）
+- **构建**: `day-with_other_cars` working tree；`no_other_cars` no-debug 单文件，构建到 `.tmp/R066_no_other_official/team_controller.py`。
+- **配置**: 原始单车入口：`run_local.py --world complex --code-path ... --car-slot car_1 --fast --minimize --batch --skip-validate`。
+- **记录完整性**: invalid partial；telemetry/race_config 归档到 `.tmp/R066_no_other_official/`。本轮中断于 `t≈103.8s`。
+- **结果**: 车在赛道上正常行驶，但 `lap_progress` 一直为 0；检查 `race_config.json` 发现顶层没有 `world` 字段。
+- **现象**: SDK `supervisor.py` 修复后按 `config["world"]` 选择真实 checkpoint；单车旧入口没有传 world，导致 supervisor 退回旧占位 checkpoint，无法产生可信官方 metadata。
+- **结论/下一步**: R066 不作为成绩。已在 SDK `run_local.py` 修复单车 `_make_config()` 传 `--world`，并用 R068 复测通过。
+
+### R065 — R064 新 policy 完整 6车复测：名次不变，圈速略快（2026-06-13, complex, 6-car)
+- **构建**: `day-with_other_cars` working tree；使用 R064 后的对手方向/尺寸感知 policy。构建 no-debug `with_other_cars` 单文件到 `.tmp/R065_full_direction_policy/team_controller.py`。
+- **配置**: 6 车都用同一 `with_other_cars` 控制器；`run_local.py --world complex --fast --minimize --batch --skip-validate`。监控脚本等待 `metadata.final_rankings`，写出 metadata 后中断 Webots 收尾。
+- **记录完整性**: clean；telemetry/metadata 归档到 `.tmp/R065_full_direction_policy/telemetry_complex.jsonl` 和 `.tmp/R065_full_direction_policy/metadata_complex.json`。无残留 Webots/run_local 进程。
+- **结果**: `finish_reason=grace_period_expired`，`duration_sim=313.504s`，6 车均完成 1 圈。本车 `ours` 官方 rank=2，points=7，`total_time=256.767s`，`best_lap=256.864s`，status=normal，`collision_major_count=0`，DQ=False。KPI：major=0、minor=0、contact_starts=0、stall=0、mean speed=5.15、median=5.43。最终排名：oppA 1、ours 2、oppB 3、oppC 4、oppE 5、oppD 6。
+- **对比 R063**: 名次和积分不变（rank 2 / points 7），碰撞不变（0 major、0 DQ）。本车 `total_time` 从 259.039s 降到 256.767s，快约 2.27s；整场 `duration_sim` 从 316.096s 降到 313.504s。开局互挤仍存在，最近他车距 1.95m（R063 为 1.89m），但无开局碰撞。
+- **结论/下一步**: R064 后的新 policy 没降低官方名次，也没有增加严重碰撞；速度略有提升。短期可以保留这版。若继续优化，多车目标应转向“从 rank 2 抢 rank 1”：需要更强的防守/逼让或发车阶段非对称策略，而不是继续做纯安全绕行。
+
+### R064 — 对手方向感知 + 偏侧不重让速后的 6车长窗口回归（2026-06-13, complex, 6-car）
+- **构建**: `day-with_other_cars` working tree；新增 `detect_near_vehicle_obstacle_state()`，把近车检测从 bool 升级为 `near_obstacle + obstacle_x + obstacle_size`，并贯穿 `PerceptionObs/TrackState`。policy 对正前方车仍重降速，偏左/偏右车只轻降速，并按车身方向叠加绕行舵角。
+- **配置**: no-debug `with_other_cars` 单文件，6 车都用同一策略；`run_local.py --world complex --fast --minimize --batch --skip-validate`；监控脚本等待 metadata，墙钟 520s 未完赛后中断。
+- **记录完整性**: clean partial。无残留 Webots/run_local 进程；telemetry 已复制到 `.tmp/R064_direction_policy/telemetry_complex.jsonl`。本轮未产生 `metadata.json`，不能用来证明完赛/官方名次。
+- **结果**: 仿真到 `t=221.536s`，本车 `lap_progress=0.778`，末帧位置 `x≈13.0,y≈82.0`，速度约 `5.0m/s`；KPI 读 telemetry-progress：rank=1、points 代理=10、major=0、minor=0、contact_starts=0、stall=0、mean speed=5.07、median=5.22。其余车进度：3 辆约 0.778，2 辆约 0.667。
+- **现象**: checkpoint 仍正常增长，长窗口内没有 R053/R060 那种车堆卡死或硬撞；开局仍被标记 `squeezed=True`，最近他车距约 1.95m，但无开局碰撞事件。
+- **结论/下一步**: 方向感知 policy 没在 0.78 圈内造成明显退化，但本轮因墙钟硬超时没拿到 metadata，不能替代 R063 的完整完赛验证。下一步若继续调多车策略，应跑完整 no-debug 6车或缩短 Webots 图形负担，比较 R063/R064 的官方 rank 和 final_rankings。
+
+### R063 — SDK checkpoint 完整验证：6车 final_rankings 生效（2026-06-13, complex, 6-car）
+- **构建**: `day-with_other_cars` working tree；在 SDK supervisor 中按 world 使用真实 checkpoint/finish-line gate，并修正 `checkpoint_next=0`、`start_offset_time` 以本车 finish_line 计算。本轮发生在 R064 方向感知 policy 之前。
+- **配置**: no-debug `with_other_cars` 单文件，6 车都用同一策略；`run_local.py --world complex --fast --minimize --batch --skip-validate`。Webots 写出 metadata 后手动中断 run_local 收尾。
+- **记录完整性**: clean；telemetry/metadata 已归档到 `.tmp/checkpoint6/telemetry_complex.jsonl` 和 `.tmp/checkpoint6/metadata_complex.json`。`metadata.final_rankings` 非空，可信。
+- **结果**: `finish_reason=grace_period_expired`，`duration_sim=316.096s`。6 车均完成 1 圈；本车 `ours` 官方 rank=2，points=7，`total_time=259.039s`，`best_lap=259.136s`，`collision_major_count=0`，status=normal，DQ=False。最终排名：oppA 1、ours 2、oppC 3、oppB 4、oppE 5、oppD 6。
+- **现象**: `lap_start`、CP 进度、`car_finished`、宽限期收尾、`metadata.final_rankings` 都生效。KPI 脚本可从 metadata 读取官方名次，不再退化成累计距离代理。
+- **结论/下一步**: SDK checkpoint 修复的核心目标已验证：lap_progress 从 0 正常增长，完赛/名次/非空 final_rankings 原生生效。没有主动造 3 次严重碰撞去触发 DQ，只确认了本轮无误判 DQ、严重碰撞计数为 0。
+
+### R062 — SDK checkpoint 修复后的 6车 debug partial（2026-06-13, complex, 6-car）
+- **构建**: `day-with_other_cars` working tree；同 R063 的 SDK checkpoint 修复，但使用 debug/auto 多车脚本，仍带日志和 GUI 开销。
+- **配置**: `bash scripts/webots_auto_multicar.sh complex 360 35 6` 一类配置；6 车同策略，hard cap 到墙钟上限后停止。
+- **记录完整性**: partial。由于 debug + GUI 开销，本轮只跑到仿真约 `t≈138s`，未写出完整 metadata。
+- **结果**: 关键事件已出现：6 车都触发 `lap_start`，并按序通过 CP1→CP4；`lap_progress` 从 0 增长到约 0.44。
+- **现象**: 这轮证明旧问题 lap_progress 恒 0 已被打破，但不能证明 final_rankings 或完赛。
+- **结论/下一步**: R062 只作为 checkpoint partial 证据；完整验证以 R063 为准。
+
+### R061 — 收紧黑色车身 mask 后，3车复测通过问题窗口（2026-06-13, complex, 3-car）
+- **构建**: `day-with_other_cars` working tree；R060 后继续修正 `opponent.vehicle_body_mask()`：HSV 颜色分支跳过低饱和 profile，白车/黑车只走亮度分支，避免 Shadow black 容差把深灰沥青当车身。
+- **配置**: `run_local.py --world complex --fast --minimize`；`car_1=ours` debug、`car_2=oppA` 普通、`car_3=oppB` debug；`--skip-validate`；跑到 `t≈145.15` 后手动停止。
+- **记录完整性**: `car_1/car_3` 各 4535 帧控制日志，contact 589 行；无残留 Webots。telemetry 当前段 4536 行，`t=0.032→145.152`。
+- **结果**: 三车都没有真实速度持续近停：`ours/oppA/oppB` median 真实速度分别约 5.23/5.46/5.26，`slow<0.2` 连续 30 帧以上为 0。`car_1` 控制均速 0.833、`escaping=1%`、lost 0%；`car_3` 控制均速 0.826、`escaping=1%`、lost 0%。末帧三车仍高速行驶。
+- **现象**: R059/R060 的 120s 附近窗口已覆盖。`oppB` 在 `t=120.0` 真实速度 4.75，`t=130.0` 速度 3.85，`t=140.0` 速度 5.79，没有复现绿车贴边卡死。contact：`car_3` 仅起步/早段轻触，加 `t=109.3–109.8` 和 `t=120.4–120.5` 两个短静态接触（峰值 z≈0.50/0.46），无 R060 那种 0.90 高度硬撞段。
+- **结论/下一步**: 主要修复不是把 motion-stall 放得更激进，而是去掉黑色 profile 的路面误检；否则 `near_obstacle=True` 长期污染速度和白线门控。当前组合（motion-stall 0.28 + 黑/白不走 HSV 色彩 profile）通过本轮 3 车问题窗口。后续还应跑 6 车和更长圈数，确认多车拥堵下仍稳。
+
+### R060 — motion-stall 放宽后复测：能脱出但黑色 mask 误检污染策略（2026-06-13, complex, 3-car）
+- **构建**: `day-with_other_cars` working tree；在 R059 后把 motion-stall 阈值收敛为 0.28、30 帧，并加长 force_escape 倒车相位。
+- **配置**: 同 R061，`car_1/car_3` debug，跑到 `t≈141.41` 后手动停止。
+- **记录完整性**: `car_1/car_3` 各 4419 帧控制日志，contact 1191 行；telemetry 当前段 4419 行。
+- **结果**: 绿车不再像 R059 一样停死：`oppB` 在末帧 `t=141.408` 真实速度 2.96，`slow<0.2` 连续 30 帧以上为 0。但 `car_3` 控制日志里 `escaping=14%`，均速只有 0.537；contact 显示 `car_3` 在 `t=113–133` 有多段 z≈0.90 的硬撞，尤其 `128.9–133.4` 持续 144 帧。
+- **现象**: 画面和 mask 对照显示蓝车可被识别，但底部深灰沥青也被 Shadow black HSV profile 大面积吃进 mask，导致 `near_obstacle=True` 过宽，长期压速、压白线修正，并引发多段不必要脱困。
+- **结论/下一步**: motion-stall 0.28 本身没有在正常行驶中连续 30 帧误触发；真正污染来自黑色车身颜色 mask。下一步收紧 `vehicle_body_mask()`：彩色 HSV 只保留高饱和车身，白/黑车仍用亮度分支。
+
+### R059 — 3车复现绿车弯中贴边卡死（2026-06-13, complex, 3-car）
+- **构建**: `day-with_other_cars` working tree；三辆车都用同一套 `with_other_cars` 策略，`car_1` 是 debug 构建，`car_2/car_3` 是普通构建。本轮发生在加入 6 色车身 mask 修复之前。
+- **配置**: `run_local.py --world complex`；`car_1=ours`、`car_2=oppA`、`car_3=oppB`；`--skip-validate`；人工观察到红/绿车撞栏风险。
+- **记录完整性**: metadata 时间为 2026-06-13 12:21，`duration_sim=130.688`，finish 为 `supervisor_stop`。`telemetry.jsonl` 混有旧行，分析时只采信 `ours/oppA/oppB` 三队过滤后的 4084 行。`car_1` 控制日志完整 4084 帧；contact 日志是旧文件（mtime 04:37、旧 team_id），本轮不采信。只有 `car_1` 摄像头帧，`car_3` 没有 debug 画面。
+- **结果**: `ours` 红车无持续近停，控制日志均速 0.831、median 0.871、lost 0%、`escaping` 约 1%。`oppA` 蓝车也无持续近停。`oppB` 绿车在 `t≈120.704` 后停在 `x≈107.1,y≈143.5`，一直到 `t=130.688` 仍只有约 0.01 的真实速度。
+- **现象**: 红/蓝车没有在 120s 后持续顶住绿车，绿车更像是在弯中贴边后物理卡住。由于普通构建没有真实速度反馈，只能靠 `frame_motion` 判断“命令在前进但画面不动”；若绿车的画面仍有轻微抖动，旧阈值 0.20 可能不触发，触发后倒车距离也可能不足。
+- **结论/下一步**: 这是 `with_other_cars` 的脱困盲区，不应改 `no_other_cars`。下一步把 motion-stall 阈值从“几乎完全静止”适度放宽到“贴边轻微抖动也算卡住”，缩短触发帧数，并加长 force_escape 的倒车相位后复测。
+
 ### R053–R057 — day-with_other_cars：真倒车脱困 + 早避让 + 光流卡死检测（2026-06-13, complex, 6-car, AI 自跑）
 
 分支 `day-with_other_cars`（从 `with_other_cars` 派生）。AI 无人值守自跑（`scripts/webots_auto_multicar.sh` 后台启动 Webots + 看门狗，6 车全用本控制器；用户睡觉时跑）。**关键纠错见末尾。**

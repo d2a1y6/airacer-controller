@@ -70,7 +70,7 @@
 
 ### 1.4 左右融合 + 置信度
 
-单相机置信度 `_score_scan` 综合有效扫描行占比、宽度/中心稳定性、纹理，并对"有效行少 / mask 太空或太满 / 用了边缘兜底"降权。融合 `_fuse_scans`：只一侧可用就用那侧；两侧冲突选高置信；两侧一致就合并。输出 **`PerceptionObs`**（中心点、左右边界点、道路宽度、置信度、`debug_flags`、`line_offset/heading/confidence`、`near_obstacle`）。
+单相机置信度 `_score_scan` 综合有效扫描行占比、宽度/中心稳定性、纹理，并对"有效行少 / mask 太空或太满 / 用了边缘兜底"降权。融合 `_fuse_scans`：只一侧可用就用那侧；两侧冲突选高置信；两侧一致就合并。输出 **`PerceptionObs`**（中心点、左右边界点、道路宽度、置信度、`debug_flags`、`line_offset/heading/confidence`、`near_obstacle`、`obstacle_x/obstacle_size`）。
 
 ---
 
@@ -98,7 +98,7 @@
 
 ## 3. 控制策略 policy：从状态到舵角 / 速度
 
-参数统一来自 `CONTROL`（不再有 basic/fastest/safe 分支）。
+参数来自 `get_profile()` 返回的当前 profile：`no_other_cars` 用于单车计时，`with_other_cars` 用于多车；不再有 basic/fastest/safe 分支。
 
 ### 3.1 风险分量
 

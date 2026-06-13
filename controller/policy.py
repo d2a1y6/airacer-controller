@@ -567,11 +567,15 @@ def _target_speed(
         target = max(target, profile["straight_speed"])
     if timestamp < profile["start_caution_seconds"]:
         target = min(target, profile["start_speed"])
-    # 多车：近处有对手车时降速
-    if track.near_obstacle:
-        target *= profile.get("opponent_speed_factor", 0.72)
-        # 弯道+对手车：更激进减速，防止多车弯道碰撞卡死
-        if signals["curve_risk"] >= profile.get("opponent_corner_curve_threshold", 0.25):
+    # 多车：正前方挡车要让速，偏侧车更像并行/被超场景，只轻微让速，避免一被超过就彻底放弃。
+    if profile.get("enable_opponent", True) and track.near_obstacle:
+        center_x = max(float(profile.get("opponent_center_x", 0.28)), 1e-6)
+        centered = clamp(1.0 - abs(float(track.obstacle_x)) / center_x, 0.0, 1.0)
+        front_factor = float(profile.get("opponent_speed_factor", 0.72))
+        side_factor = float(profile.get("opponent_side_speed_factor", front_factor))
+        target *= side_factor + (front_factor - side_factor) * centered
+        # 弯道+正前方对手车：更激进减速，防止多车弯道碰撞卡死；偏侧车不叠这么重。
+        if centered >= 0.35 and signals["curve_risk"] >= profile.get("opponent_corner_curve_threshold", 0.25):
             target *= profile.get("opponent_corner_speed_factor", 0.55)
     return clamp(target, profile["min_speed"], profile["max_speed"])
 
@@ -926,7 +930,7 @@ def _update_policy_state(track: TrackState, steering: float, speed: float, mode:
     _LAST_MODE = mode
 
 
-def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -> ControlCmd:
+def decide_control(track: TrackState, timestamp: float, mode: str = "no_other_cars") -> ControlCmd:
     """计算最终控制命令。
 
     功能：按唯一策略生成转向和速度。
@@ -1055,9 +1059,10 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
         _ZERO_SPEED_STREAK = 0
         _MOTION_STALL_STREAK = 0
 
-    # ── 对手车主动避让转向：基于左右边界余量差，朝开阔侧加舵角偏置 ──
+    # ── 对手车主动避让转向：车身方向决定绕行侧，边界余量限制偏置强度 ──
     if (
-        profile.get("opponent_avoid_steering_enable", True)
+        profile.get("enable_opponent", True)
+        and profile.get("opponent_avoid_steering_enable", True)
         and track.near_obstacle
         and not track.lost
         and track.confidence >= 0.30
@@ -1065,7 +1070,14 @@ def decide_control(track: TrackState, timestamp: float, mode: str = "fastest") -
         margin_diff = track.right_margin_near - track.left_margin_near
         avoid_gain = float(profile.get("opponent_avoid_steering_gain", 0.40))
         avoid_max = float(profile.get("opponent_avoid_steering_max", 0.18))
-        avoid_bias = clamp(margin_diff * avoid_gain, -avoid_max, avoid_max)
+        margin_bias = clamp(margin_diff * avoid_gain, -avoid_max, avoid_max)
+        obstacle_x = clamp(float(track.obstacle_x), -1.0, 1.0)
+        direction_deadzone = float(profile.get("opponent_direction_deadzone", 0.16))
+        direction_bias = 0.0
+        if abs(obstacle_x) > direction_deadzone:
+            direction_gain = float(profile.get("opponent_direction_steering_gain", 0.20))
+            direction_bias = clamp(-obstacle_x * direction_gain, -avoid_max, avoid_max)
+        avoid_bias = clamp(margin_bias + direction_bias, -avoid_max, avoid_max)
         final_steering = clamp(final_steering + avoid_bias, -1.0, 1.0)
 
     return ControlCmd(final_steering, speed)

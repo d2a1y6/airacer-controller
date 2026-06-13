@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from controller.common import PerceptionObs, clamp
-from controller.opponent import detect_near_vehicle_obstacle
+from controller.opponent import detect_near_vehicle_obstacle_state
 from controller.params import COLOR_PROFILE, LINE_FOLLOW_PROFILE, OPPONENT_PROFILE, VISION_PROFILE
 
 _RED_ENVIRONMENT_FLAG = 32
@@ -62,6 +62,8 @@ class _CameraScan:
     confidence: float
     debug_flags: int = 0
     near_obstacle: bool = False
+    obstacle_x: float = 0.0
+    obstacle_size: float = 0.0
 
 
 def _empty_points() -> np.ndarray:
@@ -134,7 +136,11 @@ def _sampled_color_mask(hsv: np.ndarray, lab: np.ndarray, color_name: str) -> np
     return hsv_match & lab_match
 
 
-def _build_masks(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> tuple[np.ndarray, np.ndarray, float, float, bool]:
+def _build_masks(
+    image: np.ndarray,
+    timestamp=None,
+    enable_opp: bool = True,
+) -> tuple[np.ndarray, np.ndarray, float, float, bool, float, float]:
     """生成道路表面 mask 和边缘 fallback mask。
 
     功能：优先用暗灰低饱和特征分割沥青路面，并单独保留 Canny 边缘作为兜底。
@@ -214,18 +220,18 @@ def _build_masks(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> 
     texture_score = clamp(float(np.std(gray_roi)) / VISION_PROFILE["texture_gray_std_scale"], 0.0, 1.0)
     mask_fill_ratio = float(np.count_nonzero(road_roi)) / max(float(road_roi.size), 1.0)
     near_obstacle = False
-    # 对手检测只在 with_other_cars profile 下进行（enable_opp）：no_other_cars(单车=R049)
+    obstacle_x = 0.0
+    obstacle_size = 0.0
+    # 对手检测只在 with_other_cars profile 下进行（enable_opp）：no_other_cars 沿用 R049 驾驶底座。
     # 既不调用 detect_near_vehicle_obstacle，也不让 near_obstacle 影响 segment_gap/白线门控。
     if enable_opp and OPPONENT_PROFILE["enable_opponent_avoidance"]:
         try:
             current_time = float(timestamp)
         except (TypeError, ValueError):
             current_time = 0.0
-        near_obstacle = (
-            current_time >= OPPONENT_PROFILE["near_obstacle_min_timestamp"]
-            and detect_near_vehicle_obstacle(image, OPPONENT_PROFILE)
-        )
-    return road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle
+        if current_time >= OPPONENT_PROFILE["near_obstacle_min_timestamp"]:
+            near_obstacle, obstacle_x, obstacle_size = detect_near_vehicle_obstacle_state(image, OPPONENT_PROFILE)
+    return road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle, obstacle_x, obstacle_size
 
 
 def _segments_from_active(active: np.ndarray) -> list[tuple[int, int]]:
@@ -728,7 +734,11 @@ def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _
         return _empty_scan()
 
     _maybe_reset_perception_by_timestamp(timestamp)
-    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle = _build_masks(image, timestamp, enable_opp)
+    road_mask, edge_mask, texture_score, mask_fill_ratio, near_obstacle, obstacle_x, obstacle_size = _build_masks(
+        image,
+        timestamp,
+        enable_opp,
+    )
     red_environment = _is_red_environment(image)
     wide_localize_enabled = red_environment
     height, width = road_mask.shape
@@ -776,6 +786,8 @@ def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _
         debug_flags = 4 if mask_fill_ratio < 0.015 or mask_fill_ratio > 0.92 else 1
         scan = _empty_scan(debug_flags=debug_flags)
         scan.near_obstacle = bool(near_obstacle)
+        scan.obstacle_x = float(obstacle_x)
+        scan.obstacle_size = float(obstacle_size)
         return scan
 
     confidence, debug_flags = _score_scan(
@@ -797,6 +809,8 @@ def _scan_image(image: np.ndarray, timestamp=None, enable_opp: bool = True) -> _
         confidence,
         debug_flags=debug_flags,
         near_obstacle=bool(near_obstacle),
+        obstacle_x=float(obstacle_x),
+        obstacle_size=float(obstacle_size),
     )
 
 
@@ -826,7 +840,31 @@ def _to_obs(scan: _CameraScan, debug_flags: int | None = None) -> PerceptionObs:
         clamp(scan.confidence, 0.0, 1.0),
         debug_flags=flags,
         near_obstacle=bool(scan.near_obstacle),
+        obstacle_x=float(scan.obstacle_x),
+        obstacle_size=float(scan.obstacle_size),
     )
+
+
+def _fused_obstacle(left_scan: _CameraScan, right_scan: _CameraScan) -> tuple[bool, float, float]:
+    """融合双目近车检测结果。
+
+    功能：给 policy 一个稳定的左/中/右对手位置。
+    参数：左右 `_CameraScan`。
+    返回：`(near, x, size)`。
+    逻辑：只有一侧检测到就用那侧；两侧都检测到时按车身块尺寸加权，尺寸更大的近车影响更大。
+    """
+
+    candidates = [
+        scan
+        for scan in (left_scan, right_scan)
+        if scan.near_obstacle and scan.obstacle_size > 0.0
+    ]
+    if not candidates:
+        return bool(left_scan.near_obstacle or right_scan.near_obstacle), 0.0, 0.0
+    total = sum(max(float(scan.obstacle_size), 1e-6) for scan in candidates)
+    x = sum(float(scan.obstacle_x) * max(float(scan.obstacle_size), 1e-6) for scan in candidates) / total
+    size = max(float(scan.obstacle_size) for scan in candidates)
+    return True, clamp(x, -1.0, 1.0), size
 
 
 def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionObs:
@@ -841,18 +879,23 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
     left_ok = _usable(left_scan)
     right_ok = _usable(right_scan)
     if left_ok and not right_ok:
-        return _to_obs(left_scan)
+        obs = _to_obs(left_scan)
+        obs.near_obstacle, obs.obstacle_x, obs.obstacle_size = _fused_obstacle(left_scan, right_scan)
+        return obs
     if right_ok and not left_ok:
-        return _to_obs(right_scan)
+        obs = _to_obs(right_scan)
+        obs.near_obstacle, obs.obstacle_x, obs.obstacle_size = _fused_obstacle(left_scan, right_scan)
+        return obs
     if not left_ok and not right_ok:
         obs = _empty_obs(debug_flags=left_scan.debug_flags | right_scan.debug_flags | 1)
-        obs.near_obstacle = bool(left_scan.near_obstacle or right_scan.near_obstacle)
+        obs.near_obstacle, obs.obstacle_x, obs.obstacle_size = _fused_obstacle(left_scan, right_scan)
         return obs
 
     center_gap = abs(_near_center(left_scan) - _near_center(right_scan))
     merge_gap = 640.0 * VISION_PROFILE["fusion_merge_gap"]
     merge_confidence = VISION_PROFILE["fusion_merge_min_confidence"]
     confidence_gap = abs(left_scan.confidence - right_scan.confidence)
+    near_obstacle, obstacle_x, obstacle_size = _fused_obstacle(left_scan, right_scan)
     if (
         center_gap >= merge_gap
         or left_scan.confidence < merge_confidence
@@ -864,7 +907,11 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
             flags |= 8
         if confidence_gap < VISION_PROFILE["fusion_confidence_margin"]:
             flags |= 16
-        return _to_obs(chosen, debug_flags=flags)
+        obs = _to_obs(chosen, debug_flags=flags)
+        obs.near_obstacle = near_obstacle
+        obs.obstacle_x = obstacle_x
+        obs.obstacle_size = obstacle_size
+        return obs
 
     center_points = np.concatenate([left_scan.center_points, right_scan.center_points], axis=0)
     left_edge_points = np.concatenate([left_scan.left_edge_points, right_scan.left_edge_points], axis=0)
@@ -881,7 +928,9 @@ def _fuse_scans(left_scan: _CameraScan, right_scan: _CameraScan) -> PerceptionOb
         road_width_est,
         clamp(confidence, 0.0, 1.0),
         debug_flags=left_scan.debug_flags | right_scan.debug_flags,
-        near_obstacle=bool(left_scan.near_obstacle or right_scan.near_obstacle),
+        near_obstacle=near_obstacle,
+        obstacle_x=obstacle_x,
+        obstacle_size=obstacle_size,
     )
 
 

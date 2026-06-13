@@ -68,7 +68,7 @@ def iter_frame_pairs(frame_dir: Path) -> list[tuple[float, Path, Path]]:
     return pairs
 
 
-def replay_frames(frame_dir: Path, out_path: Path, mode: str = "fastest", limit: int | None = None) -> int:
+def replay_frames(frame_dir: Path, out_path: Path, mode: str = "no_other_cars", limit: int | None = None) -> int:
     """执行开环回放并写出 control 日志同 schema JSONL。
 
     功能：把保存帧转成可被 `analyze_control_log.py` 直接分析的日志。
@@ -124,6 +124,8 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "fastest", limit:
                     "left_margin": round(float(track.left_margin_near), 4),
                     "right_margin": round(float(track.right_margin_near), 4),
                     "near_obstacle": bool(track.near_obstacle),
+                    "obstacle_x": round(float(track.obstacle_x), 4),
+                    "obstacle_size": round(float(track.obstacle_size), 5),
                 }
             except Exception:
                 row = {
@@ -155,6 +157,8 @@ def replay_frames(frame_dir: Path, out_path: Path, mode: str = "fastest", limit:
                     "left_margin": 1.0,
                     "right_margin": 1.0,
                     "near_obstacle": False,
+                    "obstacle_x": 0.0,
+                    "obstacle_size": 0.0,
                 }
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
             written += 1

@@ -7,7 +7,7 @@ def control(left_img, right_img, timestamp):
     return steering, speed
 ```
 
-`steering` 范围是 `[-1, 1]`，`speed` 范围是 `[0, 1]`。当前 `fastest`、`safe`、`final` 生成文件使用同一套 `CONTROL` 参数。
+`steering` 范围是 `[-1, 1]`，`speed` 范围是 `[0, 1]`。当前按场次维护两个 profile：`no_other_cars` 生成到 `submissions/no_other_cars/`，`with_other_cars` 生成到 `submissions/with_other_cars/`。
 
 ## 三分钟接手路线
 
@@ -75,14 +75,14 @@ pip install -r requirements.txt
 
 pytest -q
 
-python scripts/build_submission.py --mode no_other_cars     # 单车=R049 → submissions/final/
+python scripts/build_submission.py --mode no_other_cars     # 单车：R049驾驶底座；R068为当前官方成绩
 python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
 python scripts/validate_submission.py submissions/with_other_cars/team_controller.py
 
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 
@@ -102,8 +102,8 @@ Webots 实跑分两层：
 | 看轨迹、速度、事件和近停 | `scripts/analyze_telemetry.py` | `python scripts/analyze_telemetry.py --no-archive` |
 | 看内部状态、白线、mode、舵角 | `scripts/analyze_control_log.py` | `python scripts/analyze_control_log.py .tmp/run/control_complex.jsonl` |
 | 生成整场轨迹+速度+撞栏图 | `scripts/plot_run.py` | 输出 `trajectory_speed.png`，可叠加 `contact_*.jsonl`；报告图按 `experiments/figures/README.md` 归档 |
-| 生成关键帧感知 overlay | `scripts/analyze_perception_dump.py` | `--at 226.56,228.48`；用于看 mask、白线点、扫描线、边界 |
-| 固定画面开环回放 | `scripts/replay_offline.py` | 用已有帧重跑当前代码，比较 `line_conf/steering/mode` 等字段 |
+| 生成关键帧感知 overlay | `scripts/analyze_perception_dump.py` | 带 `--mode no_other_cars/with_other_cars` 和 `--at 226.56,228.48`；用于看 mask、白线点、扫描线、边界 |
+| 固定画面开环回放 | `scripts/replay_offline.py` | 带 `--mode` 用已有帧重跑当前代码，比较 `line_conf/steering/mode` 等字段 |
 | 从历史姿态近似启动 | `scripts/webots_jump_run.sh` | 只恢复 `x/y/heading`，用于看当前代码从某姿态起步的趋势，不是严格续跑 |
 | 裁剪失败窗口 | 手工裁 control/telemetry + overlay | 放 `experiments/cases/<R-id>_<slug>/` |
 

@@ -73,7 +73,7 @@ echo "contact log → .tmp/multicar/contact_${WORLD}_car1.jsonl"
 # 6. 启动 6 车 Webots（多车模式只用 --car，不能同时传 --code-path）
 python "$SDK/run_local.py" \
   --world "$WORLD" \
-  --car "${CAR1}:car_1:fastest" \
+  --car "${CAR1}:car_1:ours" \
   --car "${OPP}:car_2:opp" \
   --car "${OPP}:car_3:opp" \
   --car "${OPP}:car_4:opp" \

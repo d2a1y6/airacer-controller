@@ -20,11 +20,11 @@ def control(left_img, right_img, timestamp):
 pip install -r requirements.txt
 
 # 修改 controller/ 后重新构建（两个策略 profile，见下「Profile 隔离」）
-python scripts/build_submission.py --mode no_other_cars     # 单车=R049 → submissions/final/
+python scripts/build_submission.py --mode no_other_cars     # 单车：R049驾驶底座；R068为当前官方成绩
 python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 
 # 本地校验 + 测试
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
 pytest
 
 # 运行单个测试文件或测试函数
@@ -33,17 +33,17 @@ pytest tests/test_estimator.py::test_centerline_straight_track_is_near_zero
 
 # 官方 validator（不需要 Webots）
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 
 # 官方 run_local 校验层（不启动 Webots）
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --validate-only
 
 # Webots 单车实跑（需要已安装 Webots.app）
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
-  --code-path "$PWD/submissions/final/team_controller.py" \
+  --code-path "$PWD/submissions/no_other_cars/team_controller.py" \
   --world basic --car-slot car_1
 ```
 
@@ -55,9 +55,9 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 
 ## 工作约定（经验为主，不限制"改哪里"）
 
-**想改哪里就改哪里、放手大改。** controller 任意模块（含 basic 分支）、参数、脚本、SDK 调试层都可自由改。没有"必须先获人工批准/关键验收"才能动手这回事，也没有"basic 不许碰"这种保护。大胆做结构性的改动——历史经验是：保守的微调往往没用。
+**想改哪里就改哪里、放手大改。** controller 任意模块、参数、脚本、SDK 调试层都可自由改。没有"必须先获人工批准/关键验收"才能动手这回事，也没有"basic 不许碰"这种保护。大胆做结构性的改动——历史经验是：保守的微调往往没用。
 
-**唯一硬约束（违反会让提交直接作废，不是自我设限）**：上传的 `submissions/final/team_controller.py` 必须通过 `validate_submission.py` 和官方 validator，且**不含调试 I/O**（`open/json/cv2.imwrite` 等）和**禁用模块**（见下"提交文件约束"）。调试构建只在本地 `.tmp/` 跑，永不上传。
+**唯一硬约束（违反会让提交直接作废，不是自我设限）**：上传的 `submissions/no_other_cars/team_controller.py` 必须通过 `validate_submission.py` 和官方 validator，且**不含调试 I/O**（`open/json/cv2.imwrite` 等）和**禁用模块**（见下"提交文件约束"）。调试构建只在本地 `.tmp/` 跑，永不上传。
 
 **经验（帮判断好坏，不拦你动手）**：
 - 驾驶质量以 Webots 实跑为准；离线数字会骗人——`lost` 率尤其不是质量指标。撞栏现在能靠 `contact_*.jsonl` 离线看（见 `docs/ai_offline_review.md`）。
@@ -84,10 +84,10 @@ left_img, right_img
 | `estimator.py` | 从 `PerceptionObs` 估计几何状态 | 接触原图，输出控制量 |
 | `policy.py` | 计算转向和速度 | 处理原图 |
 | `params.py` | 集中存放参数 | 运行算法逻辑 |
-| `opponent.py` | 近处车身检测 | 道路分割或控制决策 |
+| `opponent.py` | 近处车身检测，输出是否有车、左右位置和近似尺寸 | 道路分割或控制决策 |
 | `team_controller_local.py` | 接线、异常兜底、最终限幅 | 算法实现 |
 
-`opponent.py` 的 `detect_near_vehicle_obstacle` 受**两层**控制：模块级 `OPPONENT_PROFILE["enable_opponent_avoidance"]` + **active profile 的 `enable_opponent`**（见下「Profile 隔离」）。只有 `with_other_cars` 下 perception 才会调用它；`no_other_cars` 完全不跑对手检测。
+`opponent.py` 的 `detect_near_vehicle_obstacle_state()` 受**两层**控制：模块级 `OPPONENT_PROFILE["enable_opponent_avoidance"]` + **active profile 的 `enable_opponent`**（见下「Profile 隔离」）。只有 `with_other_cars` 下 perception 才会调用它；`no_other_cars` 完全不跑对手检测。旧的 `detect_near_vehicle_obstacle()` 仍保留为 bool 兼容接口。
 
 ## 关键约定
 
@@ -105,19 +105,19 @@ left_img, right_img
 
 | profile | 提交目录 | 是什么 | `--mode` |
 |---|---|---|---|
-| `no_other_cars` | `submissions/final/` | 单车计时赛 = **R049 单车最佳**（baseline `R049_turn_in_speed_best_2026-06-13`，commit `a9ba0a1`）。无对手避让/倒车/force_escape/光流卡死。 | `--mode no_other_cars` |
-| `with_other_cars` | `submissions/with_other_cars/` | 多车赛 = R049 驾驶 + 对手避让、倒车脱困、force_escape、光流卡死检测。 | `--mode with_other_cars` |
+| `no_other_cars` | `submissions/no_other_cars/` | 单车计时赛 = R049 驾驶底座（baseline `R049_turn_in_speed_best_2026-06-13`，commit `a9ba0a1`）+ 多车增量全关。当前 SDK 官方 complex 单车成绩见 R068：`total_time=252.863s`，0 major。 | `--mode no_other_cars` |
+| `with_other_cars` | `submissions/with_other_cars/` | 多车赛 = R049 驾驶 + 对手方向感知、避让、倒车脱困、force_escape、光流卡死检测。 | `--mode with_other_cars` |
 
 机制（两层隔离）：
 1. **参数层**：`params.py` 里 `NO_OTHER_CARS_CONTROL` 从 `WITH_OTHER_CARS_CONTROL` 派生——**共享核心驾驶参数**（入弯门控/速度/曲率，同一辆车的物理一致），只覆盖两类键：(a) escape 用 R049 更保守值；(b) 所有多车增量置为禁用（含总开关 `enable_opponent=False`）。`get_profile(name)` 按名分派。
-2. **管线层（active profile 贯穿整条流水线）**：`team_controller_local.control()` 每帧 `profile = get_profile(PROFILE)`，把它传给 `extract_observation(left,right,t, profile=profile)`。perception 据 `profile["enable_opponent"]` 决定**是否调用** `detect_near_vehicle_obstacle`、**是否计算** `frame_motion`——`no_other_cars` 下两者都不跑：`near_obstacle` 恒 False（不会触发 `segment_gap`/白线门控）、`frame_motion` 保持默认 100（motion-stall 永不触发）。policy 的 force_escape/motion-stall 触发再用 `enable_opponent` 守一道。`build_submission.py --mode` 注入 `team_controller_local.PROFILE`，决定运行时用哪个 profile。
+2. **管线层（active profile 贯穿整条流水线）**：`team_controller_local.control()` 每帧 `profile = get_profile(PROFILE)`，把它传给 `extract_observation(left,right,t, profile=profile)`。perception 据 `profile["enable_opponent"]` 决定**是否调用** `detect_near_vehicle_obstacle_state()`、**是否计算** `frame_motion`——`no_other_cars` 下两者都不跑：`near_obstacle` 恒 False、`obstacle_x/obstacle_size` 为 0（不会触发 `segment_gap`/白线门控）、`frame_motion` 保持默认 100（motion-stall 永不触发）。policy 的 force_escape/motion-stall 触发再用 `enable_opponent` 守一道。`build_submission.py --mode` 注入 `team_controller_local.PROFILE`，决定运行时用哪个 profile。
    - 效果：`no_other_cars` 真正不走任何多车代码路径（不只是参数为 0），单车每帧还省 ~5ms（跳过检测+frame_motion）。
 
 **铁律——加多车/避让/脱困相关的改动时，只动 `WITH_OTHER_CARS_CONTROL`，并用 `profile["enable_opponent"]`（或专属参数）门控新行为，绝不要污染 `no_other_cars`。** 改单车驾驶（入弯/速度/感知共享逻辑）才动共享区。新增多车感知/策略必须默认在 `no_other_cars` 下完全不执行（参数禁用 + 管线开关双保险），让它仍退化为纯 R049。`tests/test_profile_isolation.py` 锁定这条。
 
 > 注：两个 profile 仍**共享 policy/perception 代码**（`enable_opponent` 是运行时开关，不是按 build 删代码）。曾考虑过构建层不拼接 `opponent.py` 来做"代码级隔离"，但 policy 的多车分支穿插在共享代码里无法按 build 剥离，剥离只能半途、还引入 NameError/validator 风险——所以选**运行时门控 + 测试 + 本节铁律**来防污染，而不是删代码。
 
-> **教训（2026-06-13）**：本分支早期（R053–R058 自跑迭代）把对手避让、倒车（`clamp_cmd` 放宽负速）、force_escape、光流卡死检测**直接加到了当时唯一的统一 `CONTROL` 上**，等于把多车策略也强加给了单车 `no_other_cars`——单车计时赛会无谓地触发避让/倒车、甚至因 `motion_still` 阈值误判而乱倒车。后来按本节拆回两个 profile（R049→no_other_cars，多车→with_other_cars）。**新会话改控制参数前先确认自己在改哪个 profile。**
+> **教训（2026-06-13）**：本分支早期（R053–R058 自跑迭代）把对手避让、倒车（`clamp_cmd` 放宽负速）、force_escape、光流卡死检测**直接加到了当时唯一的统一 `CONTROL` 上**，等于把多车策略也强加给了单车 `no_other_cars`——单车计时赛会无谓地触发避让/倒车、甚至因 `motion_still` 阈值误判而乱倒车。后来按本节拆回两个 profile（R049 驾驶底座→no_other_cars，多车→with_other_cars）。**新会话改控制参数前先确认自己在改哪个 profile。**
 
 ## 构建机制
 

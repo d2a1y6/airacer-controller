@@ -2,12 +2,13 @@
 
 功能概述：把 `controller/` 的模块化代码合并成单个 `team_controller.py`。
 输入输出：读取本地控制器源码，输出平台可上传的自包含文件。
-处理流程：按固定顺序拼接模块，删除本地 import，保留统一策略入口。
+处理流程：按固定顺序拼接模块，删除本地 import，按 `--mode` 注入运行 profile。
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import io
 import tokenize
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER_DIR = ROOT / "controller"
 DEFAULT_OUTPUTS = {
-    "no_other_cars": ROOT / "submissions" / "final" / "team_controller.py",
+    "no_other_cars": ROOT / "submissions" / "no_other_cars" / "team_controller.py",
     "with_other_cars": ROOT / "submissions" / "with_other_cars" / "team_controller.py",
 }
 MODULE_ORDER = [
@@ -82,7 +83,51 @@ def strip_submission_text(source: str) -> str:
         if token_type not in {tokenize.NL, tokenize.COMMENT}:
             previous_type = token_type
     stripped = tokenize.untokenize(kept_tokens)
-    return "\n".join(line.rstrip() for line in stripped.splitlines())
+    return "\n".join(
+        line.rstrip()
+        for line in stripped.splitlines()
+        if line.strip() and line.strip() != "\\"
+    )
+
+
+class _SubmissionMinifier(ast.NodeTransformer):
+    """提交文件 AST 压缩器。
+
+    功能：删除运行时不需要的函数类型标注和 docstring，让单文件稳定低于官方 100KB 上限。
+    参数：Python AST。
+    返回：修改后的 AST。
+    逻辑：保留 dataclass 字段标注；只去掉函数签名标注和独立说明字符串，不改变可执行逻辑。
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self.generic_visit(node)
+        node.returns = None
+        args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+        for arg in args:
+            arg.annotation = None
+        if node.args.vararg is not None:
+            node.args.vararg.annotation = None
+        if node.args.kwarg is not None:
+            node.args.kwarg.annotation = None
+        return node
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        return self.visit_FunctionDef(node)
+
+
+def minify_submission_ast(source: str) -> str:
+    """用 AST 再压一遍提交源码。
+
+    功能：补上 tokenizer 难以稳定处理的模块 docstring 和类型标注压缩。
+    参数：`source` 是已剥离注释的单文件源码。
+    返回：`ast.unparse()` 生成的等价源码；解析失败时由异常暴露给构建流程。
+    逻辑：官方 validator 有 100KB 硬限制，源码保留中文 docstring，但提交物不需要这些文本。
+    """
+
+    tree = ast.parse(source)
+    tree = _SubmissionMinifier().visit(tree)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
 
 
 _DEBUG_CONTROL_BLOCK = '''    try:
@@ -204,6 +249,8 @@ def _debug_control_block(
                     "left_margin": round(float(track.left_margin_near), 4),
                     "right_margin": round(float(track.right_margin_near), 4),
                     "near_obstacle": bool(track.near_obstacle),
+                    "obstacle_x": round(float(track.obstacle_x), 4),
+                    "obstacle_size": round(float(track.obstacle_size), 5),
                     "frame_motion": round(float(track.frame_motion), 3),
                 }}) + "\\n")
                 _DBG_FH.flush()
@@ -321,6 +368,7 @@ def build_source(
     source = "\n".join(parts).strip() + "\n"
     if not (debug_log or dump_frames):
         source = strip_submission_text(source)
+        source = minify_submission_ast(source)
     return source.strip() + "\n"
 
 
@@ -330,12 +378,12 @@ def parse_args():
     功能：读取构建模式和输出路径。
     参数：无。
     返回：`argparse.Namespace`。
-    逻辑：模式只允许 fastest 和 safe，未指定输出时写入对应 submissions 目录；策略内容统一。
+    逻辑：模式只允许 no_other_cars 和 with_other_cars，未指定输出时写入对应 submissions 目录。
     """
 
     parser = argparse.ArgumentParser(description="Build single-file AI Racer submission.")
     parser.add_argument("--mode", choices=sorted(DEFAULT_OUTPUTS), default="no_other_cars",
-                        help="策略：no_other_cars（单车=R049）或 with_other_cars（多车）")
+                        help="策略：no_other_cars（单车，R049驾驶底座）或 with_other_cars（多车）")
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--debug-log", type=Path, default=None,
                         help="本地调试构建：把每帧内部状态与命令写到该 JSONL（含 open/json，禁止上传）")

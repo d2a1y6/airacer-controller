@@ -86,12 +86,24 @@ pkill -f webots; pkill -f run_local; sleep 1
 `basic` 和 `complex` 都是 **6 车布局**（`car_1`…`car_6`）。多车的底层机制是给 `run_local.py` 重复传 `--car`，**每个车位接入一个控制器单文件**：
 
 ```bash
+# 先生成多车 profile 的控制器单文件：car_1 带日志/帧，对手用普通构建。
+mkdir -p .tmp/multicar
+
+python scripts/build_submission.py --mode with_other_cars \
+  --debug-log .tmp/multicar/control_complex_car1.jsonl \
+  --dump-frames .tmp/multicar/frames_complex_car1 \
+  --dump-frame-stride 10 \
+  --out .tmp/multicar/team_controller_car1_debug.py
+
+python scripts/build_submission.py --mode with_other_cars \
+  --out .tmp/multicar/team_controller_opp.py
+
 # 通用形式：--car 控制器文件:车位:队名（可重复，最多 6 个车位）
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
   --world complex \
-  --car .tmp/multicar/car1_debug.py:car_1:fastest \
-  --car .tmp/multicar/oppA.py:car_2:teamA \
-  --car .tmp/multicar/oppB.py:car_3:teamB \
+  --car "$PWD/.tmp/multicar/team_controller_car1_debug.py:car_1:ours" \
+  --car "$PWD/.tmp/multicar/team_controller_opp.py:car_2:oppA" \
+  --car "$PWD/.tmp/multicar/team_controller_opp.py:car_3:oppB" \
   --skip-validate
 ```
 
@@ -99,7 +111,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 - **多车模式只用 `--car`，不能再同时传 `--code-path`**（两者互斥，run_local 会报错）。
 - 调试构建含 `open/json`，所以多车一律加 `--skip-validate`。
 
-**接入不同策略 = 给不同车位放不同的控制器单文件**。当前构建是统一策略（`fastest/safe/basic` 内容相同，`--mode` 只决定默认输出路径），所以"不同策略"实际指不同的**文件**，常见三种：
+**接入不同策略 = 给不同车位放不同的控制器单文件**。当前构建有两个 profile：`no_other_cars` 给单车计时，`with_other_cars` 给多车。多车实跑里，移动对手通常也接 `with_other_cars` 构建；要比较历史策略，就给某个车位换成 baseline 单文件。
 
 | 想测什么 | 怎么接入 |
 |---|---|
@@ -107,7 +119,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 | 本控制器 vs 较慢对手（纯超车场景） | 对手用速度缩放版（见下 `webots_auto_multicar.sh` 第 5 参数） |
 | 本控制器自我对抗（真实交通/拥堵） | 所有车位放同一份当前构建 |
 
-手工生成多个单文件：`python scripts/build_submission.py --mode fastest --out .tmp/multicar/<名字>.py`，再按上面的 `--car` 逐个接入。
+手工生成多个单文件：`python scripts/build_submission.py --mode with_other_cars --out .tmp/multicar/<名字>.py`，再按上面的 `--car` 逐个接入。
 
 ### 一键多车脚本
 
@@ -115,7 +127,7 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 |---|---|---|
 | `webots_day_multicar.sh` | 6 车都跑本控制器（car_1 带 debug 日志），复现真实交通 / CP3 拥堵 | `bash scripts/webots_day_multicar.sh complex` |
 | `webots_auto_multicar.sh` | **AI 无人值守**：后台启动 Webots + 看门狗（超时或日志静止自动收尾），可降速对手 | `bash scripts/webots_auto_multicar.sh complex 300 30 6 0.55` |
-| `webots_multicar_run.sh` | 双车（car_1=fastest, car_2=safe） | `bash scripts/webots_multicar_run.sh complex` |
+| `webots_multicar_run.sh` | 双车（两个车位默认都接 `with_other_cars` 构建，队名只是 run_local 标签） | `bash scripts/webots_multicar_run.sh complex` |
 
 `webots_auto_multicar.sh` 的参数：`<world> <最大秒数> <日志静止判定秒数> <车数> [对手速度缩放]`。第 5 个参数 `<1` 会给对手单文件追加一层速度缩放（如 `0.55` = 对手半速），让全速的 car_1 追上并超车——纯超车效率测试。它供 AI 自跑用（人睡觉时也能跑），看门狗保证不会无限挂着。
 
@@ -163,14 +175,14 @@ python /Users/day/Desktop/Github/pkudsa.airacer/sdk/run_local.py \
 两类场次各生成一份（两个 profile，见 CLAUDE.md「Profile 隔离」）：
 
 ```bash
-python scripts/build_submission.py --mode no_other_cars     # 单车=R049 → submissions/final/
+python scripts/build_submission.py --mode no_other_cars     # 单车：R049驾驶底座；R068为当前官方成绩
 python scripts/build_submission.py --mode with_other_cars   # 多车 → submissions/with_other_cars/
 
 pytest -q
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
 python scripts/validate_submission.py submissions/with_other_cars/team_controller.py
 python /Users/day/Desktop/Github/pkudsa.airacer/sdk/validate_controller.py \
-  --code-path submissions/final/team_controller.py \
+  --code-path submissions/no_other_cars/team_controller.py \
   --rules /Users/day/Desktop/Github/pkudsa.airacer/sdk/rules.yaml
 ```
 

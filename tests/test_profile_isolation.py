@@ -33,6 +33,8 @@ def test_no_other_cars_perception_skips_opponent_and_motion():
     obs = extract_observation(img, img, 0.032, profile=p)
     # 单车不做对手检测
     assert obs.near_obstacle is False
+    assert obs.obstacle_x == 0.0
+    assert obs.obstacle_size == 0.0
     # 单车不算 frame_motion（保持默认 100 = 视作在动，motion-stall 永不触发）
     assert obs.frame_motion >= 100.0
 
@@ -44,6 +46,8 @@ def test_with_other_cars_perception_detects_opponent_and_motion():
     extract_observation(img, img, 0.0, profile=p)
     obs = extract_observation(img, img, 0.032, profile=p)
     assert obs.near_obstacle is True
+    assert abs(obs.obstacle_x) < 0.15
+    assert obs.obstacle_size > 0.0
     # 两帧相同 → frame_motion≈0（真在算）
     assert obs.frame_motion < 1.0
 
@@ -74,3 +78,29 @@ def test_no_other_cars_policy_never_reverses_or_force_escapes():
             t += 0.032
             cmd = decide_control(track, t, mode="no_other_cars")
             assert cmd.speed >= 0.0  # 绝不倒车
+
+
+def test_with_other_cars_motion_stall_triggers_reverse_escape_on_jitter():
+    """轻微画面抖动但车身不前进时，多车 profile 应主动倒车脱困。"""
+
+    stalled = TrackState(
+        lateral_error=0.05,
+        heading_error=0.05,
+        curvature=0.03,
+        lookahead_error=0.05,
+        confidence=0.90,
+        lost=False,
+        red_environment=True,
+        left_margin_near=0.08,
+        right_margin_near=0.75,
+        frame_motion=0.25,
+    )
+    reset_policy_state()
+    t = 0.0
+    cmd = None
+    for _ in range(130):
+        t += 0.032
+        cmd = decide_control(stalled, t, mode="with_other_cars")
+
+    assert cmd is not None
+    assert cmd.speed < 0.0

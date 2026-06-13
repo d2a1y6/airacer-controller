@@ -109,13 +109,13 @@ speed = 1.0：最大速度比例
 
 `control()` 会被频繁调用，必须快速返回。不要在每一帧做训练、长时间循环、大规模搜索、网络请求或大量初始化。
 
-## 5. 两种算法目标
+## 5. 当前两类提交 profile
 
-本组准备两套控制策略。两套策略使用完全相同的提交接口，区别在内部控制逻辑和参数选择。
+本组当前维护两类提交 profile。两类 profile 使用相同的 `control()` 接口，靠构建脚本生成不同提交文件。
 
-### 5.1 `fastest`：单车最快完赛
+### 5.1 `no_other_cars`：单车计时
 
-`fastest` 适用于只要求本车完成赛道、没有其他车辆同场干扰的考核方式。
+`no_other_cars` 适用于只要求本车完成赛道、没有其他车辆同场干扰的考核方式。当前生成到 `submissions/no_other_cars/team_controller.py`。
 
 目标：
 
@@ -138,9 +138,9 @@ speed = 1.0：最大速度比例
 
 单车场景下不需要重点考虑其他车辆、抢线、避让和碰撞风险。因此可以更关注路线效率和速度上限。但过于激进的速度会导致弯道失控、丢线或冲出赛道，最终反而影响完赛。
 
-### 5.2 `safe`：多车/碰撞稳健
+### 5.2 `with_other_cars`：多车/碰撞稳健
 
-`safe` 适用于平台按正式竞赛规则运行、多辆车同场比赛的情况。
+`with_other_cars` 适用于平台按正式竞赛规则运行、多辆车同场比赛的情况。当前生成到 `submissions/with_other_cars/team_controller.py`。
 
 目标：
 
@@ -164,9 +164,9 @@ speed = 1.0：最大速度比例
 
 正式竞赛中，完赛车辆通常优先按完赛时间排序；未完赛车辆再按完成圈数和赛道进度排序。严重碰撞、长时间未通过检查点等情况可能导致停车惩罚或取消资格。因此，多车稳健策略不应只追求单圈速度，还要减少高风险动作。
 
-### 5.3 两套策略如何提交
+### 5.3 两类 profile 如何提交
 
-两套策略都写成 `team_controller.py` 形式，入口都是 `control()`。可以把不同版本上传到不同槽位：
+两类 profile 都写成 `team_controller.py` 形式，入口都是 `control()`。可以把不同版本上传到不同槽位：
 
 ```text
 main：稳定完赛版本
@@ -417,20 +417,20 @@ controller/policy.py      : TrackState -> ControlCmd
 生成策略版本：
 
 ```bash
-python scripts/build_submission.py --mode fastest
-python scripts/build_submission.py --mode safe
+python scripts/build_submission.py --mode no_other_cars
+python scripts/build_submission.py --mode with_other_cars
 ```
 
 生成当前准备上传的最终版本：
 
 ```bash
-python scripts/build_submission.py --mode fastest --out submissions/final/team_controller.py
+python scripts/build_submission.py --mode no_other_cars --out submissions/no_other_cars/team_controller.py
 ```
 
 校验：
 
 ```bash
-python scripts/validate_submission.py submissions/final/team_controller.py
+python scripts/validate_submission.py submissions/no_other_cars/team_controller.py
 pytest
 ```
 

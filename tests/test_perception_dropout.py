@@ -75,7 +75,7 @@ def _grass_with_center_strip(height=480, width=640, strip=(280, 360)):
 
 def test_grass_is_excluded_from_road_mask():
     image = _grass_with_center_strip()
-    road_mask, _edge, _tex, mask_fill_ratio, _near = _build_masks(image)
+    road_mask, _edge, _tex, mask_fill_ratio, _near, _x, _size = _build_masks(image)
 
     top = int(image.shape[0] * VISION_PROFILE["roi_top_ratio"])
     # 草地列（远离中间条）几乎不应进入道路 mask。
@@ -93,7 +93,7 @@ def test_blue_checkpoint_barrier_is_bridged_as_road():
     barrier_bgr = cv2.cvtColor(np.uint8([[[102, 111, 149]]]), cv2.COLOR_HSV2BGR)[0, 0]
     image[250:300, :] = barrier_bgr  # 横跨整幅的蓝门带
 
-    road_mask, _edge, _tex, _fill, _near = _build_masks(image)
+    road_mask, _edge, _tex, _fill, _near, _x, _size = _build_masks(image)
     bridged = road_mask[255:295, 295:345]
     assert bridged.mean() > 50.0
 
@@ -104,7 +104,7 @@ def test_side_blue_guardrail_is_not_bridged_as_road():
     barrier_bgr = cv2.cvtColor(np.uint8([[[102, 111, 149]]]), cv2.COLOR_HSV2BGR)[0, 0]
     image[:, 0:80] = barrier_bgr
 
-    road_mask, _edge, _tex, _fill, _near = _build_masks(image)
+    road_mask, _edge, _tex, _fill, _near, _x, _size = _build_masks(image)
 
     top = int(image.shape[0] * VISION_PROFILE["roi_top_ratio"])
     assert road_mask[top:, 0:80].mean() < 5.0
@@ -114,7 +114,7 @@ def test_full_grass_view_collapses_mask():
     # 偏出赛道正对草地：mask 应塌成近空，让上层进入 lost 而不是把草当路。
     image = np.zeros((480, 640, 3), dtype=np.uint8)
     image[:, :] = (0, 200, 0)
-    road_mask, _edge, _tex, mask_fill_ratio, _near = _build_masks(image)
+    road_mask, _edge, _tex, mask_fill_ratio, _near, _x, _size = _build_masks(image)
     assert mask_fill_ratio < 0.015
 
 
